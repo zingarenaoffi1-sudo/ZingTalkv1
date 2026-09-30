@@ -141,17 +141,14 @@ const connectedUsers = new Map();
 let lastActiveTvUid = null;
 const userContactsRegistry = new Map();
 
-const defaultSeedContacts = [
-    { uid: "1000000002", name: "Aman" },
-    { uid: "1000000003", name: "Rahul" },
-    { uid: "1000000005", name: "Raman" }
-];
-
 // In-Memory Groups Registry
 const inMemoryGroups = new Map();
 
 // In-Memory Block Registry (blockerUid -> Set of blockedUids)
 const inMemoryBlocks = new Map();
+
+// Persistent Alexa Device to ZingTalk User UID Registry (amazonUserId -> 10-digit UID)
+const alexaDevicePairings = new Map();
 
 io.on('connection', (socket) => {
     socket.on('login_user', async (data) => {
@@ -565,10 +562,13 @@ app.post('/api/alexa', async (req, res) => {
         let shouldEndSession = false;
         let commandPayload = null;
 
-        // Retrieve active TV user's contacts
+        const amazonUserId = body.session?.user?.userId || body.context?.System?.user?.userId || 'default_alexa_device';
+        let activeUserUid = alexaDevicePairings.get(amazonUserId) || lastActiveTvUid;
+
+        // Retrieve active user's contacts
         let userContacts = [];
-        if (lastActiveTvUid && userContactsRegistry.has(lastActiveTvUid)) {
-            userContacts = userContactsRegistry.get(lastActiveTvUid) || [];
+        if (activeUserUid && userContactsRegistry.has(activeUserUid)) {
+            userContacts = userContactsRegistry.get(activeUserUid) || [];
         }
         if (userContacts.length === 0) {
             for (const [uid, list] of userContactsRegistry.entries()) {
@@ -578,9 +578,9 @@ app.post('/api/alexa', async (req, res) => {
                 }
             }
         }
-        if (userContacts.length === 0 && lastActiveTvUid) {
+        if (userContacts.length === 0 && activeUserUid) {
             try {
-                const userDoc = await db.collection('users').doc(lastActiveTvUid).get();
+                const userDoc = await db.collection('users').doc(activeUserUid).get();
                 if (userDoc && userDoc.exists && userDoc.data() && userDoc.data().contacts) {
                     userContacts = userDoc.data().contacts;
                 }
@@ -594,13 +594,16 @@ app.post('/api/alexa', async (req, res) => {
                 }
             }
         }
-        if (userContacts.length === 0) {
-            userContacts = defaultSeedContacts;
-        }
-
         if (reqType === 'LaunchRequest') {
-            const sampleNames = userContacts.slice(0, 3).map(c => c.name).join(', ');
-            speechText = `Welcome to ZingTalk on Fire TV. Who would you like to call? You have ${sampleNames || 'contacts'} in your list.`;
+            const isPaired = alexaDevicePairings.has(amazonUserId);
+            if (userContacts.length > 0) {
+                const sampleNames = userContacts.slice(0, 3).map(c => c.name).join(', ');
+                speechText = `Welcome to ZingTalk! Who would you like to call? You have ${sampleNames} in your saved contacts.`;
+            } else {
+                speechText = isPaired
+                    ? "Welcome to ZingTalk! You do not have any saved contacts yet. You can say: call UID followed by any 10-digit number to place a call."
+                    : "Welcome to ZingTalk! To link this Alexa to your screen, say: pair UID followed by your 10-digit number. Or say: call UID followed by the digits to dial.";
+            }
             shouldEndSession = false;
             sessionAttributes = { pendingAction: 'call', mode: 'audio' };
             commandPayload = {
@@ -631,44 +634,223 @@ app.post('/api/alexa', async (req, res) => {
                     }
 
                     if (!rawName) {
-                        const sampleNames = userContacts.slice(0, 3).map(c => c.name).join(', ');
-                        speechText = `Who would you like to call on ZingTalk? You have ${sampleNames || 'saved contacts'} in your list.`;
+                        if (userContacts.length > 0) {
+                            const sampleNames = userContacts.slice(0, 3).map(c => c.name).join(', ');
+                            speechText = `Who would you like to call on ZingTalk? You have ${sampleNames} in your saved contacts.`;
+                        } else {
+                            speechText = "Who would you like to call? You can say: call UID followed by any 10-digit number.";
+                        }
                         shouldEndSession = false;
                         sessionAttributes = { pendingAction: 'call', mode: defaultMode };
                         break;
                     }
 
                     const mode = detectCallMode(rawName, defaultMode);
+
+                    // Support direct digit dialing if user spoke a 10-digit number
+                    const digitsSpoken = wordsToDigits(rawName).replace(/[^0-9]/g, '');
+                    if (digitsSpoken.length === 10) {
+                        lastCalledTarget = { uid: digitsSpoken, name: "UID " + digitsSpoken, mode: mode };
+                        speechText = `${mode === 'video' ? 'Starting video call with' : 'Calling'} UID ${digitsSpoken.split('').join(' ')} on ZingTalk.`;
+                        commandPayload = {
+                            intent: intentName,
+                            action: mode === 'video' ? 'video_call' : 'audio_call',
+                            contact: 'UID ' + digitsSpoken,
+                            targetUid: digitsSpoken,
+                            timestamp: Date.now()
+                        };
+                        shouldEndSession = true;
+                        sessionAttributes = {};
+                        break;
+                    }
+
                     const matched = smartFindContact(rawName, userContacts);
 
                     if (matched) {
                         lastCalledTarget = { uid: matched.uid, name: matched.name, mode: mode };
-                        if (mode === 'video') {
-                            speechText = `Starting video call with ${matched.name} on ZingTalk.`;
-                            commandPayload = {
-                                intent: 'ZingvideoIntent',
-                                action: 'video_call',
-                                contact: matched.name,
-                                targetUid: matched.uid,
-                                timestamp: Date.now()
-                            };
-                        } else {
-                            speechText = `Calling ${matched.name} on ZingTalk.`;
-                            commandPayload = {
-                                intent: 'ZingaudioCallIntent',
-                                action: 'audio_call',
-                                contact: matched.name,
-                                targetUid: matched.uid,
-                                timestamp: Date.now()
-                            };
-                        }
+                        speechText = mode === 'video'
+                            ? `Starting video call with ${matched.name} on ZingTalk.`
+                            : `Calling ${matched.name} on ZingTalk.`;
+                        commandPayload = {
+                            intent: intentName,
+                            action: mode === 'video' ? 'video_call' : 'audio_call',
+                            contact: matched.name,
+                            targetUid: matched.uid,
+                            timestamp: Date.now()
+                        };
                         shouldEndSession = true;
                         sessionAttributes = {};
                     } else {
-                        speechText = `Sorry, ${rawName} is not saved in your ZingTalk contacts.`;
+                        speechText = `Sorry, ${rawName} is not saved in your ZingTalk contacts. You can add them in the app with their 10-digit UID, or say: call UID followed by their 10 digits.`;
                         shouldEndSession = true;
                         sessionAttributes = {};
                     }
+                    break;
+                }
+                case 'ZingPairAccountIntent': {
+                    let rawUid = extractSlotVal(slots, 'uid', 'number', 'target', 'UID', 'Number');
+                    const digits = wordsToDigits(rawUid || '').replace(/[^0-9]/g, '');
+                    const cleanDigits = (digits.length === 10) ? digits : (rawUid || '').replace(/[^0-9]/g, '');
+                    if (cleanDigits.length === 10) {
+                        alexaDevicePairings.set(amazonUserId, cleanDigits);
+                        activeUserUid = cleanDigits;
+                        speechText = `Successfully paired this Alexa device with ZingTalk account UID ${cleanDigits.split('').join(' ')}! Your voice commands are now linked exclusively to your screen.`;
+                        shouldEndSession = true;
+                        commandPayload = {
+                            intent: 'ZingPairAccountIntent',
+                            action: 'device_paired',
+                            pairedUid: cleanDigits,
+                            timestamp: Date.now()
+                        };
+                        io.to(cleanDigits).emit('alexa_paired', { uid: cleanDigits });
+                    } else {
+                        speechText = "Please provide your 10 digit ZingTalk UID to pair. You can say: pair UID, followed by your 10 digits.";
+                        shouldEndSession = false;
+                    }
+                    break;
+                }
+                case 'ZingAnswerCallIntent': {
+                    speechText = "Answering incoming call on ZingTalk.";
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'ZingAnswerCallIntent',
+                        action: 'answer_call',
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'ZingRejectCallIntent': {
+                    speechText = "Declining incoming call on ZingTalk.";
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'ZingRejectCallIntent',
+                        action: 'reject_call',
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'ZingDialUidIntent': {
+                    let rawUid = extractSlotVal(slots, 'uid', 'number', 'target', 'UID', 'Number');
+                    const digits = wordsToDigits(rawUid || '').replace(/[^0-9]/g, '');
+                    const cleanDigits = (digits.length === 10) ? digits : (rawUid || '').replace(/[^0-9]/g, '');
+                    if (cleanDigits.length === 10) {
+                        lastCalledTarget = { uid: cleanDigits, name: "User " + cleanDigits, mode: 'audio' };
+                        speechText = `Dialing UID ${cleanDigits.split('').join(' ')} on ZingTalk.`;
+                        shouldEndSession = true;
+                        commandPayload = {
+                            intent: 'ZingDialUidIntent',
+                            action: 'audio_call',
+                            contact: 'User ' + cleanDigits,
+                            targetUid: cleanDigits,
+                            timestamp: Date.now()
+                        };
+                    } else {
+                        speechText = "Please provide a valid 10 digit UID number to call.";
+                        shouldEndSession = false;
+                    }
+                    break;
+                }
+                case 'ZingMuteMicIntent': {
+                    speechText = "Microphone muted on ZingTalk.";
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'ZingMuteMicIntent',
+                        action: 'mute_mic',
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'ZingUnmuteMicIntent': {
+                    speechText = "Microphone unmuted on ZingTalk.";
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'ZingUnmuteMicIntent',
+                        action: 'unmute_mic',
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'ZingTurnOffCameraIntent': {
+                    speechText = "Camera turned off on ZingTalk.";
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'ZingTurnOffCameraIntent',
+                        action: 'camera_off',
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'ZingTurnOnCameraIntent': {
+                    speechText = "Camera turned on on ZingTalk.";
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'ZingTurnOnCameraIntent',
+                        action: 'camera_on',
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'ZingOpenChatIntent': {
+                    const rawName = extractSlotVal(slots, 'contact', 'name', 'person', 'Contact', 'Name');
+                    const matched = smartFindContact(rawName, userContacts);
+                    if (matched) {
+                        speechText = `Opening chat with ${matched.name} on ZingTalk.`;
+                        shouldEndSession = true;
+                        commandPayload = {
+                            intent: 'ZingOpenChatIntent',
+                            action: 'open_chat',
+                            contact: matched.name,
+                            targetUid: matched.uid,
+                            timestamp: Date.now()
+                        };
+                    } else {
+                        speechText = `Sorry, ${rawName || 'that user'} is not saved in your ZingTalk contacts.`;
+                        shouldEndSession = true;
+                    }
+                    break;
+                }
+                case 'ZingOpenDialpadIntent': {
+                    speechText = "Opening dialpad on ZingTalk.";
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'ZingOpenDialpadIntent',
+                        action: 'open_dialpad',
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'ZingOpenContactsIntent': {
+                    speechText = "Opening contacts directory on ZingTalk.";
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'ZingOpenContactsIntent',
+                        action: 'open_contacts',
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'ZingOpenProfileIntent': {
+                    if (lastActiveTvUid) {
+                        speechText = `Your ZingTalk 10 digit UID is ${lastActiveTvUid.split('').join(' ')}.`;
+                    } else {
+                        speechText = "You are currently logged into ZingTalk on Fire TV.";
+                    }
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'ZingOpenProfileIntent',
+                        action: 'open_profile',
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'ZingClearChatIntent': {
+                    speechText = "Chat conversation cleared on ZingTalk.";
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'ZingClearChatIntent',
+                        action: 'clear_chat',
+                        timestamp: Date.now()
+                    };
                     break;
                 }
                 case 'ZingListContactsIntent':
@@ -799,9 +981,16 @@ app.post('/api/alexa', async (req, res) => {
             }
 
             if (commandPayload) {
-                // Broadcast to connected Fire TV client
-                io.emit('alexa_command', commandPayload);
-                console.log('[Alexa Skill Webhook] Dispatched alexa_command to TV client:', commandPayload);
+                if (activeUserUid && connectedUsers.has(activeUserUid)) {
+                    // Dispatched EXCLUSIVELY to this paired user's device/screen
+                    io.to(activeUserUid).emit('alexa_command', commandPayload);
+                    console.log(`[Alexa Skill Webhook] Dispatched exclusively to user room ${activeUserUid}:`, commandPayload);
+                } else if (lastActiveTvUid) {
+                    io.to(lastActiveTvUid).emit('alexa_command', commandPayload);
+                    console.log(`[Alexa Skill Webhook] Dispatched to active user room ${lastActiveTvUid}:`, commandPayload);
+                } else {
+                    io.emit('alexa_command', commandPayload);
+                }
             }
         } else if (reqType === 'SessionEndedRequest') {
             speechText = "";

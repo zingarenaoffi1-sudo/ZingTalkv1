@@ -86,6 +86,8 @@ export function updateUidDisplays(uid) {
     if (label) label.innerText = "UID: " + my10DigitUid;
     const modalUid = document.getElementById("modal-uid");
     if (modalUid) modalUid.innerText = my10DigitUid;
+    const alexaText = document.getElementById("alexa-pair-text");
+    if (alexaText) alexaText.innerText = `Voice: "Alexa, pair UID ${my10DigitUid}"`;
 }
 
 // WebRTC STUN Configuration (Google Primary -> AWS Failover)
@@ -97,17 +99,19 @@ const rtcConfig = {
     iceCandidatePoolSize: 10
 };
 
-const defaultSeedContacts = [
-    { uid: "1000000002", name: "Aman" },
-    { uid: "1000000003", name: "Rahul" },
-    { uid: "1000000005", name: "Raman" }
-];
-
-let myContacts = JSON.parse(localStorage.getItem("zingTalkContacts")) || [];
-if (!myContacts || myContacts.length === 0) {
-    myContacts = defaultSeedContacts;
-    localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
-}
+// Clean contacts list: starts empty, populated only when the user adds real contacts
+let myContacts = [];
+try {
+    const saved = localStorage.getItem("zingTalkContacts");
+    if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+            // Purge any legacy dummy/seed contacts
+            myContacts = parsed.filter(c => !["1000000002", "1000000003", "1000000005"].includes(c.uid) && !["Aman", "Rahul", "Raman"].includes(c.name));
+            localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
+        }
+    }
+} catch (_) {}
 
 let chatHistory = JSON.parse(localStorage.getItem("zingTalkHistory")) || {};
 let localStream = null;
@@ -312,6 +316,31 @@ export function registerSocketListeners(s) {
     // Alexa Webhook Intent Dispatcher from Server
     s.on("alexa_command", (cmd) => {
         handleAlexaIncomingCommand(cmd);
+    });
+
+    s.on("alexa_paired", (data) => {
+        showToast(`🎙️ Alexa Paired (UID: ${data.uid})`);
+        const badge = document.getElementById('alexa-pairing-badge');
+        if (badge) {
+            badge.classList.add('paired');
+            const dot = badge.querySelector('.tv-alexa-dot');
+            if (dot) dot.classList.add('active');
+            const text = document.getElementById('alexa-pair-text');
+            if (text) text.innerText = `🎙️ Alexa Linked (${data.uid})`;
+        }
+    });
+
+    s.on("contact_saved", (updatedContacts) => {
+        if (Array.isArray(updatedContacts)) {
+            myContacts = updatedContacts;
+            try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
+            renderContacts(myContacts);
+            showToast("Contact saved successfully");
+        }
+    });
+
+    s.on("contact_error", (errMsg) => {
+        showToast(errMsg || "Failed to save contact");
     });
 }
 
@@ -652,6 +681,70 @@ function handleAlexaIncomingCommand(cmd) {
         }
     } else if (action === 'end_call') {
         endCall();
+    } else if (action === 'answer_call') {
+        const acceptBtn = document.getElementById("accept-call-btn");
+        if (acceptBtn) acceptBtn.click();
+    } else if (action === 'reject_call') {
+        const rejectBtn = document.getElementById("reject-call-btn");
+        if (rejectBtn) rejectBtn.click();
+    } else if (action === 'mute_mic') {
+        if (localStream) {
+            const track = localStream.getAudioTracks()[0];
+            if (track) {
+                isMicMuted = true;
+                track.enabled = false;
+                showToast("Microphone muted");
+            }
+        }
+    } else if (action === 'unmute_mic') {
+        if (localStream) {
+            const track = localStream.getAudioTracks()[0];
+            if (track) {
+                isMicMuted = false;
+                track.enabled = true;
+                showToast("Microphone active");
+            }
+        }
+    } else if (action === 'camera_off') {
+        if (localStream) {
+            const track = localStream.getVideoTracks()[0];
+            if (track) {
+                track.enabled = false;
+                showToast("Camera turned off");
+            }
+        }
+    } else if (action === 'camera_on') {
+        if (localStream) {
+            const track = localStream.getVideoTracks()[0];
+            if (track) {
+                track.enabled = true;
+                showToast("Camera active");
+            }
+        }
+    } else if (action === 'open_chat') {
+        const targetUid = cmd.targetUid;
+        if (targetUid) {
+            const contact = myContacts.find(c => c.uid === targetUid) || { uid: targetUid, name: cmd.contact || ("UID " + targetUid) };
+            openChat(contact);
+        }
+    } else if (action === 'clear_chat') {
+        if (currentTargetUid) {
+            chatHistory[currentTargetUid] = [];
+            const messagesArea = document.getElementById("messages-area");
+            if (messagesArea) messagesArea.innerHTML = "";
+            try { localStorage.setItem("zingTalkHistory", JSON.stringify(chatHistory)); } catch (_) {}
+            showToast("Chat cleared");
+        }
+    } else if (action === 'open_dialpad') {
+        closeChat();
+        document.getElementById("dial-uid-input")?.focus();
+        showToast("Dialpad ready");
+    } else if (action === 'open_contacts') {
+        closeChat();
+        autoFocusFirstElement();
+        showToast("Contacts directory");
+    } else if (action === 'open_profile') {
+        showToast(`Your ZingTalk UID: ${my10DigitUid}`);
     } else if (action === 'type_message') {
         const text = cmd.message || "";
         const input = document.getElementById("message-input");
@@ -981,15 +1074,15 @@ document.addEventListener("click", async (e) => {
             return;
         }
 
-        if (socket) {
+        const updated = myContacts.filter(c => c.uid !== uid);
+        updated.push({ uid, name });
+        myContacts = updated;
+        localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
+        renderContacts(myContacts);
+        showToast(`Saved contact: ${name}`);
+
+        if (socket && socket.connected) {
             socket.emit("save_contact", { myUid: my10DigitUid, targetUid: uid, customName: name });
-        } else {
-            const updated = myContacts.filter(c => c.uid !== uid);
-            updated.push({ uid, name });
-            myContacts = updated;
-            localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
-            renderContacts(myContacts);
-            showToast("Contact saved");
         }
 
         if (document.getElementById("contact-uid-input")) document.getElementById("contact-uid-input").value = "";

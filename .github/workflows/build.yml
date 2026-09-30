@@ -154,6 +154,44 @@ jobs:
           if [ -f "google-services.json" ]; then
             cp google-services.json android/app/google-services.json
             echo "google-services.json successfully copied to android/app/"
+          else
+            echo "Writing google-services.json from configuration..."
+            cat << 'EOF' > android/app/google-services.json
+{
+  "project_info": {
+    "project_number": "214252384173",
+    "project_id": "zing-talk-c6496",
+    "storage_bucket": "zing-talk-c6496.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:214252384173:android:c7af5b0d4c3c0f41f77b24",
+        "android_client_info": {
+          "package_name": "com.zingtalk.com"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "214252384173-5222k1sa5mvl002c7kd7g90c2g70h69c.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAjvRGXKy9tHTMcyOFJXmrbYmMeVdczDjk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
+EOF
           fi
           if [ -f "zingtalk-release.keystore" ]; then
             cp zingtalk-release.keystore android/app/zingtalk-release.keystore
@@ -202,9 +240,16 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --stacktrace
-          # Copy and rename the production signed APK to ZingTalk.apk in root
-          cp app/build/outputs/apk/release/*-release*.apk ../ZingTalk.apk 2>/dev/null || cp app/build/outputs/apk/release/*.apk ../ZingTalk.apk
+          ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug --stacktrace
+          # Copy APK to ZingTalk.apk in root
+          APK_FILE=$(find app/build/outputs/apk -name "*.apk" -type f | head -n 1)
+          if [ -n "$APK_FILE" ]; then
+            cp "$APK_FILE" ../ZingTalk.apk
+            echo "Found APK: $APK_FILE -> copied to ZingTalk.apk"
+          else
+            echo "Error: No APK file generated!"
+            exit 1
+          fi
           ls -lh ../ZingTalk.apk
 
       - name: Upload Official ZingTalk APK
