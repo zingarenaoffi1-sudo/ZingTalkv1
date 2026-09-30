@@ -1,0 +1,20 @@
+{
+  "name": "zing-talk-backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "build": "node build-dist.js",
+    "lint": "node -c server.js"
+  },
+  "dependencies": {
+    "@capacitor-firebase/authentication": "^8.5.2",
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "express": "^4.18.2",
+    "firebase-admin": "^11.11.0",
+    "socket.io": "^4.7.2"
+  }
+}

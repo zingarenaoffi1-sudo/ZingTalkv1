@@ -1,0 +1,215 @@
+name: Build Android APK (ZingTalk)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Build Official Signed ZingTalk APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Required for Capacitor 7/8 & AGP 8+)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Set up Node.js (Node 22)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Dependencies & Build Web Assets
+        run: |
+          npm install
+          npm install --save @capacitor/core @capacitor/cli @capacitor/android @capacitor-firebase/authentication
+          npm run build
+
+      - name: Configure Capacitor & Add Android Platform
+        run: |
+          if [ ! -f "capacitor.config.json" ]; then
+            npx cap init ZingTalk com.zingtalk.com --web-dir dist
+          fi
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+          mkdir -p android/app
+          if [ -f "google-services.json" ]; then
+            cp google-services.json android/app/google-services.json
+            echo "google-services.json copied to android/app/ before sync"
+          fi
+          npx cap sync android
+
+      - name: Apply Google Services Gradle Plugin for Native Firebase
+        run: |
+          python3 -c '
+          import os, re
+
+          # 1. Project level build.gradle
+          root_gradle = "android/build.gradle"
+          if os.path.exists(root_gradle):
+              with open(root_gradle, "r", encoding="utf-8") as f:
+                  content = f.read()
+              if "com.google.gms:google-services" not in content:
+                  content = re.sub(
+                      r"(dependencies\s*\{)",
+                      r"\1\n        classpath \"com.google.gms:google-services:4.4.2\"",
+                      content,
+                      count=1
+                  )
+                  with open(root_gradle, "w", encoding="utf-8") as f:
+                      f.write(content)
+                  print("Added com.google.gms:google-services to android/build.gradle")
+
+          # 2. App level build.gradle
+          app_gradle = "android/app/build.gradle"
+          if os.path.exists(app_gradle):
+              with open(app_gradle, "r", encoding="utf-8") as f:
+                  content = f.read()
+              if "com.google.gms.google-services" not in content:
+                  content += "\napply plugin: '\''com.google.gms.google-services'\''\n"
+                  with open(app_gradle, "w", encoding="utf-8") as f:
+                      f.write(content)
+                  print("Applied com.google.gms.google-services to android/app/build.gradle")
+
+          # 3. variables.gradle for @capacitor-firebase/authentication Google Sign-In
+          var_gradle = "android/variables.gradle"
+          if os.path.exists(var_gradle):
+              with open(var_gradle, "r", encoding="utf-8") as f:
+                  vcontent = f.read()
+              if "rgcfaIncludeGoogle" not in vcontent:
+                  vcontent = re.sub(
+                      r"(ext\s*\{)",
+                      r"\1\n    rgcfaIncludeGoogle = true\n    playServicesAuthVersion = '\''20.7.0'\''",
+                      vcontent,
+                      count=1
+                  )
+                  with open(var_gradle, "w", encoding="utf-8") as f:
+                      f.write(vcontent)
+                  print("Added rgcfaIncludeGoogle and playServicesAuthVersion to android/variables.gradle")
+
+          # 4. Inject default_web_client_id into strings.xml
+          strings_path = "android/app/src/main/res/values/strings.xml"
+          if os.path.exists(strings_path):
+              with open(strings_path, "r", encoding="utf-8") as f:
+                  scontent = f.read()
+              if "default_web_client_id" not in scontent:
+                  scontent = scontent.replace("</resources>", "    <string name=\"default_web_client_id\">214252384173-5222k1sa5mvl002c7kd7g90c2g70h69c.apps.googleusercontent.com</string>\n</resources>")
+                  with open(strings_path, "w", encoding="utf-8") as f:
+                      f.write(scontent)
+                  print("Injected default_web_client_id into android/app/src/main/res/values/strings.xml")
+          '
+
+      - name: Inject Permissions in AndroidManifest.xml for Calls & Fire Tablets
+        run: |
+          python3 -c '
+          import os
+
+          manifest_path = "android/app/src/main/AndroidManifest.xml"
+          if os.path.exists(manifest_path):
+              with open(manifest_path, "r", encoding="utf-8") as f:
+                  content = f.read()
+
+              permissions = [
+                  "<uses-permission android:name=\"android.permission.INTERNET\" />",
+                  "<uses-permission android:name=\"android.permission.RECORD_AUDIO\" />",
+                  "<uses-permission android:name=\"android.permission.CAMERA\" />",
+                  "<uses-permission android:name=\"android.permission.MODIFY_AUDIO_SETTINGS\" />",
+                  "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />"
+              ]
+
+              perms_to_add = [p for p in permissions if p not in content]
+              if perms_to_add and "<application" in content:
+                  block = "\n    " + "\n    ".join(perms_to_add) + "\n\n    "
+                  content = content.replace("<application", block + "<application", 1)
+
+              with open(manifest_path, "w", encoding="utf-8") as f:
+                  f.write(content)
+              print("AndroidManifest.xml safely updated with permissions before <application>.")
+          '
+
+      - name: Inject ZingTalk App Icons into Android Resources
+        run: |
+          node generate-icons.js
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            res_dir="android/app/src/main/res/mipmap-${d}"
+            mkdir -p "$res_dir"
+            if [ -f "assets/mipmap-${d}/ic_launcher.png" ]; then
+              cp "assets/mipmap-${d}/ic_launcher.png" "$res_dir/ic_launcher.png"
+              cp "assets/mipmap-${d}/ic_launcher_round.png" "$res_dir/ic_launcher_round.png"
+              cp "assets/mipmap-${d}/ic_launcher_foreground.png" "$res_dir/ic_launcher_foreground.png"
+            fi
+          done
+          echo "ZingTalk custom brand launcher icons injected into Android resources."
+
+      - name: Inject google-services.json & Release Keystore
+        run: |
+          mkdir -p android/app
+          if [ -f "google-services.json" ]; then
+            cp google-services.json android/app/google-services.json
+            echo "google-services.json successfully copied to android/app/"
+          fi
+          if [ -f "zingtalk-release.keystore" ]; then
+            cp zingtalk-release.keystore android/app/zingtalk-release.keystore
+            echo "zingtalk-release.keystore successfully copied to android/app/"
+          else
+            echo "Generating 50-year release keystore fallback..."
+            keytool -genkey -v -keystore android/app/zingtalk-release.keystore \
+              -alias zingtalk -keyalg RSA -keysize 2048 -validity 18250 \
+              -storepass zingtalk123456 -keypass zingtalk123456 \
+              -dname "CN=ZingTalk, OU=Mobile, O=ZingTalk, L=Delhi, ST=Delhi, C=IN"
+            echo "50-year release keystore generated successfully."
+          fi
+
+      - name: Configure Signing in build.gradle
+        working-directory: android/app
+        run: |
+          python3 -c '
+          import re
+
+          with open("build.gradle", "r") as f:
+              content = f.read()
+
+          signing_block = """
+              signingConfigs {
+                  release {
+                      storeFile file("zingtalk-release.keystore")
+                      storePassword "zingtalk123456"
+                      keyAlias "zingtalk"
+                      keyPassword "zingtalk123456"
+                  }
+              }
+          """
+          if "signingConfigs {" not in content:
+              content = content.replace("android {", "android {" + signing_block, 1)
+
+          if "signingConfig signingConfigs.release" not in content:
+              # Safely inject signingConfig inside existing release block
+              content = re.sub(r"(buildTypes\s*\{\s*release\s*\{)", r"\1\n            signingConfig signingConfigs.release", content)
+
+          with open("build.gradle", "w") as f:
+              f.write(content)
+          '
+          echo "build.gradle successfully updated with release signingConfig"
+
+      - name: Build Official Signed Android APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --stacktrace
+          # Copy and rename the production signed APK to ZingTalk.apk in root
+          cp app/build/outputs/apk/release/*-release*.apk ../ZingTalk.apk 2>/dev/null || cp app/build/outputs/apk/release/*.apk ../ZingTalk.apk
+          ls -lh ../ZingTalk.apk
+
+      - name: Upload Official ZingTalk APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZingTalk-APK
+          path: ZingTalk.apk
+          if-no-files-found: error
