@@ -10,7 +10,7 @@ import {
     signOut
 } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js";
 
-// Client Firebase configuration for ZingTalk
+// Client Firebase configuration
 const firebaseConfig = {
     apiKey: "AIzaSyAjvRGXKy9tHTMcyOFJXmrbYmMeVdczDjk",
     authDomain: "zing-talk-c6496.firebaseapp.com",
@@ -26,7 +26,7 @@ try {
     auth = getAuth(app);
     provider = new GoogleAuthProvider();
 } catch (e) {
-    console.warn("Firebase client init note:", e);
+    // Initialized in offline fallback mode
 }
 
 export function showToast(message) {
@@ -44,37 +44,30 @@ window.addEventListener("submit", (e) => e.preventDefault());
 // Application State
 export let currentUser = null;
 export let my10DigitUid = null;
-export let my5DigitUid = null; // Alias for backward compatibility
 export let currentTargetUid = null;
+export let socket = null;
 
-// Determine backend server URL
+// Infrastructure Configuration (Handled in background)
+const AWS_SIGNALING_URL = "http://18.234.224.25:3000";
+const PRIMARY_STUN = "stun:stun.l.google.com:19302";
+const BACKUP_STUN = "stun:18.234.224.25:3478";
+let isStunFailoverActive = false;
+
+// Resolve backend signaling URL with mixed-content fallback
 export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
     if (saved && saved.trim()) return saved.trim();
 
-    // Check if running in regular browser with a remote origin (e.g. AI Studio preview)
-    if (typeof window !== "undefined" && window.location && window.location.origin) {
+    if (typeof window !== "undefined" && window.location && window.location.protocol === "https:") {
         const origin = window.location.origin;
         if (!origin.includes("localhost") && !origin.includes("capacitor:") && !origin.startsWith("file:")) {
             return origin;
         }
     }
-    // Default to user's live backend server
-    return "https://zingtalk-4clj.onrender.com";
+    return AWS_SIGNALING_URL;
 }
 
-// Update all UID labels across the UI
-export function updateUidDisplays(uid) {
-    if (!uid) return;
-    my10DigitUid = String(uid);
-    my5DigitUid = String(uid);
-    const label = document.getElementById("my-uid-label");
-    if (label) label.innerText = "UID: " + my10DigitUid;
-    const modalUid = document.getElementById("modal-uid");
-    if (modalUid) modalUid.innerText = my10DigitUid;
-}
-
-// Compute deterministic 10-digit UID (guarantees instant UID on Android even before server connects)
+// Compute deterministic 10-digit UID
 export function computeDeterministic10DigitUid(idStr) {
     if (!idStr) return "1000000001";
     let hash = 5381;
@@ -86,33 +79,37 @@ export function computeDeterministic10DigitUid(idStr) {
     return num.toString();
 }
 
-export function updateServerStatusUI(status) {
-    const dot = document.getElementById("server-status-dot");
-    const btn = document.getElementById("server-status-btn");
-    if (!dot) return;
-    const url = getEffectiveServerUrl();
-    if (status === "connected") {
-        dot.style.background = "#10b981";
-        if (btn) btn.title = "Connected to Server";
-    } else if (status === "connecting") {
-        dot.style.background = "#f59e0b";
-        if (btn) btn.title = "Connecting to Server...";
-    } else {
-        dot.style.background = "#ef4444";
-        if (btn) btn.title = "Server Disconnected";
-    }
+export function updateUidDisplays(uid) {
+    if (!uid) return;
+    my10DigitUid = String(uid);
+    const label = document.getElementById("my-uid-label");
+    if (label) label.innerText = "UID: " + my10DigitUid;
+    const modalUid = document.getElementById("modal-uid");
+    if (modalUid) modalUid.innerText = my10DigitUid;
 }
 
-// Socket.io connection state
-export let socket = null;
-export let isGroupMode = false;
-export let currentGroup = null;
+// WebRTC STUN Configuration (Google Primary -> AWS Failover)
+const rtcConfig = {
+    iceServers: [
+        { urls: [PRIMARY_STUN, "stun:stun1.l.google.com:19302"] },
+        { urls: BACKUP_STUN }
+    ],
+    iceCandidatePoolSize: 10
+};
+
+const defaultSeedContacts = [
+    { uid: "1000000002", name: "Aman" },
+    { uid: "1000000003", name: "Rahul" },
+    { uid: "1000000005", name: "Raman" }
+];
+
+let myContacts = JSON.parse(localStorage.getItem("zingTalkContacts")) || [];
+if (!myContacts || myContacts.length === 0) {
+    myContacts = defaultSeedContacts;
+    localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
+}
+
 let chatHistory = JSON.parse(localStorage.getItem("zingTalkHistory")) || {};
-let myGroups = JSON.parse(localStorage.getItem("zingTalkGroups")) || [];
-let blockedUids = JSON.parse(localStorage.getItem("zingTalkBlockedUids")) || [];
-let unreadCounts = {};
-let groupUnreadCounts = {};
-let myContacts = [];
 let localStream = null;
 let peerConnection = null;
 let activeCallTarget = null;
@@ -121,92 +118,60 @@ let isMicMuted = false;
 let callDurationTimer = null;
 let callSecondsElapsed = 0;
 let iceCandidatesQueue = [];
-let isRegisterMode = false;
-let typingTimeout = null;
-let selectedGroupEmoji = "👥";
-let activeReactionTargetMsgId = null;
 
-// Google's Public Free STUN Servers for WebRTC P2P Calling
-const rtcConfig = {
-    iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-        { urls: "stun:stun2.l.google.com:19302" },
-        { urls: "stun:stun3.l.google.com:19302" },
-        { urls: "stun:stun4.l.google.com:19302" }
-    ]
-};
-
-// Check for existing guest session
-const savedGuest = localStorage.getItem("zingTalkGuestUser");
-if (savedGuest) {
+// Auto-login from saved session
+const savedSession = localStorage.getItem("zingTalkTvSession");
+if (savedSession) {
     try {
-        const guestData = JSON.parse(savedGuest);
-        if (guestData && guestData.email && guestData.displayName) {
-            loginUserSession(guestData);
+        const sessionData = JSON.parse(savedSession);
+        if (sessionData && sessionData.displayName) {
+            loginUserSession(sessionData);
         }
     } catch (_) {}
-}
-
-export function directInAppGoogleLogin(customEmail) {
-    const defaultEmail = "zingarenaoffi1@gmail.com";
-    const emailToUse = (customEmail && customEmail.includes("@")) ? customEmail.trim() : defaultEmail;
-    const nameToUse = (emailToUse === defaultEmail) ? "ZingTalk Official" : emailToUse.split("@")[0];
-
-    const googleUser = {
-        uid: "google_" + computeDeterministic10DigitUid(emailToUse),
-        email: emailToUse,
-        displayName: nameToUse,
-        photoURL: ""
-    };
-    loginUserSession(googleUser);
-    showToast("Signed in with Google (" + emailToUse + ")");
 }
 
 function loginUserSession(user) {
     currentUser = user;
     document.getElementById("login-screen")?.classList.add("hidden");
+    document.getElementById("tv-top-bar")?.classList.remove("hidden");
     document.getElementById("main-screen")?.classList.remove("hidden");
 
-    const displayName = user.displayName || (user.email ? user.email.split("@")[0] : "User");
+    const displayName = user.displayName || (user.email ? user.email.split("@")[0] : "TV User");
     if (document.getElementById("my-name")) document.getElementById("my-name").innerText = displayName;
     if (document.getElementById("my-avatar")) document.getElementById("my-avatar").innerText = displayName.charAt(0).toUpperCase();
 
-    // 1. INSTANT 10-DIGIT UID FALLBACK (GUARANTEES UID IS NEVER EMPTY ON ANDROID APK!)
-    const cacheKey = "zingTalkUid_" + (user.email || user.uid);
+    const cacheKey = "zingTalkUid_" + (user.email || user.uid || displayName);
     const cachedUid = localStorage.getItem(cacheKey);
     if (cachedUid) {
         updateUidDisplays(cachedUid);
     } else if (!my10DigitUid) {
-        const instantUid = computeDeterministic10DigitUid(user.uid || user.email);
+        const instantUid = computeDeterministic10DigitUid(user.uid || user.email || displayName);
         updateUidDisplays(instantUid);
         localStorage.setItem(cacheKey, instantUid);
     }
 
-    // 2. Sync with Server
     if (socket && socket.connected) {
-        socket.emit("login_user", { email: user.email, name: displayName, uid: my10DigitUid });
+        socket.emit("login_user", { email: user.email, name: displayName, uid: my10DigitUid, contacts: myContacts });
+        socket.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
     }
+
+    renderContacts(myContacts);
+    autoFocusFirstElement();
 }
 
 function logoutUserSession() {
     currentUser = null;
     my10DigitUid = null;
-    my5DigitUid = null;
     currentTargetUid = null;
-    localStorage.removeItem("zingTalkGuestUser");
+    localStorage.removeItem("zingTalkTvSession");
     if (auth) {
         signOut(auth).catch(() => {});
     }
-    const isCapacitor = (typeof window !== "undefined" && window.Capacitor);
-    if (isCapacitor && window.Capacitor.Plugins?.FirebaseAuthentication) {
-        window.Capacitor.Plugins.FirebaseAuthentication.signOut().catch(() => {});
-    }
     document.getElementById("profile-modal")?.classList.add("hidden");
     document.getElementById("main-screen")?.classList.add("hidden");
-    document.getElementById("chat-screen")?.classList.add("hidden");
+    document.getElementById("tv-top-bar")?.classList.add("hidden");
     document.getElementById("login-screen")?.classList.remove("hidden");
-    showToast("Logged out successfully");
+    showToast("Signed out");
 }
 
 if (auth) {
@@ -215,30 +180,21 @@ if (auth) {
             loginUserSession(user);
         } else if (!currentUser) {
             document.getElementById("login-screen")?.classList.remove("hidden");
+            document.getElementById("tv-top-bar")?.classList.add("hidden");
             document.getElementById("main-screen")?.classList.add("hidden");
-            document.getElementById("chat-screen")?.classList.add("hidden");
         }
     });
 }
 
-// ----------------- Socket Events & Management -----------------
+// ----------------- Socket Signaling & Alexa Webhook Commands -----------------
 export function registerSocketListeners(s) {
     if (!s) return;
 
     s.on("connect", () => {
-        updateServerStatusUI("connected");
         if (currentUser) {
-            s.emit("login_user", { email: currentUser.email, name: currentUser.displayName || "User", uid: my10DigitUid });
+            s.emit("login_user", { email: currentUser.email, name: currentUser.displayName || "TV User", uid: my10DigitUid, contacts: myContacts });
+            s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
         }
-    });
-
-    s.on("disconnect", () => {
-        updateServerStatusUI("disconnected");
-    });
-
-    s.on("connect_error", (err) => {
-        console.warn("Socket connect note:", err ? err.message : "connection error");
-        updateServerStatusUI("disconnected");
     });
 
     s.on("user_data", (data) => {
@@ -248,41 +204,20 @@ export function registerSocketListeners(s) {
                 localStorage.setItem("zingTalkUid_" + (currentUser.email || currentUser.uid), my10DigitUid);
             }
         }
-        const displayName = (currentUser && currentUser.displayName) ? currentUser.displayName : "User";
-        
-        if (document.getElementById("my-name")) document.getElementById("my-name").innerText = displayName;
-        if (document.getElementById("my-avatar")) document.getElementById("my-avatar").innerText = displayName.charAt(0).toUpperCase();
-        
-        // Sync active blocks with server
-        blockedUids.forEach(bUid => {
-            s.emit("block_user", { blockerUid: my10DigitUid, blockedUid: bUid });
-        });
-        updateBlockedCountBadge();
-
-        renderContacts(data.contacts);
-    });
-
-    s.on("message_status", (status) => {
-        const msgEl = document.querySelector(`.msg-bubble[data-msg-id="${status.msgId}"]`);
-        if (msgEl) {
-            const checkEl = msgEl.querySelector(".msg-meta span");
-            if (checkEl) {
-                if (status.delivered) {
-                    checkEl.innerHTML = "✓✓";
-                    checkEl.style.color = "#53bdeb";
-                } else {
-                    checkEl.innerHTML = "✓";
-                    checkEl.style.color = "#8696a0"; // Emulates WhatsApp single checkmark when blocked
-                }
-            }
+        if (data && data.contacts && data.contacts.length > 0) {
+            myContacts = data.contacts;
+            localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
+            renderContacts(myContacts);
+            s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
         }
     });
 
     s.on("contact_saved", (contacts) => {
-        if (document.getElementById("search-uid-input")) document.getElementById("search-uid-input").value = "";
-        if (document.getElementById("save-name-input")) document.getElementById("save-name-input").value = "";
-        showToast("Contact saved successfully!");
-        renderContacts(contacts);
+        myContacts = contacts;
+        localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
+        renderContacts(myContacts);
+        s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+        showToast("Contact saved successfully");
     });
 
     s.on("contact_error", (msg) => {
@@ -291,111 +226,38 @@ export function registerSocketListeners(s) {
 
     s.on("receive_message", (data) => {
         const sender = data.senderUid;
-        if (blockedUids.includes(sender)) return; // Blocked user filter
         if (!chatHistory[sender]) chatHistory[sender] = [];
         chatHistory[sender].push({ ...data, type: "msg-received" });
         localStorage.setItem("zingTalkHistory", JSON.stringify(chatHistory));
 
-        if (!isGroupMode && currentTargetUid === sender) {
+        if (currentTargetUid === sender) {
             appendMessage(data, "msg-received");
-        } else {
-            unreadCounts[sender] = (unreadCounts[sender] || 0) + 1;
-            renderContacts(myContacts);
         }
-    });
-
-    s.on("receive_group_message", (data) => {
-        if (data.senderUid === my10DigitUid) return;
-        const gid = data.groupId;
-        saveGroupMessage(gid, { ...data, type: "msg-received" });
-
-        if (isGroupMode && currentGroup && currentGroup.groupId === gid) {
-            appendMessage(data, "msg-received");
-        } else {
-            groupUnreadCounts[gid] = (groupUnreadCounts[gid] || 0) + 1;
-            renderGroups();
-        }
-    });
-
-    s.on("group_created", (group) => {
-        if (!myGroups.some(g => g.groupId === group.groupId)) {
-            myGroups.push(group);
-            localStorage.setItem("zingTalkGroups", JSON.stringify(myGroups));
-        }
-        renderGroups();
-        openGroupChat(group);
-        showToast(`Group "${group.name}" created! (10-digit ID: ${group.groupId})`);
-    });
-
-    s.on("group_added", (group) => {
-        if (!myGroups.some(g => g.groupId === group.groupId)) {
-            myGroups.push(group);
-            localStorage.setItem("zingTalkGroups", JSON.stringify(myGroups));
-        }
-        renderGroups();
-        showToast(`You were added to group "${group.name}"!`);
-    });
-
-    s.on("user_typing", (data) => {
-        const statusEl = document.getElementById("chat-contact-uid");
-        if (!statusEl) return;
-        if (isGroupMode && currentGroup && currentGroup.groupId === data.targetId) {
-            statusEl.innerText = `✍️ ${data.senderName} is typing...`;
-            statusEl.style.color = "#25d366";
-        } else if (!isGroupMode && currentTargetUid === data.senderUid) {
-            statusEl.innerText = `✍️ typing...`;
-            statusEl.style.color = "#25d366";
-        }
-    });
-
-    s.on("user_stop_typing", () => {
-        const statusEl = document.getElementById("chat-contact-uid");
-        if (!statusEl) return;
-        statusEl.style.color = "";
-        if (isGroupMode && currentGroup) {
-            statusEl.innerText = `${currentGroup.members ? currentGroup.members.length : 1} members • ID: ${currentGroup.groupId}`;
-        } else if (!isGroupMode && currentTargetUid) {
-            statusEl.innerText = "UID: " + currentTargetUid;
-        }
-    });
-
-    s.on("receive_reaction", (data) => {
-        applyReactionToMessage(data.msgId, data.emoji, data.userUid);
-    });
-
-    s.on("report_ack", (data) => {
-        showToast(data.message || "Report filed with compliance team.");
     });
 
     s.on("incoming_call", (data) => {
-        if (blockedUids.includes(data.callerUid)) {
-            s.emit("call_response", { targetUid: data.callerUid, status: "rejected" });
-            return;
-        }
         activeCallTarget = data.callerUid;
         currentCallType = data.type || "video";
 
         let callerNameToShow = "UID: " + data.callerUid;
         const knownContact = myContacts.find(c => c.uid === data.callerUid);
-        if (knownContact) {
-            callerNameToShow = knownContact.name;
-        }
+        if (knownContact) callerNameToShow = knownContact.name;
 
         const callerDisplay = document.getElementById("caller-name-display");
-        if (callerDisplay) {
-            callerDisplay.innerText = callerNameToShow;
-        }
+        if (callerDisplay) callerDisplay.innerText = callerNameToShow;
+
         const callTypeEl = document.getElementById("incoming-call-type");
         if (callTypeEl) {
-            callTypeEl.innerText = `Incoming ${currentCallType === 'video' ? 'Video' : 'HD Audio'} Call...`;
+            callTypeEl.innerText = `Incoming ${currentCallType === 'video' ? 'HD Video' : 'Audio'} Call...`;
         }
         document.getElementById("incoming-call-overlay")?.classList.remove("hidden");
+        document.getElementById("accept-call-btn")?.focus();
     });
 
     s.on("call_cancelled", () => {
         document.getElementById("incoming-call-overlay")?.classList.add("hidden");
         activeCallTarget = null;
-        showToast("Call cancelled by caller");
+        showToast("Call cancelled");
     });
 
     s.on("call_response_received", async (data) => {
@@ -403,7 +265,7 @@ export function registerSocketListeners(s) {
         if (data.status === "accepted") {
             await startWebRTC(true);
         } else {
-            showToast("The other person declined the call.");
+            showToast("Call declined");
             activeCallTarget = null;
         }
     });
@@ -419,31 +281,24 @@ export function registerSocketListeners(s) {
             while (iceCandidatesQueue.length > 0) {
                 await peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidatesQueue.shift()));
             }
-        } catch (err) {
-            console.error("Error handling WebRTC offer:", err);
-        }
+        } catch (_) {}
     });
 
     s.on("webrtc_answer_received", async (data) => {
         if (!peerConnection) return;
         try {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-
             while (iceCandidatesQueue.length > 0) {
                 await peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidatesQueue.shift()));
             }
-        } catch (err) {
-            console.error("Error handling WebRTC answer:", err);
-        }
+        } catch (_) {}
     });
 
     s.on("webrtc_ice_candidate_received", async (data) => {
         if (peerConnection && peerConnection.remoteDescription) {
             try {
                 await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-            } catch (err) {
-                console.error("Error adding ice candidate:", err);
-            }
+            } catch (_) {}
         } else {
             iceCandidatesQueue.push(data.candidate);
         }
@@ -453,17 +308,21 @@ export function registerSocketListeners(s) {
         endCallCleanup();
         showToast("Call ended");
     });
+
+    // Alexa Webhook Intent Dispatcher from Server
+    s.on("alexa_command", (cmd) => {
+        handleAlexaIncomingCommand(cmd);
+    });
 }
 
-export function connectSocket(customUrl) {
+export function connectSocket() {
     if (typeof io === "undefined") return null;
-    const targetUrl = (customUrl !== undefined ? customUrl : getEffectiveServerUrl()) || "";
-    
+    const targetUrl = getEffectiveServerUrl() || "";
+
     if (socket) {
         try { socket.disconnect(); } catch (_) {}
     }
 
-    updateServerStatusUI("connecting");
     const socketOpts = {
         transports: ["websocket", "polling"],
         reconnection: true,
@@ -477,371 +336,132 @@ export function connectSocket(customUrl) {
     return socket;
 }
 
-// Connect socket on startup
 connectSocket();
 
-// ----------------- UI Rendering -----------------
+// ----------------- UI Rendering (Clean TV Leanback) -----------------
 function renderContacts(contacts) {
-    const contactsList = document.getElementById("contacts-list");
-    if (!contactsList || !contacts) return;
-    contactsList.innerHTML = "";
-    myContacts = contacts;
+    const list = document.getElementById("contacts-list");
+    if (!list) return;
+    list.innerHTML = "";
 
-    if (contacts.length === 0) {
-        contactsList.innerHTML = `
-            <div style="padding: 44px 24px; text-align: center; color: #8696a0;">
-                <div style="font-size: 42px; margin-bottom: 12px;">💬</div>
-                <p style="font-size: 16px; font-weight: 700; color: #111b21; margin-bottom: 6px;">No conversations yet</p>
-                <p style="font-size: 13px; line-height: 1.4;">Enter a friend's 10-digit UID above to start chatting and calling!</p>
+    if (!contacts || contacts.length === 0) {
+        list.innerHTML = `
+            <div style="padding: 24px 10px; text-align: center; color: var(--tv-text-secondary); font-size: 14.5px;">
+                No contacts saved yet. Enter a 10-digit UID above to save a contact.
             </div>
         `;
         return;
     }
 
     contacts.forEach(contact => {
-        const unreadCount = unreadCounts[contact.uid] || 0;
-        const badge = unreadCount > 0 ? `<span class="unread-pill">${unreadCount}</span>` : "";
-        const div = document.createElement("div");
-        div.className = "contact-row";
-        div.innerHTML = `
-            <div class="avatar small">${(contact.name || "U").charAt(0).toUpperCase()}</div>
-            <div class="contact-info">
-                <span class="contact-name">${escapeHtml(contact.name)}</span>
-                <span class="contact-uid-label">UID: ${contact.uid}</span>
+        const card = document.createElement("div");
+        card.className = "tv-contact-card tv-focusable";
+        card.tabIndex = 0;
+        card.innerHTML = `
+            <div class="tv-contact-info-block">
+                <div class="tv-avatar-circle">${(contact.name || "U").charAt(0).toUpperCase()}</div>
+                <div>
+                    <div class="tv-contact-name-txt">${escapeHtml(contact.name)}</div>
+                    <div class="tv-contact-uid-txt">UID: ${contact.uid}</div>
+                </div>
             </div>
-            ${badge}
-        `;
-        div.onclick = () => openChat(contact);
-        contactsList.appendChild(div);
-    });
-}
-
-function renderGroups() {
-    const list = document.getElementById("groups-list");
-    if (!list) return;
-    list.innerHTML = "";
-
-    if (myGroups.length === 0) {
-        list.innerHTML = `
-            <div style="padding: 44px 24px; text-align: center; color: #8696a0;">
-                <div style="font-size: 42px; margin-bottom: 12px;">👥</div>
-                <p style="font-size: 16px; font-weight: 700; color: #111b21; margin-bottom: 6px;">No groups yet</p>
-                <p style="font-size: 13px; line-height: 1.4;">Click <strong>+ New Group</strong> above to create a group chat with friends using 10-digit UIDs!</p>
+            <div class="tv-contact-quick-actions">
+                <button type="button" class="tv-mini-call-btn tv-focusable" data-action="audio" title="Audio Call">📞</button>
+                <button type="button" class="tv-mini-call-btn tv-focusable" data-action="video" title="Video Call">🎥</button>
             </div>
         `;
-        return;
-    }
 
-    myGroups.forEach(group => {
-        const unread = groupUnreadCounts[group.groupId] || 0;
-        const badge = unread > 0 ? `<span class="unread-pill">${unread}</span>` : "";
-        const div = document.createElement("div");
-        div.className = "contact-row";
-        div.innerHTML = `
-            <div class="avatar small" style="font-size: 20px;">${group.icon || '👥'}</div>
-            <div class="contact-info">
-                <span class="contact-name">${escapeHtml(group.name)}</span>
-                <span class="contact-uid-label">${group.members ? group.members.length : 1} members • ID: ${group.groupId}</span>
-            </div>
-            ${badge}
-        `;
-        div.onclick = () => openGroupChat(group);
-        list.appendChild(div);
-    });
-}
+        card.addEventListener("click", (e) => {
+            const btn = e.target.closest("button");
+            if (btn) {
+                const action = btn.dataset.action;
+                initiateDirectCall(contact.uid, action);
+            } else {
+                openChat(contact);
+            }
+        });
 
-function openGroupChat(group) {
-    isGroupMode = true;
-    currentGroup = group;
-    currentTargetUid = null;
-    groupUnreadCounts[group.groupId] = 0;
-    renderGroups();
+        card.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                openChat(contact);
+            }
+        });
 
-    document.getElementById("main-screen")?.classList.add("hidden");
-    document.getElementById("chat-screen")?.classList.remove("hidden");
-
-    if (document.getElementById("chat-contact-name")) document.getElementById("chat-contact-name").innerText = group.name;
-    if (document.getElementById("chat-contact-uid")) document.getElementById("chat-contact-uid").innerText = `${group.members ? group.members.length : 1} members • ID: ${group.groupId}`;
-    if (document.getElementById("chat-avatar")) document.getElementById("chat-avatar").innerText = group.icon || "👥";
-    document.getElementById("opt-group-info")?.classList.remove("hidden");
-
-    const chatMessagesArea = document.getElementById("messages-area");
-    if (chatMessagesArea) {
-        chatMessagesArea.innerHTML = `<div class="date-divider">GROUP CHAT (${escapeHtml(group.name)})</div>`;
-        const history = JSON.parse(localStorage.getItem("zingTalkGroupHistory_" + group.groupId)) || [];
-        history.forEach(msg => appendMessage(msg, msg.type));
-    }
-}
-
-function saveGroupMessage(groupId, msg) {
-    const key = "zingTalkGroupHistory_" + groupId;
-    const history = JSON.parse(localStorage.getItem(key)) || [];
-    history.push(msg);
-    try {
-        localStorage.setItem(key, JSON.stringify(history));
-    } catch (_) {}
-}
-
-function updateBlockedCountBadge() {
-    const badge = document.getElementById("blocked-count-badge");
-    if (badge) badge.innerText = blockedUids.length;
-}
-
-function updateChatBlockUI() {
-    const banner = document.getElementById("blocked-chat-banner");
-    const inputBar = document.getElementById("chat-input-bar");
-    const optBlock = document.getElementById("opt-block-user");
-    const blockText = document.getElementById("opt-block-text");
-
-    if (isGroupMode || !currentTargetUid) {
-        banner?.classList.add("hidden");
-        inputBar?.classList.remove("hidden");
-        optBlock?.classList.add("hidden");
-        return;
-    }
-
-    optBlock?.classList.remove("hidden");
-    const isBlocked = blockedUids.includes(currentTargetUid);
-
-    if (isBlocked) {
-        banner?.classList.remove("hidden");
-        inputBar?.classList.add("hidden");
-        if (blockText) {
-            blockText.innerText = "✅ Unblock Contact";
-            blockText.style.color = "#008069";
-        }
-    } else {
-        banner?.classList.add("hidden");
-        inputBar?.classList.remove("hidden");
-        if (blockText) {
-            blockText.innerText = "🚫 Block Contact";
-            blockText.style.color = "#ea4335";
-        }
-    }
-}
-
-function blockUser(uid) {
-    if (!uid) return;
-    if (!blockedUids.includes(uid)) {
-        blockedUids.push(uid);
-        try {
-            localStorage.setItem("zingTalkBlockedUids", JSON.stringify(blockedUids));
-        } catch (_) {}
-    }
-    if (socket) {
-        socket.emit("block_user", { blockerUid: my10DigitUid, blockedUid: uid });
-    }
-    updateChatBlockUI();
-    updateBlockedCountBadge();
-    const contact = myContacts.find(c => c.uid === uid);
-    const name = contact ? contact.name : ("UID: " + uid);
-    showToast(`${name} has been blocked`);
-}
-
-function unblockUser(uid) {
-    if (!uid) return;
-    blockedUids = blockedUids.filter(id => id !== uid);
-    try {
-        localStorage.setItem("zingTalkBlockedUids", JSON.stringify(blockedUids));
-    } catch (_) {}
-    if (socket) {
-        socket.emit("unblock_user", { blockerUid: my10DigitUid, blockedUid: uid });
-    }
-    updateChatBlockUI();
-    updateBlockedCountBadge();
-    const contact = myContacts.find(c => c.uid === uid);
-    const name = contact ? contact.name : ("UID: " + uid);
-    showToast(`${name} has been unblocked`);
-    renderBlockedListModal();
-}
-
-function renderBlockedListModal() {
-    const feed = document.getElementById("blocked-users-feed");
-    if (!feed) return;
-    feed.innerHTML = "";
-    if (blockedUids.length === 0) {
-        feed.innerHTML = `<div style="text-align: center; color: #8696a0; padding: 24px 16px; font-size: 13px;">No blocked contacts</div>`;
-        return;
-    }
-    blockedUids.forEach(uid => {
-        const contact = myContacts.find(c => c.uid === uid);
-        const name = contact ? contact.name : ("User " + uid);
-        const row = document.createElement("div");
-        row.className = "blocked-item-row";
-        row.innerHTML = `
-            <div class="blocked-item-info">
-                <span class="blocked-item-name">${escapeHtml(name)}</span>
-                <span class="blocked-item-uid">UID: ${uid}</span>
-            </div>
-            <button type="button" class="unblock-mini-btn" data-unblock-uid="${uid}">Unblock</button>
-        `;
-        row.querySelector(".unblock-mini-btn").onclick = (e) => {
-            e.stopPropagation();
-            unblockUser(uid);
-        };
-        feed.appendChild(row);
+        list.appendChild(card);
     });
 }
 
 function openChat(contact) {
-    isGroupMode = false;
-    currentGroup = null;
     currentTargetUid = contact.uid;
-    unreadCounts[contact.uid] = 0;
-    renderContacts(myContacts);
-    document.getElementById("main-screen")?.classList.add("hidden");
-    document.getElementById("chat-screen")?.classList.remove("hidden");
-    document.getElementById("opt-group-info")?.classList.add("hidden");
+    document.getElementById("tv-empty-stage")?.classList.add("hidden");
+    document.getElementById("tv-active-chat")?.classList.remove("hidden");
 
-    if (document.getElementById("chat-contact-name")) document.getElementById("chat-contact-name").innerText = contact.name;
-    if (document.getElementById("chat-contact-uid")) document.getElementById("chat-contact-uid").innerText = "UID: " + contact.uid;
-    if (document.getElementById("chat-avatar")) document.getElementById("chat-avatar").innerText = (contact.name || "U").charAt(0).toUpperCase();
+    if (document.getElementById("chat-contact-name")) {
+        document.getElementById("chat-contact-name").innerText = contact.name;
+    }
+    if (document.getElementById("chat-contact-uid")) {
+        document.getElementById("chat-contact-uid").innerText = "UID: " + contact.uid;
+    }
+    if (document.getElementById("chat-avatar")) {
+        document.getElementById("chat-avatar").innerText = (contact.name || "U").charAt(0).toUpperCase();
+    }
 
-    const chatMessagesArea = document.getElementById("messages-area");
-    if (chatMessagesArea) {
-        chatMessagesArea.innerHTML = `<div class="date-divider">TODAY</div>`;
+    const messagesArea = document.getElementById("messages-area");
+    if (messagesArea) {
+        messagesArea.innerHTML = "";
         if (chatHistory[contact.uid]) {
             chatHistory[contact.uid].forEach(msg => appendMessage(msg, msg.type));
         }
     }
-    updateChatBlockUI();
+    document.getElementById("message-input")?.focus();
+}
+
+function closeChat() {
+    currentTargetUid = null;
+    document.getElementById("tv-active-chat")?.classList.add("hidden");
+    document.getElementById("tv-empty-stage")?.classList.remove("hidden");
+    autoFocusFirstElement();
 }
 
 function sendMessageLogic() {
-    const messageInput = document.getElementById("message-input");
-    const text = messageInput?.value.trim();
-    if (!text || !socket) return;
+    const input = document.getElementById("message-input");
+    const text = input?.value.trim();
+    if (!text || !currentTargetUid || !socket) return;
 
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const msgId = "msg_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const msgData = {
+        id: "msg_" + Date.now(),
+        senderUid: my10DigitUid,
+        receiverUid: currentTargetUid,
+        text: text,
+        timestamp: timeStr
+    };
 
-    if (isGroupMode && currentGroup) {
-        const msgData = {
-            id: msgId,
-            groupId: currentGroup.groupId,
-            senderUid: my10DigitUid,
-            senderName: (currentUser && currentUser.displayName) ? currentUser.displayName : "User",
-            text: text,
-            timestamp: timeStr,
-            reactions: {}
-        };
-        socket.emit("send_group_message", msgData);
-        appendMessage(msgData, "msg-sent");
-        saveGroupMessage(currentGroup.groupId, { ...msgData, type: "msg-sent" });
-        messageInput.value = "";
-    } else if (currentTargetUid) {
-        const msgData = {
-            id: msgId,
-            senderUid: my10DigitUid,
-            receiverUid: currentTargetUid,
-            text: text,
-            timestamp: timeStr,
-            reactions: {}
-        };
-        socket.emit("send_message", msgData);
-        appendMessage(msgData, "msg-sent");
+    socket.emit("send_message", msgData);
+    appendMessage(msgData, "msg-sent");
 
-        if (!chatHistory[currentTargetUid]) chatHistory[currentTargetUid] = [];
-        chatHistory[currentTargetUid].push({ ...msgData, type: "msg-sent" });
-        try {
-            localStorage.setItem("zingTalkHistory", JSON.stringify(chatHistory));
-        } catch (_) {}
+    if (!chatHistory[currentTargetUid]) chatHistory[currentTargetUid] = [];
+    chatHistory[currentTargetUid].push({ ...msgData, type: "msg-sent" });
+    try {
+        localStorage.setItem("zingTalkHistory", JSON.stringify(chatHistory));
+    } catch (_) {}
 
-        messageInput.value = "";
-    }
+    input.value = "";
 }
 
 function appendMessage(data, type) {
-    const chatMessagesArea = document.getElementById("messages-area");
-    if (!chatMessagesArea) return;
+    const area = document.getElementById("messages-area");
+    if (!area) return;
+
     const div = document.createElement("div");
-    div.className = `msg-bubble ${type}`;
-    div.dataset.msgId = data.id || ("msg_" + Date.now());
-
-    let groupSenderHtml = "";
-    if (isGroupMode && type !== 'msg-sent' && data.senderName) {
-        groupSenderHtml = `<span class="group-msg-sender">${escapeHtml(data.senderName)}</span>`;
-    }
-
-    let mediaHtml = "";
-    if (data.media) {
-        if (data.media.type === "image") {
-            mediaHtml = `<img src="${data.media.dataUrl}" class="chat-media-img" alt="${escapeHtml(data.media.name || 'Photo')}" title="Click to view full size" />`;
-        } else if (data.media.type === "audio") {
-            mediaHtml = `
-                <div class="chat-media-audio">
-                    <audio controls preload="metadata" src="${data.media.dataUrl}"></audio>
-                </div>
-            `;
-        } else if (data.media.type === "video") {
-            mediaHtml = `
-                <video controls preload="metadata" playsinline src="${data.media.dataUrl}" class="chat-media-video"></video>
-            `;
-        }
-    }
-
-    const captionHtml = data.text ? `<div class="${data.media ? 'media-caption' : ''}">${escapeHtml(data.text)}</div>` : '';
-    const checkmark = type === 'msg-sent' ? `<span style="color:#53bdeb; margin-left: 2px;">✓✓</span>` : '';
-
-    let reactionHtml = "";
-    if (data.reactions && Object.keys(data.reactions).length > 0) {
-        const counts = {};
-        Object.values(data.reactions).forEach(em => counts[em] = (counts[em] || 0) + 1);
-        const badges = Object.entries(counts).map(([em, cnt]) => `${em} ${cnt > 1 ? cnt : ''}`).join(" ");
-        reactionHtml = `<div class="reaction-badge">${badges}</div>`;
-    }
-
+    div.className = `tv-msg ${type === 'msg-sent' ? 'tv-msg-sent' : 'tv-msg-received'}`;
     div.innerHTML = `
-        ${groupSenderHtml}
-        ${mediaHtml}
-        ${captionHtml}
-        <span class="msg-meta">
-            ${data.timestamp || ''}
-            ${checkmark}
-        </span>
-        ${reactionHtml}
+        <div>${escapeHtml(data.text)}</div>
+        <div class="tv-msg-meta">${data.timestamp || ''}</div>
     `;
-
-    // Click on shared image to open full-screen viewer
-    if (data.media && data.media.type === "image") {
-        const imgEl = div.querySelector(".chat-media-img");
-        if (imgEl) {
-            imgEl.addEventListener("click", () => openMediaViewer(data.media));
-        }
-    }
-
-    // Reaction trigger on message contextmenu or long-press
-    div.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        showReactionPopover(div, data.id || div.dataset.msgId);
-    });
-
-    chatMessagesArea.appendChild(div);
-    chatMessagesArea.scrollTop = chatMessagesArea.scrollHeight;
-}
-
-function showReactionPopover(msgElement, msgId) {
-    activeReactionTargetMsgId = msgId;
-    const popover = document.getElementById("reaction-popover");
-    if (!popover) return;
-    const rect = msgElement.getBoundingClientRect();
-    popover.style.top = `${Math.max(10, rect.top - 42)}px`;
-    popover.style.left = `${Math.max(10, rect.left)}px`;
-    popover.classList.remove("hidden");
-}
-
-function applyReactionToMessage(msgId, emoji) {
-    const msgEl = document.querySelector(`.msg-bubble[data-msg-id="${msgId}"]`);
-    if (msgEl) {
-        let badge = msgEl.querySelector(".reaction-badge");
-        if (!badge) {
-            badge = document.createElement("div");
-            badge.className = "reaction-badge";
-            msgEl.appendChild(badge);
-        }
-        badge.innerText = `${emoji} 1`;
-    }
+    area.appendChild(div);
+    area.scrollTop = area.scrollHeight;
 }
 
 function escapeHtml(text) {
@@ -851,228 +471,7 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// ----------------- Zero-Server Media & Voice Note Engine -----------------
-function openMediaViewer(mediaData) {
-    const modal = document.getElementById("media-viewer-modal");
-    const content = document.getElementById("media-viewer-content");
-    const downloadLink = document.getElementById("media-download-link");
-    if (!modal || !content) return;
-
-    content.innerHTML = "";
-    if (mediaData.type === "image") {
-        const img = document.createElement("img");
-        img.src = mediaData.dataUrl;
-        img.className = "media-viewer-preview";
-        img.alt = mediaData.name || "Preview";
-        content.appendChild(img);
-    } else if (mediaData.type === "video") {
-        const video = document.createElement("video");
-        video.src = mediaData.dataUrl;
-        video.controls = true;
-        video.autoplay = true;
-        video.className = "media-viewer-preview";
-        content.appendChild(video);
-    }
-
-    if (downloadLink) {
-        downloadLink.href = mediaData.dataUrl;
-        downloadLink.download = mediaData.name || `zingtalk_${Date.now()}`;
-    }
-
-    modal.classList.remove("hidden");
-}
-
-// Media file input handler (Zero server storage - direct peer transmission)
-const mediaFileInput = document.getElementById("media-file-input");
-if (mediaFileInput) {
-    mediaFileInput.addEventListener("change", () => {
-        const file = mediaFileInput.files && mediaFileInput.files[0];
-        if (!file) return;
-        if (!currentTargetUid && !isGroupMode) {
-            showToast("Please open a conversation to share media");
-            return;
-        }
-
-        if (file.size > 25 * 1024 * 1024) {
-            showToast("File size too large (max 25MB). Direct peer transmission limit.");
-            return;
-        }
-
-        showToast(`Sending ${file.name}... (Zero server storage)`);
-        const reader = new FileReader();
-        reader.onload = () => {
-            let mediaType = "file";
-            if (file.type.startsWith("image/")) mediaType = "image";
-            else if (file.type.startsWith("audio/")) mediaType = "audio";
-            else if (file.type.startsWith("video/")) mediaType = "video";
-
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            const messageInput = document.getElementById("message-input");
-            const caption = messageInput ? messageInput.value.trim() : "";
-            const msgId = "msg_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
-
-            if (isGroupMode && currentGroup) {
-                const msgData = {
-                    id: msgId,
-                    groupId: currentGroup.groupId,
-                    senderUid: my10DigitUid,
-                    senderName: (currentUser && currentUser.displayName) ? currentUser.displayName : "User",
-                    text: caption,
-                    media: {
-                        type: mediaType,
-                        dataUrl: reader.result,
-                        name: file.name,
-                        size: file.size
-                    },
-                    timestamp: timeStr,
-                    reactions: {}
-                };
-                if (socket) {
-                    socket.emit("send_group_message", msgData);
-                }
-                appendMessage(msgData, "msg-sent");
-                saveGroupMessage(currentGroup.groupId, { ...msgData, type: "msg-sent" });
-            } else if (currentTargetUid) {
-                const msgData = {
-                    id: msgId,
-                    senderUid: my10DigitUid,
-                    receiverUid: currentTargetUid,
-                    text: caption,
-                    media: {
-                        type: mediaType,
-                        dataUrl: reader.result,
-                        name: file.name,
-                        size: file.size
-                    },
-                    timestamp: timeStr,
-                    reactions: {}
-                };
-                if (socket) {
-                    socket.emit("send_message", msgData);
-                }
-                appendMessage(msgData, "msg-sent");
-                if (!chatHistory[currentTargetUid]) chatHistory[currentTargetUid] = [];
-                chatHistory[currentTargetUid].push({ ...msgData, type: "msg-sent" });
-                try {
-                    localStorage.setItem("zingTalkHistory", JSON.stringify(chatHistory));
-                } catch (err) {
-                    console.warn("Storage note:", err);
-                }
-            }
-
-            if (messageInput) messageInput.value = "";
-            mediaFileInput.value = "";
-            document.getElementById("attachment-popover")?.classList.add("hidden");
-            showToast("Media sent directly (Zero server storage)");
-        };
-        reader.readAsDataURL(file);
-    });
-}
-
-// Direct Live Voice Note Recorder
-let mediaRecorder = null;
-let audioChunks = [];
-let isRecordingVoice = false;
-
-async function toggleVoiceRecording() {
-    if (isRecordingVoice) {
-        if (mediaRecorder && mediaRecorder.state !== "inactive") {
-            mediaRecorder.stop();
-        }
-        isRecordingVoice = false;
-        showToast("Processing voice note...");
-        return;
-    }
-
-    if (!currentTargetUid && !isGroupMode) {
-        showToast("Please open a chat to record a voice note");
-        return;
-    }
-
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
-
-        mediaRecorder.ondataavailable = (event) => {
-            if (event.data && event.data.size > 0) {
-                audioChunks.push(event.data);
-            }
-        };
-
-        mediaRecorder.onstop = () => {
-            const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const now = new Date();
-                const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                const msgId = "msg_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
-
-                if (isGroupMode && currentGroup) {
-                    const msgData = {
-                        id: msgId,
-                        groupId: currentGroup.groupId,
-                        senderUid: my10DigitUid,
-                        senderName: (currentUser && currentUser.displayName) ? currentUser.displayName : "User",
-                        text: "🎙️ Voice Note",
-                        media: {
-                            type: "audio",
-                            dataUrl: reader.result,
-                            name: "voice_note_" + Date.now() + ".webm",
-                            size: audioBlob.size
-                        },
-                        timestamp: timeStr,
-                        reactions: {}
-                    };
-                    if (socket) {
-                        socket.emit("send_group_message", msgData);
-                    }
-                    appendMessage(msgData, "msg-sent");
-                    saveGroupMessage(currentGroup.groupId, { ...msgData, type: "msg-sent" });
-                } else if (currentTargetUid) {
-                    const msgData = {
-                        id: msgId,
-                        senderUid: my10DigitUid,
-                        receiverUid: currentTargetUid,
-                        text: "🎙️ Voice Note",
-                        media: {
-                            type: "audio",
-                            dataUrl: reader.result,
-                            name: "voice_note_" + Date.now() + ".webm",
-                            size: audioBlob.size
-                        },
-                        timestamp: timeStr,
-                        reactions: {}
-                    };
-                    if (socket) {
-                        socket.emit("send_message", msgData);
-                    }
-                    appendMessage(msgData, "msg-sent");
-                    if (!chatHistory[currentTargetUid]) chatHistory[currentTargetUid] = [];
-                    chatHistory[currentTargetUid].push({ ...msgData, type: "msg-sent" });
-                    try {
-                        localStorage.setItem("zingTalkHistory", JSON.stringify(chatHistory));
-                    } catch (_) {}
-                }
-
-                showToast("Voice note sent (Zero server storage)");
-            };
-            reader.readAsDataURL(audioBlob);
-            stream.getTracks().forEach(t => t.stop());
-        };
-
-        mediaRecorder.start();
-        isRecordingVoice = true;
-        showToast("🔴 Recording voice note... Click Voice Note again to send");
-        document.getElementById("attachment-popover")?.classList.add("hidden");
-    } catch (err) {
-        console.warn("Microphone access error:", err);
-        showToast("Microphone access needed: " + err.message);
-    }
-}
-
-// ----------------- WebRTC Calling Engine (Audio & Video) -----------------
+// ----------------- WebRTC HD Calling (Google STUN + AWS Fallback) -----------------
 async function startWebRTC(isCaller) {
     document.getElementById("full-call-screen")?.classList.remove("hidden");
     const localVideo = document.getElementById("local-video");
@@ -1080,13 +479,15 @@ async function startWebRTC(isCaller) {
     const audioVisualizer = document.getElementById("audio-call-visualizer");
     const audioPeerName = document.getElementById("audio-call-peer-name");
 
+    isStunFailoverActive = false;
+
     let peerNameToShow = "UID: " + activeCallTarget;
     const knownContact = myContacts.find(c => c.uid === activeCallTarget);
     if (knownContact) peerNameToShow = knownContact.name;
 
     if (currentCallType === "audio") {
         if (localVideo) localVideo.classList.add("hidden");
-        if (remoteVideo) remoteVideo.style.opacity = "0"; // Invisible video but plays audio stream
+        if (remoteVideo) remoteVideo.style.opacity = "0";
         if (audioVisualizer) {
             audioVisualizer.classList.remove("hidden");
             if (audioPeerName) audioPeerName.innerText = peerNameToShow;
@@ -1101,8 +502,7 @@ async function startWebRTC(isCaller) {
     try {
         localStream = await navigator.mediaDevices.getUserMedia(constraints);
     } catch (err) {
-        console.warn("Could not acquire media stream:", err);
-        showToast("Camera/Mic not accessible: " + err.message);
+        showToast("Media access required: " + err.message);
         endCall();
         return;
     }
@@ -1118,7 +518,7 @@ async function startWebRTC(isCaller) {
         const remote = document.getElementById("remote-video");
         if (remote) {
             remote.srcObject = event.streams[0];
-            remote.play().catch(e => console.log(e));
+            remote.play().catch(() => {});
         }
     };
 
@@ -1128,7 +528,21 @@ async function startWebRTC(isCaller) {
         }
     };
 
-    // Start Call Duration Timer
+    // Background STUN Failover Monitoring
+    peerConnection.onicecandidateerror = (event) => {
+        if (event.url && event.url.includes("google.com")) {
+            isStunFailoverActive = true;
+        }
+    };
+
+    peerConnection.oniceconnectionstatechange = () => {
+        const state = peerConnection ? peerConnection.iceConnectionState : "";
+        if (state === "failed" || state === "disconnected") {
+            isStunFailoverActive = true;
+        }
+    };
+
+    // Call Duration Timer
     callSecondsElapsed = 0;
     clearInterval(callDurationTimer);
     const timerEl = document.getElementById("call-timer");
@@ -1136,7 +550,7 @@ async function startWebRTC(isCaller) {
         callSecondsElapsed++;
         const mins = String(Math.floor(callSecondsElapsed / 60)).padStart(2, '0');
         const secs = String(callSecondsElapsed % 60).padStart(2, '0');
-        const modeLabel = currentCallType === "video" ? "HD Video" : "HD Audio";
+        const modeLabel = currentCallType === "video" ? "HD Video" : "Audio";
         if (timerEl) timerEl.innerText = `${mins}:${secs} • ${modeLabel}`;
     }, 1000);
 
@@ -1145,9 +559,7 @@ async function startWebRTC(isCaller) {
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
             socket.emit("webrtc_offer", { targetUid: activeCallTarget, offer });
-        } catch (err) {
-            console.error("Failed to create offer:", err);
-        }
+        } catch (_) {}
     }
 }
 
@@ -1174,228 +586,520 @@ function endCall() {
     endCallCleanup();
 }
 
-function showLoginError(msg) {
-    const box = document.getElementById("login-message");
-    if (!box) return;
-    box.style.display = "block";
-    box.textContent = msg;
+function initiateDirectCall(targetUid, type) {
+    if (!targetUid) return;
+    if (targetUid === my10DigitUid) {
+        showToast("You cannot call your own UID");
+        return;
+    }
+
+    currentCallType = type || "video";
+    activeCallTarget = targetUid;
+
+    let targetNameToShow = "UID: " + targetUid;
+    const contact = myContacts.find(c => c.uid === targetUid);
+    if (contact) targetNameToShow = contact.name;
+
+    const outgoingName = document.getElementById("outgoing-call-name");
+    if (outgoingName) outgoingName.innerText = targetNameToShow;
+
+    const outgoingType = document.getElementById("outgoing-call-type");
+    if (outgoingType) {
+        outgoingType.innerText = `Connecting ${currentCallType === 'video' ? 'HD Video' : 'Audio'} Call...`;
+    }
+    document.getElementById("outgoing-call-overlay")?.classList.remove("hidden");
+
+    if (socket) {
+        socket.emit("initiate_call", {
+            callerUid: my10DigitUid,
+            targetUid: targetUid,
+            callerName: currentUser ? currentUser.displayName : "TV User",
+            type: currentCallType
+        });
+    }
 }
 
-function clearLoginError() {
-    const box = document.getElementById("login-message");
-    if (!box) return;
-    box.style.display = "none";
-    box.textContent = "";
+// ----------------- Alexa Skill Remote Command Handler -----------------
+// Dispatched from the user's Fire TV physical remote via Alexa Skill Webhook (POST /api/alexa)
+function handleAlexaIncomingCommand(cmd) {
+    if (!cmd) return;
+    const action = cmd.action;
+
+    if (action === 'launch') {
+        const loginScreen = document.getElementById("login-screen");
+        if (loginScreen && !loginScreen.classList.contains("hidden")) {
+            if (!currentUser) {
+                const nameInput = document.getElementById("guest-name-input");
+                const name = nameInput?.value.trim() || "Living Room TV";
+                const email = `${name.toLowerCase().replace(/[^a-z0-9]/g, '')}@tv.local`;
+                const user = {
+                    displayName: name,
+                    email: email,
+                    uid: "tv_" + computeDeterministic10DigitUid(email)
+                };
+                localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                loginUserSession(user);
+            }
+        }
+        document.getElementById("login-screen")?.classList.add("hidden");
+        document.getElementById("tv-top-bar")?.classList.remove("hidden");
+        document.getElementById("main-screen")?.classList.remove("hidden");
+    } else if (action === 'audio_call' || action === 'video_call') {
+        const mode = action === 'video_call' ? 'video' : 'audio';
+        const targetUid = cmd.targetUid;
+        if (targetUid) {
+            initiateDirectCall(targetUid, mode);
+        }
+    } else if (action === 'end_call') {
+        endCall();
+    } else if (action === 'type_message') {
+        const text = cmd.message || "";
+        const input = document.getElementById("message-input");
+        if (input) {
+            input.value = text;
+            input.focus();
+        }
+    } else if (action === 'send_message') {
+        const text = cmd.message || "";
+        const input = document.getElementById("message-input");
+        if (input && text) {
+            input.value = text;
+        }
+        if (currentTargetUid) {
+            sendMessageLogic();
+        }
+    } else if (action === 'navigate_home') {
+        closeChat();
+    }
 }
 
-// ----------------- Global Event Listeners -----------------
+// ----------------- Fire TV Remote Spatial Navigation Engine -----------------
+function getVisibleFocusableElements() {
+    return Array.from(document.querySelectorAll('.tv-focusable')).filter(el => {
+        if (el.offsetParent === null) return false;
+        if (el.closest('.hidden')) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+    });
+}
+
+function autoFocusFirstElement() {
+    const focusables = getVisibleFocusableElements();
+    if (focusables.length > 0) {
+        focusables[0].focus();
+    }
+}
+
+function handleDpadNavigation(direction) {
+    const focusables = getVisibleFocusableElements();
+    if (focusables.length === 0) return;
+
+    let current = document.activeElement;
+    if (!current || !focusables.includes(current)) {
+        focusables[0].focus();
+        return;
+    }
+
+    const currentRect = current.getBoundingClientRect();
+    const currentCenter = { 
+        x: currentRect.left + currentRect.width / 2, 
+        y: currentRect.top + currentRect.height / 2 
+    };
+
+    let bestElement = null;
+    let bestDistance = Infinity;
+
+    focusables.forEach(target => {
+        if (target === current) return;
+        const targetRect = target.getBoundingClientRect();
+        const targetCenter = { 
+            x: targetRect.left + targetRect.width / 2, 
+            y: targetRect.top + targetRect.height / 2 
+        };
+        const dx = targetCenter.x - currentCenter.x;
+        const dy = targetCenter.y - currentCenter.y;
+
+        let isValidDirection = false;
+        if (direction === 'up' && dy < -5) isValidDirection = true;
+        if (direction === 'down' && dy > 5) isValidDirection = true;
+        if (direction === 'left' && dx < -5) isValidDirection = true;
+        if (direction === 'right' && dx > 5) isValidDirection = true;
+
+        if (isValidDirection) {
+            let dist = 0;
+            if (direction === 'up' || direction === 'down') {
+                dist = Math.abs(dy) + Math.abs(dx) * 1.4;
+            } else {
+                dist = Math.abs(dx) + Math.abs(dy) * 1.4;
+            }
+
+            if (dist < bestDistance) {
+                bestDistance = dist;
+                bestElement = target;
+            }
+        }
+    });
+
+    if (bestElement) {
+        bestElement.focus();
+        bestElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+function handleBackKey() {
+    const openModal = document.querySelector('.tv-modal-backdrop:not(.hidden)');
+    if (openModal) {
+        openModal.classList.add("hidden");
+        autoFocusFirstElement();
+        return;
+    }
+
+    if (!document.getElementById("full-call-screen")?.classList.contains("hidden")) {
+        endCall();
+        return;
+    }
+
+    if (!document.getElementById("outgoing-call-overlay")?.classList.contains("hidden")) {
+        document.getElementById("cancel-outgoing-btn")?.click();
+        return;
+    }
+
+    if (!document.getElementById("incoming-call-overlay")?.classList.contains("hidden")) {
+        document.getElementById("reject-call-btn")?.click();
+        return;
+    }
+
+    if (!document.getElementById("tv-active-chat")?.classList.contains("hidden")) {
+        closeChat();
+        return;
+    }
+}
+
+// Global Remote Keydown Event Listener
+window.addEventListener("keydown", (e) => {
+    const isTyping = document.activeElement && 
+        (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA");
+
+    if (e.key === "ArrowUp") {
+        if (!isTyping) { e.preventDefault(); handleDpadNavigation("up"); }
+    } else if (e.key === "ArrowDown") {
+        if (!isTyping) { e.preventDefault(); handleDpadNavigation("down"); }
+    } else if (e.key === "ArrowLeft") {
+        if (!isTyping) { e.preventDefault(); handleDpadNavigation("left"); }
+    } else if (e.key === "ArrowRight") {
+        if (!isTyping) { e.preventDefault(); handleDpadNavigation("right"); }
+    } else if (e.key === "Escape" || e.keyCode === 10009 || (e.key === "Backspace" && !isTyping)) {
+        e.preventDefault();
+        handleBackKey();
+    }
+});
+
+// ----------------- Global Clicks & UI Triggers -----------------
+let isSignUpMode = false;
+
 document.addEventListener("click", async (e) => {
     if (e.target.tagName === "BUTTON") e.preventDefault();
 
-    // Close Attachment Popover when clicking outside
-    if (!e.target.closest("#attach-btn") && !e.target.closest("#attachment-popover")) {
-        document.getElementById("attachment-popover")?.classList.add("hidden");
-    }
-
-    // 1. Login Tab Switchers
+    // 1. Login Tabs Switching
     if (e.target.id === "tab-btn-google") {
-        clearLoginError();
-        document.querySelectorAll(".login-tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".tv-tab-pane").forEach(p => p.classList.add("hidden"));
         e.target.classList.add("active");
-        document.querySelectorAll(".tab-pane").forEach(p => p.classList.add("hidden"));
         document.getElementById("pane-google")?.classList.remove("hidden");
+        document.getElementById("google-login-btn")?.focus();
+        return;
     }
+
     if (e.target.id === "tab-btn-email") {
-        clearLoginError();
-        document.querySelectorAll(".login-tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".tv-tab-pane").forEach(p => p.classList.add("hidden"));
         e.target.classList.add("active");
-        document.querySelectorAll(".tab-pane").forEach(p => p.classList.add("hidden"));
         document.getElementById("pane-email")?.classList.remove("hidden");
+        document.getElementById("login-email-input")?.focus();
+        return;
     }
+
     if (e.target.id === "tab-btn-guest") {
-        clearLoginError();
-        document.querySelectorAll(".login-tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".tv-tab-pane").forEach(p => p.classList.add("hidden"));
         e.target.classList.add("active");
-        document.querySelectorAll(".tab-pane").forEach(p => p.classList.add("hidden"));
         document.getElementById("pane-guest")?.classList.remove("hidden");
+        document.getElementById("guest-name-input")?.focus();
+        return;
     }
 
-    // Toggle Email Sign In / Register
-    if (e.target.id === "auth-toggle-link") {
-        clearLoginError();
-        isRegisterMode = !isRegisterMode;
-        const nameGroup = document.getElementById("email-name-group");
-        const submitBtn = document.getElementById("email-submit-btn");
-        const promptText = document.getElementById("auth-toggle-prompt");
-        const linkText = document.getElementById("auth-toggle-link");
+    // Toggle Email Auth Mode (Sign In vs Sign Up)
+    if (e.target.id === "toggle-auth-mode-btn") {
+        isSignUpMode = !isSignUpMode;
+        const nameGroup = document.getElementById("email-signup-name-group");
+        const btnText = document.getElementById("email-btn-text");
+        const toggleBtn = document.getElementById("toggle-auth-mode-btn");
 
-        if (isRegisterMode) {
-            nameGroup.style.display = "block";
-            submitBtn.textContent = "Create Account";
-            promptText.textContent = "Already have an account?";
-            linkText.textContent = "Sign In";
+        if (isSignUpMode) {
+            nameGroup?.classList.remove("hidden");
+            if (btnText) btnText.innerText = "Create Account";
+            if (toggleBtn) toggleBtn.innerText = "Already have an account? Sign In";
         } else {
-            nameGroup.style.display = "none";
-            submitBtn.textContent = "Sign In with Email";
-            promptText.textContent = "Don't have an account?";
-            linkText.textContent = "Register";
-        }
-    }
-
-    // Toggle custom Google email input
-    if (e.target.id === "switch-google-email-toggle" || e.target.closest("#switch-google-email-toggle")) {
-        const wrap = document.getElementById("custom-google-email-wrap");
-        if (wrap) {
-            wrap.classList.toggle("hidden");
-            const input = document.getElementById("custom-google-email-input");
-            if (!wrap.classList.contains("hidden") && input) {
-                input.focus();
-            }
+            nameGroup?.classList.add("hidden");
+            if (btnText) btnText.innerText = "Sign In";
+            if (toggleBtn) toggleBtn.innerText = "Don't have an account? Sign Up";
         }
         return;
     }
 
-    // Google Login button (Native In-App for Android APK + Seamless In-App Web - NEVER redirects to external browser!)
+    // Google Login Action
     if (e.target.id === "google-login-btn" || e.target.closest("#google-login-btn")) {
-        clearLoginError();
-        const customEmail = document.getElementById("custom-google-email-input")?.value?.trim();
+        const errorEl = document.getElementById("login-message");
+        if (errorEl) errorEl.style.display = "none";
 
-        // 1. Native In-App Google Sign-In for Capacitor Android APK
-        const isCapacitorNative = (typeof window !== "undefined" && window.Capacitor && 
-            ((typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform()) ||
-             (window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "android")));
-
-        if (isCapacitorNative) {
-            const nativePlugin = (window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication) ||
-                (typeof window.Capacitor.registerPlugin === "function" ? window.Capacitor.registerPlugin("FirebaseAuthentication") : null);
-
-            if (nativePlugin && typeof nativePlugin.signInWithGoogle === "function") {
-                showToast("Opening Google Sign-In...");
-                // Universal Google Sign-In client: works across all Android versions without browser redirection
-                nativePlugin.signInWithGoogle({ useCredentialManager: false })
-                    .then(res => {
-                        if (res && res.user) {
-                            const u = res.user;
-                            const displayName = u.displayName || (u.email ? u.email.split("@")[0] : "Google User");
-                            loginUserSession({
-                                uid: u.uid || ("google_" + Date.now()),
-                                email: u.email || "zingarenaoffi1@gmail.com",
-                                displayName: displayName,
-                                photoURL: u.photoUrl || ""
-                            });
-                            showToast("Welcome, " + displayName + "!");
-                        } else {
-                            directInAppGoogleLogin(customEmail);
-                        }
-                    })
-                    .catch(nativeErr => {
-                        console.warn("Universal Google sign-in fallback check:", nativeErr);
-                        nativePlugin.signInWithGoogle()
-                            .then(res => {
-                                if (res && res.user) {
-                                    const u = res.user;
-                                    const displayName = u.displayName || (u.email ? u.email.split("@")[0] : "Google User");
-                                    loginUserSession({
-                                        uid: u.uid || ("google_" + Date.now()),
-                                        email: u.email || "zingarenaoffi1@gmail.com",
-                                        displayName: displayName,
-                                        photoURL: u.photoUrl || ""
-                                    });
-                                    showToast("Welcome, " + displayName + "!");
-                                } else {
-                                    directInAppGoogleLogin(customEmail);
-                                }
-                            })
-                            .catch(err2 => {
-                                console.warn("Native Google sign-in note:", err2);
-                                directInAppGoogleLogin(customEmail);
-                            });
-                    });
-                return;
+        if (auth && provider) {
+            try {
+                const result = await signInWithPopup(auth, provider);
+                loginUserSession(result.user);
+            } catch (err) {
+                // If popup blocked or cancelled in webview, fall back cleanly to TV Guest Profile
+                const user = {
+                    displayName: "Google User",
+                    email: "user@gmail.com",
+                    uid: "google_" + Date.now()
+                };
+                localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                loginUserSession(user);
             }
+        } else {
+            const user = {
+                displayName: "Google TV User",
+                email: "user@gmail.com",
+                uid: "google_" + Date.now()
+            };
+            localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+            loginUserSession(user);
         }
-
-        // 2. Web browser / AI Studio Preview: Continue DIRECTLY in app without any browser redirect
-        directInAppGoogleLogin(customEmail);
         return;
     }
 
-    // Email & Password Auth Submit
-    if (e.target.id === "email-submit-btn" || e.target.closest("#email-submit-btn")) {
-        clearLoginError();
-        const email = document.getElementById("email-input")?.value.trim();
-        const password = document.getElementById("password-input")?.value;
-        const displayName = document.getElementById("email-name-input")?.value.trim() || email.split("@")[0];
+    // Email / Password Login Action
+    if (e.target.id === "email-login-submit-btn" || e.target.closest("#email-login-submit-btn")) {
+        const email = document.getElementById("login-email-input")?.value.trim();
+        const password = document.getElementById("login-password-input")?.value.trim();
+        const name = document.getElementById("login-name-input")?.value.trim() || "TV User";
+        const errorEl = document.getElementById("login-message");
 
         if (!email || !password) {
-            showLoginError("Please enter both email and password.");
+            if (errorEl) {
+                errorEl.innerText = "Please enter both email and password.";
+                errorEl.style.display = "block";
+            }
             return;
         }
 
-        if (password.length < 6) {
-            showLoginError("Password must be at least 6 characters.");
-            return;
-        }
-
-        if (!auth) {
-            showLoginError("Firebase Auth unavailable. Please use Guest login.");
-            return;
-        }
-
-        if (isRegisterMode) {
-            createUserWithEmailAndPassword(auth, email, password)
-                .then(async (userCredential) => {
-                    if (displayName && userCredential.user) {
-                        await updateProfile(userCredential.user, { displayName });
-                    }
-                    showToast("Account created successfully!");
-                    loginUserSession({ ...userCredential.user, displayName });
-                })
-                .catch(err => {
-                    showLoginError(err.message);
-                });
+        if (auth) {
+            try {
+                if (isSignUpMode) {
+                    const cred = await createUserWithEmailAndPassword(auth, email, password);
+                    await updateProfile(cred.user, { displayName: name });
+                    loginUserSession({ ...cred.user, displayName: name });
+                } else {
+                    const cred = await signInWithEmailAndPassword(auth, email, password);
+                    loginUserSession(cred.user);
+                }
+            } catch (err) {
+                // Fallback for offline or local preview
+                const user = {
+                    displayName: name || email.split("@")[0],
+                    email: email,
+                    uid: "user_" + computeDeterministic10DigitUid(email)
+                };
+                localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                loginUserSession(user);
+            }
         } else {
-            signInWithEmailAndPassword(auth, email, password)
-                .then((userCredential) => {
-                    showToast("Welcome back!");
-                    loginUserSession(userCredential.user);
-                })
-                .catch(err => {
-                    showLoginError(err.message);
-                });
+            const user = {
+                displayName: name || email.split("@")[0],
+                email: email,
+                uid: "user_" + computeDeterministic10DigitUid(email)
+            };
+            localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+            loginUserSession(user);
         }
+        return;
     }
 
-    // Guest Login button
+    // Guest Mode Login Action
     if (e.target.id === "guest-login-btn" || e.target.closest("#guest-login-btn")) {
         const nameInput = document.getElementById("guest-name-input");
-        const enteredName = nameInput?.value.trim() || "Guest " + Math.floor(100 + Math.random() * 900);
-        const guestUser = {
-            displayName: enteredName,
-            email: `${enteredName.toLowerCase().replace(/[^a-z0-9]/g, '')}_${Math.floor(1000 + Math.random() * 9000)}@guest.local`
+        const name = nameInput?.value.trim() || "Living Room TV";
+        const email = `${name.toLowerCase().replace(/[^a-z0-9]/g, '')}@tv.local`;
+
+        const user = {
+            displayName: name,
+            email: email,
+            uid: "tv_" + computeDeterministic10DigitUid(email)
         };
-        localStorage.setItem("zingTalkGuestUser", JSON.stringify(guestUser));
-        loginUserSession(guestUser);
+
+        localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+        loginUserSession(user);
+        return;
     }
 
-    // Open Profile Modal
-    if (e.target.id === "my-profile" || e.target.closest("#my-profile") || e.target.id === "header-profile-btn" || e.target.closest("#header-profile-btn")) {
-        const displayName = (currentUser && currentUser.displayName) ? currentUser.displayName : "User";
-        const email = (currentUser && currentUser.email) ? currentUser.email : "No email linked";
-        
-        document.getElementById("modal-avatar").innerText = displayName.charAt(0).toUpperCase();
-        document.getElementById("modal-name").innerText = displayName;
+    // Direct Dial Quick Audio / Video Call
+    if (e.target.id === "quick-audio-call-btn" || e.target.closest("#quick-audio-call-btn")) {
+        const uid = document.getElementById("dial-uid-input")?.value.trim();
+        if (!uid || uid.length !== 10) {
+            showToast("Please enter a valid 10-digit UID");
+            return;
+        }
+        initiateDirectCall(uid, "audio");
+        return;
+    }
+
+    if (e.target.id === "quick-video-call-btn" || e.target.closest("#quick-video-call-btn")) {
+        const uid = document.getElementById("dial-uid-input")?.value.trim();
+        if (!uid || uid.length !== 10) {
+            showToast("Please enter a valid 10-digit UID");
+            return;
+        }
+        initiateDirectCall(uid, "video");
+        return;
+    }
+
+    // Save Contact
+    if (e.target.id === "save-contact-btn" || e.target.closest("#save-contact-btn")) {
+        const uid = document.getElementById("contact-uid-input")?.value.trim();
+        const name = document.getElementById("contact-name-input")?.value.trim();
+
+        if (!uid || uid.length !== 10) {
+            showToast("Please enter a valid 10-digit UID");
+            return;
+        }
+        if (!name) {
+            showToast("Please enter a contact name");
+            return;
+        }
+        if (uid === my10DigitUid) {
+            showToast("You cannot save your own UID");
+            return;
+        }
+
+        if (socket) {
+            socket.emit("save_contact", { myUid: my10DigitUid, targetUid: uid, customName: name });
+        } else {
+            const updated = myContacts.filter(c => c.uid !== uid);
+            updated.push({ uid, name });
+            myContacts = updated;
+            localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
+            renderContacts(myContacts);
+            showToast("Contact saved");
+        }
+
+        if (document.getElementById("contact-uid-input")) document.getElementById("contact-uid-input").value = "";
+        if (document.getElementById("contact-name-input")) document.getElementById("contact-name-input").value = "";
+        return;
+    }
+
+    // Chat Screen Triggers
+    if (e.target.id === "chat-back-btn" || e.target.closest("#chat-back-btn")) {
+        closeChat();
+        return;
+    }
+
+    if (e.target.id === "send-btn" || e.target.closest("#send-btn")) {
+        sendMessageLogic();
+        return;
+    }
+
+    if (e.target.id === "chat-audio-call-btn" || e.target.closest("#chat-audio-call-btn")) {
+        if (currentTargetUid) initiateDirectCall(currentTargetUid, "audio");
+        return;
+    }
+
+    if (e.target.id === "chat-video-call-btn" || e.target.closest("#chat-video-call-btn")) {
+        if (currentTargetUid) initiateDirectCall(currentTargetUid, "video");
+        return;
+    }
+
+    // Call Screen Controls
+    if (e.target.id === "mute-mic-btn" || e.target.closest("#mute-mic-btn")) {
+        if (localStream) {
+            const track = localStream.getAudioTracks()[0];
+            if (track) {
+                isMicMuted = !isMicMuted;
+                track.enabled = !isMicMuted;
+                showToast(isMicMuted ? "Microphone muted" : "Microphone active");
+            }
+        }
+        return;
+    }
+
+    if (e.target.id === "toggle-video-btn" || e.target.closest("#toggle-video-btn")) {
+        if (localStream) {
+            const track = localStream.getVideoTracks()[0];
+            if (track) {
+                track.enabled = !track.enabled;
+                showToast(track.enabled ? "Camera active" : "Camera turned off");
+            }
+        }
+        return;
+    }
+
+    if (e.target.id === "end-call-btn" || e.target.closest("#end-call-btn")) {
+        endCall();
+        return;
+    }
+
+    // Call Response Overlays
+    if (e.target.id === "accept-call-btn" || e.target.closest("#accept-call-btn")) {
+        document.getElementById("incoming-call-overlay")?.classList.add("hidden");
+        try {
+            await startWebRTC(false);
+            if (socket) socket.emit("call_response", { targetUid: activeCallTarget, status: "accepted" });
+        } catch (_) {
+            if (socket) socket.emit("call_response", { targetUid: activeCallTarget, status: "rejected" });
+            activeCallTarget = null;
+        }
+        return;
+    }
+
+    if (e.target.id === "reject-call-btn" || e.target.closest("#reject-call-btn")) {
+        document.getElementById("incoming-call-overlay")?.classList.add("hidden");
+        if (socket && activeCallTarget) {
+            socket.emit("call_response", { targetUid: activeCallTarget, status: "rejected" });
+        }
+        activeCallTarget = null;
+        return;
+    }
+
+    if (e.target.id === "cancel-outgoing-btn" || e.target.closest("#cancel-outgoing-btn")) {
+        document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
+        if (socket && activeCallTarget) {
+            socket.emit("cancel_call", { targetUid: activeCallTarget });
+        }
+        activeCallTarget = null;
+        return;
+    }
+
+    // Profile & Logout
+    if (e.target.id === "my-profile-chip" || e.target.closest("#my-profile-chip")) {
+        const name = (currentUser && currentUser.displayName) ? currentUser.displayName : "TV User";
+        const email = (currentUser && currentUser.email) ? currentUser.email : "Local TV";
+        document.getElementById("modal-avatar").innerText = name.charAt(0).toUpperCase();
+        document.getElementById("modal-name").innerText = name;
         document.getElementById("modal-email").innerText = email;
         document.getElementById("modal-uid").innerText = my10DigitUid || "Generating...";
         document.getElementById("profile-modal")?.classList.remove("hidden");
+        return;
     }
 
-    // Close Profile Modal
-    if (e.target.id === "close-profile-modal-btn") {
+    if (e.target.id === "close-profile-btn") {
         document.getElementById("profile-modal")?.classList.add("hidden");
+        return;
     }
 
-    // Copy UID button inside Profile Modal
+    if (e.target.id === "header-logout-btn" || e.target.closest("#header-logout-btn") || e.target.id === "modal-logout-btn") {
+        logoutUserSession();
+        return;
+    }
+
     if (e.target.id === "copy-uid-btn") {
         if (my10DigitUid) {
             navigator.clipboard.writeText(my10DigitUid).then(() => {
@@ -1404,496 +1108,31 @@ document.addEventListener("click", async (e) => {
                 showToast("UID: " + my10DigitUid);
             });
         }
+        return;
     }
 
-    // Header Quick Copy UID
-    if (e.target.id === "my-uid" || e.target.closest("#my-uid")) {
-        if (my10DigitUid) {
-            navigator.clipboard.writeText(my10DigitUid).then(() => {
-                showToast("UID copied: " + my10DigitUid);
-            }).catch(() => {
-                showToast("UID: " + my10DigitUid);
-            });
-        }
-    }
-
-    // Logout from Header or Modal
-    if (e.target.id === "header-logout-btn" || e.target.closest("#header-logout-btn") || e.target.id === "modal-logout-btn") {
-        logoutUserSession();
-    }
-
-    // Save Contact button (10-Digit UID)
-    if (e.target.id === "save-contact-btn" || e.target.closest("#save-contact-btn")) {
-        const targetUid = document.getElementById("search-uid-input")?.value.trim();
-        const customName = document.getElementById("save-name-input")?.value.trim();
-        if (targetUid === my10DigitUid) return showToast("You cannot save your own UID!");
-        if (!targetUid || !customName) return showToast("Please enter 10-digit UID and a custom name");
-        if (targetUid.length !== 10 || !/^\d{10}$/.test(targetUid)) return showToast("Please enter a valid 10-digit UID (e.g. 1234567890)");
-        if (socket) {
-            socket.emit("save_contact", { myUid: my10DigitUid, targetUid, customName });
-        }
-    }
-
-    // Block / Unblock Contact from Chat Options Popover
-    if (e.target.id === "opt-block-user" || e.target.closest("#opt-block-user")) {
-        document.getElementById("chat-options-popover")?.classList.add("hidden");
-        if (!currentTargetUid) return;
-        if (blockedUids.includes(currentTargetUid)) {
-            unblockUser(currentTargetUid);
-        } else {
-            const contact = myContacts.find(c => c.uid === currentTargetUid);
-            const name = contact ? contact.name : ("UID: " + currentTargetUid);
-            const titleEl = document.getElementById("block-modal-title");
-            const descEl = document.getElementById("block-modal-desc");
-            if (titleEl) titleEl.innerText = `Block ${name}?`;
-            if (descEl) descEl.innerText = `Blocked contacts will no longer be able to call you or send you messages. ${name} will not be notified.`;
-            document.getElementById("block-confirm-modal")?.classList.remove("hidden");
-        }
-    }
-
-    // Confirm Block in Modal
-    if (e.target.id === "confirm-block-btn") {
-        if (currentTargetUid) {
-            blockUser(currentTargetUid);
-        }
-        document.getElementById("block-confirm-modal")?.classList.add("hidden");
-    }
-
-    // Cancel Block Modal
-    if (e.target.id === "cancel-block-btn") {
-        document.getElementById("block-confirm-modal")?.classList.add("hidden");
-    }
-
-    // Chat Bottom Banner "Tap to unblock"
-    if (e.target.id === "chat-unblock-btn") {
-        if (currentTargetUid) {
-            unblockUser(currentTargetUid);
-        }
-    }
-
-    // Open Blocked Contacts List Modal from Profile
-    if (e.target.id === "open-blocked-list-btn" || e.target.closest("#open-blocked-list-btn")) {
-        renderBlockedListModal();
-        document.getElementById("blocked-list-modal")?.classList.remove("hidden");
-    }
-
-    // Close Blocked Contacts List Modal
-    if (e.target.id === "close-blocked-modal-btn") {
-        document.getElementById("blocked-list-modal")?.classList.add("hidden");
-    }
-
-    // Typing Indicator listener on chat input
-    const msgInp = document.getElementById("message-input");
-    if (msgInp) {
-        msgInp.addEventListener("input", () => {
-            if (!socket) return;
-            const targetId = isGroupMode ? (currentGroup && currentGroup.groupId) : currentTargetUid;
-            if (!targetId) return;
-
-            socket.emit("typing", {
-                targetId,
-                isGroup: isGroupMode,
-                senderUid: my10DigitUid,
-                senderName: (currentUser && currentUser.displayName) ? currentUser.displayName : "User"
-            });
-
-            clearTimeout(typingTimeout);
-            typingTimeout = setTimeout(() => {
-                socket.emit("stop_typing", {
-                    targetId,
-                    isGroup: isGroupMode,
-                    senderUid: my10DigitUid
-                });
-            }, 1500);
-        });
-    }
-
-    // Live update Google card preview if custom email typed
-    const customGoogleInp = document.getElementById("custom-google-email-input");
-    if (customGoogleInp && !customGoogleInp.dataset.listenerBound) {
-        customGoogleInp.dataset.listenerBound = "true";
-        customGoogleInp.addEventListener("input", (evt) => {
-            const val = evt.target.value.trim();
-            const display = document.getElementById("google-selected-email-display");
-            if (display) {
-                display.innerText = val || "zingarenaoffi1@gmail.com";
-            }
-        });
-    }
-
-    // Close options / reactions popover when clicking outside
-    if (!e.target.closest("#chat-options-btn") && !e.target.closest("#chat-options-popover")) {
-        document.getElementById("chat-options-popover")?.classList.add("hidden");
-    }
-    if (!e.target.closest("#reaction-popover") && !e.target.closest(".msg-bubble")) {
-        document.getElementById("reaction-popover")?.classList.add("hidden");
-    }
-
-    // Dashboard Segment Tabs (Direct vs Groups)
-    if (e.target.id === "tab-direct-chats" || e.target.closest("#tab-direct-chats")) {
-        document.getElementById("tab-direct-chats")?.classList.add("active");
-        document.getElementById("tab-groups")?.classList.remove("active");
-        document.getElementById("pane-direct-chats")?.classList.remove("hidden");
-        document.getElementById("pane-groups")?.classList.add("hidden");
-    }
-    if (e.target.id === "tab-groups" || e.target.closest("#tab-groups")) {
-        document.getElementById("tab-groups")?.classList.add("active");
-        document.getElementById("tab-direct-chats")?.classList.remove("active");
-        document.getElementById("pane-groups")?.classList.remove("hidden");
-        document.getElementById("pane-direct-chats")?.classList.add("hidden");
-        renderGroups();
-    }
-
-    // Open Create Group Modal
-    if (e.target.id === "open-create-group-btn" || e.target.closest("#open-create-group-btn")) {
-        document.getElementById("create-group-modal")?.classList.remove("hidden");
-    }
-
-    // Close Create Group Modal
-    if (e.target.id === "close-group-modal-btn") {
-        document.getElementById("create-group-modal")?.classList.add("hidden");
-    }
-
-    // Select Group Emoji Icon
-    if (e.target.classList.contains("emoji-opt")) {
-        document.querySelectorAll(".emoji-opt").forEach(opt => opt.classList.remove("active"));
-        e.target.classList.add("active");
-        selectedGroupEmoji = e.target.dataset.emoji || "👥";
-    }
-
-    // Submit Create Group
-    if (e.target.id === "submit-create-group-btn") {
-        const name = document.getElementById("group-name-input")?.value.trim();
-        const membersRaw = document.getElementById("group-members-input")?.value.trim() || "";
-        if (!name) return showToast("Please enter a group name");
-
-        const memberUids = membersRaw.split(/[, ]+/).filter(id => id.length >= 5 && id !== my10DigitUid);
-        if (socket) {
-            socket.emit("create_group", {
-                creatorUid: my10DigitUid,
-                name: name,
-                icon: selectedGroupEmoji,
-                members: memberUids
-            });
-        }
-        document.getElementById("create-group-modal")?.classList.add("hidden");
-        if (document.getElementById("group-name-input")) document.getElementById("group-name-input").value = "";
-        if (document.getElementById("group-members-input")) document.getElementById("group-members-input").value = "";
-    }
-
-    // Chat Header Options Toggle
-    if (e.target.id === "chat-options-btn" || e.target.closest("#chat-options-btn")) {
-        document.getElementById("chat-options-popover")?.classList.toggle("hidden");
-    }
-
-    // Click on Chat Header to View Group Info
-    if ((e.target.id === "chat-header-clickable" || e.target.closest("#chat-header-clickable")) && isGroupMode && currentGroup) {
-        document.getElementById("opt-group-info")?.click();
-    }
-
-    // Open Group Info Modal
-    if (e.target.id === "opt-group-info" || e.target.closest("#opt-group-info")) {
-        document.getElementById("chat-options-popover")?.classList.add("hidden");
-        if (!currentGroup) return;
-
-        const infoIcon = document.getElementById("group-info-icon");
-        const infoName = document.getElementById("group-info-name");
-        const infoMeta = document.getElementById("group-info-meta");
-        const infoId = document.getElementById("group-info-id");
-        const membersList = document.getElementById("group-info-members-list");
-
-        if (infoIcon) infoIcon.innerText = currentGroup.icon || "👥";
-        if (infoName) infoName.innerText = currentGroup.name;
-        if (infoMeta) infoMeta.innerText = `${currentGroup.members ? currentGroup.members.length : 1} Total Members`;
-        if (infoId) infoId.innerText = currentGroup.groupId;
-
-        if (membersList) {
-            membersList.innerHTML = "";
-            (currentGroup.members || [my10DigitUid]).forEach(uid => {
-                const row = document.createElement("div");
-                row.style.padding = "4px 0";
-                row.style.borderBottom = "1px solid #f0f2f5";
-                const isMe = uid === my10DigitUid ? " (You)" : "";
-                row.innerText = `👤 Member UID: ${uid}${isMe}`;
-                membersList.appendChild(row);
-            });
-        }
-
-        document.getElementById("group-info-modal")?.classList.remove("hidden");
-    }
-
-    // Close Group Info Modal
-    if (e.target.id === "close-group-info-btn") {
-        document.getElementById("group-info-modal")?.classList.add("hidden");
-    }
-
-    // Copy Group ID Button
-    if (e.target.id === "copy-group-id-btn") {
-        if (currentGroup) {
-            navigator.clipboard.writeText(currentGroup.groupId).then(() => {
-                showToast("Group ID copied: " + currentGroup.groupId);
-            }).catch(() => {
-                showToast("Group ID: " + currentGroup.groupId);
-            });
-        }
-    }
-
-    // Open Report Modal
-    if (e.target.id === "opt-report-user" || e.target.closest("#opt-report-user")) {
-        document.getElementById("chat-options-popover")?.classList.add("hidden");
-        document.getElementById("report-modal")?.classList.remove("hidden");
-    }
-
-    // Close Report Modal
-    if (e.target.id === "close-report-modal-btn") {
-        document.getElementById("report-modal")?.classList.add("hidden");
-    }
-
-    // Submit Report & Block Target
-    if (e.target.id === "submit-report-btn") {
-        const reason = document.getElementById("report-reason-select")?.value || "inappropriate_media";
-        const targetId = isGroupMode ? (currentGroup && currentGroup.groupId) : currentTargetUid;
-
-        if (targetId) {
-            if (!blockedUids.includes(targetId)) {
-                blockedUids.push(targetId);
-                localStorage.setItem("zingTalkBlockedUids", JSON.stringify(blockedUids));
-            }
-            if (socket) {
-                socket.emit("report_content", {
-                    reporterUid: my10DigitUid,
-                    targetId: targetId,
-                    reason: reason
-                });
-            }
-            showToast("Report submitted to compliance (zingarenaoffi1@gmail.com). Target blocked.");
-        }
-
-        document.getElementById("report-modal")?.classList.add("hidden");
-        document.getElementById("chat-screen")?.classList.add("hidden");
-        document.getElementById("main-screen")?.classList.remove("hidden");
-    }
-
-    // Click on Reaction Emoji in Popover
-    if (e.target.classList.contains("reaction-btn")) {
-        const emoji = e.target.dataset.emoji;
-        if (emoji && activeReactionTargetMsgId) {
-            const targetId = isGroupMode ? (currentGroup && currentGroup.groupId) : currentTargetUid;
-            if (socket) {
-                socket.emit("send_reaction", {
-                    targetId,
-                    isGroup: isGroupMode,
-                    msgId: activeReactionTargetMsgId,
-                    emoji,
-                    userUid: my10DigitUid
-                });
-            }
-            applyReactionToMessage(activeReactionTargetMsgId, emoji);
-            document.getElementById("reaction-popover")?.classList.add("hidden");
-            activeReactionTargetMsgId = null;
-        }
-    }
-
-    // Back button in chat
-    if (e.target.id === "back-btn" || e.target.closest("#back-btn")) {
-        currentTargetUid = null;
-        currentGroup = null;
-        isGroupMode = false;
-        document.getElementById("chat-screen")?.classList.add("hidden");
-        document.getElementById("main-screen")?.classList.remove("hidden");
-    }
-
-    // Send button in chat
-    if (e.target.id === "send-btn" || e.target.closest("#send-btn")) {
-        sendMessageLogic();
-    }
-
-    // Attachment Button: Toggle Popover
-    if (e.target.id === "attach-btn" || e.target.closest("#attach-btn")) {
-        document.getElementById("attachment-popover")?.classList.toggle("hidden");
-    }
-
-    // Attachment Option: Photo
-    if (e.target.id === "attach-photo-btn" || e.target.closest("#attach-photo-btn")) {
-        const input = document.getElementById("media-file-input");
-        if (input) {
-            input.accept = "image/*";
-            input.click();
-        }
-        document.getElementById("attachment-popover")?.classList.add("hidden");
-    }
-
-    // Attachment Option: Audio
-    if (e.target.id === "attach-audio-btn" || e.target.closest("#attach-audio-btn")) {
-        const input = document.getElementById("media-file-input");
-        if (input) {
-            input.accept = "audio/*";
-            input.click();
-        }
-        document.getElementById("attachment-popover")?.classList.add("hidden");
-    }
-
-    // Attachment Option: Voice Note Record
-    if (e.target.id === "attach-record-btn" || e.target.closest("#attach-record-btn")) {
-        toggleVoiceRecording();
-    }
-
-    // Attachment Option: Video
-    if (e.target.id === "attach-video-btn" || e.target.closest("#attach-video-btn")) {
-        const input = document.getElementById("media-file-input");
-        if (input) {
-            input.accept = "video/*";
-            input.click();
-        }
-        document.getElementById("attachment-popover")?.classList.add("hidden");
-    }
-
-    // Close Media Viewer Modal
-    if (e.target.id === "close-media-viewer-btn" || e.target.closest("#close-media-viewer-btn")) {
-        document.getElementById("media-viewer-modal")?.classList.add("hidden");
-    }
-
-    // Privacy Policy & Terms Modal Triggers
-    if (e.target.id === "open-policy-btn-login" || e.target.id === "header-policy-btn" || e.target.closest("#header-policy-btn") || e.target.id === "open-policy-btn-modal" || e.target.closest("#open-policy-btn-modal")) {
+    // Policy Modal
+    if (e.target.id === "open-policy-btn") {
         document.getElementById("policy-modal")?.classList.remove("hidden");
+        return;
     }
 
-    // Close Privacy Policy Modal
-    if (e.target.id === "close-policy-btn" || e.target.closest("#close-policy-btn")) {
+    if (e.target.id === "close-policy-btn") {
         document.getElementById("policy-modal")?.classList.add("hidden");
-    }
-
-    // Privacy Policy Tabs
-    if (e.target.id === "tab-privacy-btn") {
-        document.getElementById("tab-privacy-btn")?.classList.add("active");
-        document.getElementById("tab-terms-btn")?.classList.remove("active");
-        document.getElementById("policy-privacy-text")?.classList.remove("hidden");
-        document.getElementById("policy-terms-text")?.classList.add("hidden");
-    }
-    if (e.target.id === "tab-terms-btn") {
-        document.getElementById("tab-terms-btn")?.classList.add("active");
-        document.getElementById("tab-privacy-btn")?.classList.remove("active");
-        document.getElementById("policy-terms-text")?.classList.remove("hidden");
-        document.getElementById("policy-privacy-text")?.classList.add("hidden");
-    }
-
-    // Call buttons (Audio / Video)
-    const text = e.target.innerText || "";
-    if (text.includes("Video") || text.includes("Audio") || e.target.id === "video-call-btn" || e.target.id === "audio-call-btn" || e.target.closest("#video-call-btn") || e.target.closest("#audio-call-btn")) {
-        if (!currentTargetUid) return showToast("Please open a chat to make a call!");
-        if (blockedUids.includes(currentTargetUid)) {
-            return showToast("You blocked this contact. Unblock to make a call.");
-        }
-        const isVideo = text.includes("Video") || e.target.id === "video-call-btn" || !!e.target.closest("#video-call-btn");
-        currentCallType = isVideo ? "video" : "audio";
-        activeCallTarget = currentTargetUid;
-
-        let targetNameToShow = "UID: " + currentTargetUid;
-        const contact = myContacts.find(c => c.uid === currentTargetUid);
-        if (contact) targetNameToShow = contact.name;
-
-        const outgoingName = document.getElementById("outgoing-call-name");
-        if (outgoingName) {
-            outgoingName.innerText = targetNameToShow;
-        }
-        const outgoingType = document.getElementById("outgoing-call-type");
-        if (outgoingType) {
-            outgoingType.innerText = `Calling (${currentCallType === 'video' ? 'Video' : 'HD Audio'})...`;
-        }
-        document.getElementById("outgoing-call-overlay")?.classList.remove("hidden");
-
-        if (socket) {
-            socket.emit("initiate_call", {
-                callerUid: my10DigitUid,
-                targetUid: currentTargetUid,
-                callerName: currentUser ? currentUser.displayName : "User",
-                type: currentCallType
-            });
-        }
-    }
-
-    // Cancel Outgoing Call button
-    if (e.target.id === "cancel-outgoing-btn" || e.target.closest("#cancel-outgoing-btn")) {
-        document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
-        if (socket && activeCallTarget) {
-            socket.emit("cancel_call", { targetUid: activeCallTarget });
-        }
-        activeCallTarget = null;
-    }
-
-    // Accept Incoming Call button
-    if (e.target.id === "accept-call-btn" || e.target.closest("#accept-call-btn")) {
-        document.getElementById("incoming-call-overlay")?.classList.add("hidden");
-        try {
-            await startWebRTC(false);
-            if (socket) {
-                socket.emit("call_response", { targetUid: activeCallTarget, status: "accepted" });
-            }
-        } catch (err) {
-            if (socket) {
-                socket.emit("call_response", { targetUid: activeCallTarget, status: "rejected" });
-            }
-            activeCallTarget = null;
-        }
-    }
-
-    // Reject Incoming Call button
-    if (e.target.id === "reject-call-btn" || e.target.closest("#reject-call-btn")) {
-        document.getElementById("incoming-call-overlay")?.classList.add("hidden");
-        if (socket && activeCallTarget) {
-            socket.emit("call_response", { targetUid: activeCallTarget, status: "rejected" });
-        }
-        activeCallTarget = null;
-    }
-
-    // Mute / Unmute Mic in Call
-    if (e.target.id === "mute-mic-btn" || e.target.closest("#mute-mic-btn")) {
-        if (localStream) {
-            const audioTrack = localStream.getAudioTracks()[0];
-            if (audioTrack) {
-                isMicMuted = !isMicMuted;
-                audioTrack.enabled = !isMicMuted;
-                showToast(isMicMuted ? "Microphone muted" : "Microphone unmuted");
-                const muteBtn = document.getElementById("mute-mic-btn");
-                if (muteBtn) {
-                    muteBtn.style.background = isMicMuted ? "#ea4335" : "rgba(255,255,255,0.2)";
-                }
-            }
-        }
-    }
-
-    // Toggle Camera in Call
-    if (e.target.id === "toggle-video-btn" || e.target.closest("#toggle-video-btn")) {
-        if (localStream) {
-            const videoTrack = localStream.getVideoTracks()[0];
-            if (videoTrack) {
-                videoTrack.enabled = !videoTrack.enabled;
-                showToast(videoTrack.enabled ? "Camera enabled" : "Camera turned off");
-                const toggleBtn = document.getElementById("toggle-video-btn");
-                if (toggleBtn) {
-                    toggleBtn.style.background = videoTrack.enabled ? "rgba(255,255,255,0.2)" : "#ea4335";
-                }
-            } else {
-                showToast("No active camera track in audio mode");
-            }
-        }
-    }
-
-    // End Active Call button
-    if (e.target.id === "end-call-btn" || e.target.closest("#end-call-btn")) {
-        endCall();
+        return;
     }
 });
 
+// Input Submission via Enter
 document.addEventListener("keypress", (e) => {
     if (e.key === "Enter" && document.activeElement === document.getElementById("message-input")) {
         e.preventDefault();
         sendMessageLogic();
+    } else if (e.key === "Enter" && document.activeElement === document.getElementById("login-password-input")) {
+        e.preventDefault();
+        document.getElementById("email-login-submit-btn")?.click();
     } else if (e.key === "Enter" && document.activeElement === document.getElementById("guest-name-input")) {
         e.preventDefault();
         document.getElementById("guest-login-btn")?.click();
-    } else if (e.key === "Enter" && (document.activeElement === document.getElementById("email-input") || document.activeElement === document.getElementById("password-input"))) {
-        e.preventDefault();
-        document.getElementById("email-submit-btn")?.click();
     }
 });

@@ -14,6 +14,10 @@ const io = new Server(server, {
     maxHttpBufferSize: 5e7 // 50MB for zero-server media file sharing
 });
 
+// JSON & URL-encoded body parser for Alexa webhook requests
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 // Serve static frontend assets
 app.use(express.static(__dirname));
 
@@ -78,7 +82,7 @@ function createMemoryDb() {
 const memoryDb = createMemoryDb();
 let db = memoryDb;
 
-// Initialize Firebase Admin with Firestore
+// Initialize Firebase Admin with Firestore if credentials are provided
 const rawSdkConfig = process.env.Firebase_Admin_SDK || process.env.FIREBASE_ADMIN_SDK;
 
 if (rawSdkConfig) {
@@ -108,9 +112,7 @@ if (rawSdkConfig) {
             credential: admin.credential.cert(serviceAccount)
         });
         db = admin.firestore();
-        console.log('[ZingTalk] Initialized Firebase Admin Firestore successfully via Firebase_Admin_SDK! Project:', serviceAccount.project_id || 'detected');
     } catch (err) {
-        console.error('[ZingTalk] Error parsing Firebase_Admin_SDK environment variable:', err.message);
         db = memoryDb;
     }
 } else if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
@@ -125,34 +127,30 @@ if (rawSdkConfig) {
             })
         });
         db = admin.firestore();
-        console.log('[ZingTalk] Initialized Firebase Admin Firestore successfully for project:', process.env.FIREBASE_PROJECT_ID);
     } catch (err) {
-        console.warn('[ZingTalk] Firebase Admin initialization note:', err.message);
         db = memoryDb;
     }
-} else {
-    console.log('[ZingTalk] Initialized in-memory database store (zero cloud configuration required).');
 }
 
-// Pre-seed a support contact in memory for instant contact testing
-inMemoryUsers.set("1000000001", {
-    uid: "1000000001",
-    name: "ZingTalk Support",
-    email: "support@zingtalk.local",
-    contacts: []
-});
-
-// Generate unique 10-digit UID
+// Unique 10-digit UID generator
 function generate10DigitUid() {
     return Math.floor(1000000000 + Math.random() * 9000000000).toString();
 }
 
 const connectedUsers = new Map();
+let lastActiveTvUid = null;
+const userContactsRegistry = new Map();
 
-// In-Memory Groups Registry (Zero disk/Firebase storage load)
+const defaultSeedContacts = [
+    { uid: "1000000002", name: "Aman" },
+    { uid: "1000000003", name: "Rahul" },
+    { uid: "1000000005", name: "Raman" }
+];
+
+// In-Memory Groups Registry
 const inMemoryGroups = new Map();
 
-// WhatsApp-style In-Memory Block Registry (blockerUid -> Set of blockedUids)
+// In-Memory Block Registry (blockerUid -> Set of blockedUids)
 const inMemoryBlocks = new Map();
 
 io.on('connection', (socket) => {
@@ -212,7 +210,12 @@ io.on('connection', (socket) => {
             }
 
             connectedUsers.set(uid, socket.id);
+            lastActiveTvUid = uid;
             socket.join(uid);
+
+            if (data.contacts && Array.isArray(data.contacts)) {
+                userContactsRegistry.set(uid, data.contacts);
+            }
 
             // Auto-join existing in-memory group rooms
             for (const [groupId, group] of inMemoryGroups.entries()) {
@@ -228,14 +231,23 @@ io.on('connection', (socket) => {
         }
     });
 
-    // WhatsApp-Style Block / Unblock Handlers
+    // Sync Contacts Handler
+    socket.on('sync_contacts', (data) => {
+        if (data && data.uid) {
+            lastActiveTvUid = data.uid;
+            if (Array.isArray(data.contacts)) {
+                userContactsRegistry.set(data.uid, data.contacts);
+            }
+        }
+    });
+
+    // Block / Unblock Handlers
     socket.on('block_user', (data) => {
         if (!data.blockerUid || !data.blockedUid) return;
         if (!inMemoryBlocks.has(data.blockerUid)) {
             inMemoryBlocks.set(data.blockerUid, new Set());
         }
         inMemoryBlocks.get(data.blockerUid).add(data.blockedUid);
-        console.log(`[ZingTalk Block] ${data.blockerUid} blocked ${data.blockedUid}`);
     });
 
     socket.on('unblock_user', (data) => {
@@ -243,49 +255,48 @@ io.on('connection', (socket) => {
         if (inMemoryBlocks.has(data.blockerUid)) {
             inMemoryBlocks.get(data.blockerUid).delete(data.blockedUid);
         }
-        console.log(`[ZingTalk Block] ${data.blockerUid} unblocked ${data.blockedUid}`);
     });
 
     socket.on('save_contact', async (data) => {
         try {
-            let userRef = db.collection('users').doc(data.myUid);
-            let targetRef = db.collection('users').where('uid', '==', data.targetUid);
-            let targetSnapshot;
-            try {
-                targetSnapshot = await targetRef.get();
-            } catch (fsErr) {
-                console.warn('[ZingTalk] Database query failed in save_contact, falling back to memory store:', fsErr.message);
-                db = memoryDb;
-                userRef = db.collection('users').doc(data.myUid);
-                targetRef = db.collection('users').where('uid', '==', data.targetUid);
-                targetSnapshot = await targetRef.get();
-            }
+            if (!data.myUid || !data.targetUid || !data.customName) return;
+            const newContact = { uid: data.targetUid, name: data.customName };
 
-            if (!targetSnapshot.empty) {
-                const newContact = { uid: data.targetUid, name: data.customName };
+            // Update in-memory registry immediately so Alexa webhook finds it instantly
+            let currentContacts = userContactsRegistry.get(data.myUid) || [];
+            currentContacts = currentContacts.filter(c => c.uid !== data.targetUid);
+            currentContacts.push(newContact);
+            userContactsRegistry.set(data.myUid, currentContacts);
+            lastActiveTvUid = data.myUid;
+
+            let userRef = db.collection('users').doc(data.myUid);
+            try {
                 await db.runTransaction(async (t) => {
                     const doc = await t.get(userRef);
-                    const currentContacts = (doc.data() && doc.data().contacts) || [];
-                    const updatedContacts = currentContacts.filter(c => c.uid !== data.targetUid);
-                    updatedContacts.push(newContact);
-                    t.update(userRef, { contacts: updatedContacts });
+                    const existingContacts = (doc.data() && doc.data().contacts) || [];
+                    const updated = existingContacts.filter(c => c.uid !== data.targetUid);
+                    updated.push(newContact);
+                    t.update(userRef, { contacts: updated });
                 });
-                const updatedDoc = await userRef.get();
-                socket.emit('contact_saved', updatedDoc.data().contacts);
-            } else {
-                socket.emit('contact_error', 'User with 10-digit UID ' + data.targetUid + ' not found.');
+            } catch (_) {
+                const memDoc = await memoryDb.collection('users').doc(data.myUid).get();
+                const existingContacts = (memDoc.data() && memDoc.data().contacts) || [];
+                const updated = existingContacts.filter(c => c.uid !== data.targetUid);
+                updated.push(newContact);
+                await memoryDb.collection('users').doc(data.myUid).update({ contacts: updated });
             }
+
+            socket.emit('contact_saved', currentContacts);
         } catch (err) {
-            console.error('[ZingTalk] Error in save_contact:', err);
+            console.error('[ZingTalk] Error saving contact:', err);
             socket.emit('contact_error', 'Failed to save contact.');
         }
     });
 
     socket.on('send_message', (data) => {
-        // WhatsApp Block Logic: If receiver has blocked sender, do NOT deliver
+        // Block check: If receiver has blocked sender, do not deliver
         const receiverBlockedList = inMemoryBlocks.get(data.receiverUid);
         if (receiverBlockedList && receiverBlockedList.has(data.senderUid)) {
-            // Emulate WhatsApp single checkmark (sent from phone, blocked by receiver)
             socket.emit('message_status', { msgId: data.id, delivered: false });
             return;
         }
@@ -293,7 +304,7 @@ io.on('connection', (socket) => {
         socket.emit('message_status', { msgId: data.id, delivered: true });
     });
 
-    // Group Management (Zero disk/Firebase load)
+    // Group Management
     socket.on('create_group', (data) => {
         try {
             const groupId = Math.floor(1000000000 + Math.random() * 9000000000).toString();
@@ -308,7 +319,6 @@ io.on('connection', (socket) => {
             inMemoryGroups.set(groupId, newGroup);
             socket.join(groupId);
 
-            // Join connected members to group room
             newGroup.members.forEach(memberUid => {
                 const targetSocketId = connectedUsers.get(memberUid);
                 if (targetSocketId) {
@@ -329,18 +339,17 @@ io.on('connection', (socket) => {
     });
 
     socket.on('send_group_message', (data) => {
-        // Zero-storage broadcast to group members
         io.to(data.groupId).emit('receive_group_message', data);
     });
 
-    // Real-Time WhatsApp-style Typing Indicator
+    // Real-Time Typing Indicators
     socket.on('typing', (data) => {
         if (data.isGroup) {
             socket.to(data.targetId).emit('user_typing', data);
         } else {
             const targetBlockedList = inMemoryBlocks.get(data.targetId);
             if (targetBlockedList && targetBlockedList.has(data.senderUid)) {
-                return; // Suppress typing indicator if target blocked sender
+                return;
             }
             io.to(data.targetId).emit('user_typing', data);
         }
@@ -354,7 +363,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // WhatsApp-style Emoji Reactions
+    // Message Reactions
     socket.on('send_reaction', (data) => {
         if (data.isGroup) {
             io.to(data.targetId).emit('receive_reaction', data);
@@ -363,14 +372,13 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Abuse / Inappropriate Content Reporting
+    // Content Reporting
     socket.on('report_content', (data) => {
-        console.log(`[ZingTalk Compliance] Flagged report received from ${data.reporterUid} against target ${data.targetId}. Reason: ${data.reason}`);
-        socket.emit('report_ack', { status: 'success', message: 'Report submitted. Our moderation team has logged this incident.' });
+        socket.emit('report_ack', { status: 'success', message: 'Report submitted.' });
     });
 
     socket.on('initiate_call', (data) => {
-        // WhatsApp Block Logic: If target has blocked caller, decline immediately without ringing
+        // Block check: If target has blocked caller, decline immediately
         const targetBlockedList = inMemoryBlocks.get(data.targetUid);
         if (targetBlockedList && targetBlockedList.has(data.callerUid)) {
             socket.emit('call_response_received', { targetUid: data.targetUid, status: 'declined', reason: 'blocked' });
@@ -403,6 +411,12 @@ io.on('connection', (socket) => {
         io.to(data.targetUid).emit('webrtc_call_ended');
     });
 
+    // Fire TV Alexa Voice Command Relay
+    socket.on('voice_command_triggered', (data) => {
+        console.log('[ZingTalk Voice] Voice command received from client:', data);
+        io.emit('alexa_command', data);
+    });
+
     socket.on('disconnect', () => {
         for (const [uid, socketId] of connectedUsers.entries()) {
             if (socketId === socket.id) {
@@ -411,6 +425,255 @@ io.on('connection', (socket) => {
             }
         }
     });
+});
+
+// ----------------- Alexa Skill Webhook Endpoint -----------------
+function extractSlotVal(slots, ...names) {
+    if (!slots) return '';
+    for (const name of names) {
+        if (slots[name]) {
+            if (slots[name].value) return String(slots[name].value).trim();
+            const res = slots[name]?.resolutions?.resolutionsPerAuthority?.[0]?.values?.[0]?.value?.name;
+            if (res) return String(res).trim();
+        }
+    }
+    return '';
+}
+
+app.post('/api/alexa', async (req, res) => {
+    try {
+        const body = req.body || {};
+        const request = body.request || {};
+        const reqType = request.type || '';
+        console.log(`[Alexa Skill Webhook] Received ${reqType} from Alexa`);
+
+        let speechText = "Welcome to ZingTalk on Fire TV. Who would you like to call?";
+        let shouldEndSession = false;
+        let commandPayload = null;
+
+        // Retrieve active TV user's contacts
+        let userContacts = [];
+        if (lastActiveTvUid && userContactsRegistry.has(lastActiveTvUid)) {
+            userContacts = userContactsRegistry.get(lastActiveTvUid) || [];
+        }
+        if (userContacts.length === 0) {
+            for (const [uid, list] of userContactsRegistry.entries()) {
+                if (list && list.length > 0) {
+                    userContacts = list;
+                    break;
+                }
+            }
+        }
+        if (userContacts.length === 0 && lastActiveTvUid) {
+            try {
+                const userDoc = await db.collection('users').doc(lastActiveTvUid).get();
+                if (userDoc && userDoc.exists && userDoc.data() && userDoc.data().contacts) {
+                    userContacts = userDoc.data().contacts;
+                }
+            } catch (_) {}
+        }
+        if (userContacts.length === 0) {
+            for (const [id, u] of inMemoryUsers.entries()) {
+                if (u.contacts && u.contacts.length > 0) {
+                    userContacts = u.contacts;
+                    break;
+                }
+            }
+        }
+        if (userContacts.length === 0) {
+            userContacts = defaultSeedContacts;
+        }
+
+        if (reqType === 'LaunchRequest') {
+            speechText = "Welcome to ZingTalk on Fire TV. Who would you like to call?";
+            shouldEndSession = false;
+            commandPayload = {
+                intent: 'LaunchRequest',
+                action: 'launch',
+                timestamp: Date.now()
+            };
+        } else if (reqType === 'IntentRequest') {
+            const intent = request.intent || {};
+            const intentName = intent.name || '';
+            const slots = intent.slots || {};
+
+            console.log(`[Alexa Skill Webhook] Handling intent: ${intentName}`, slots);
+
+            switch (intentName) {
+                case 'ZingaudioCallIntent': {
+                    const rawName = extractSlotVal(slots, 'contact', 'name', 'person', 'user', 'Contact', 'Name', 'target');
+                    if (!rawName) {
+                        speechText = "Who would you like to call on ZingTalk?";
+                        shouldEndSession = false;
+                        break;
+                    }
+
+                    const cleanTarget = rawName.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+                    let matched = userContacts.find(c => {
+                        const cName = (c.name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+                        return cName === cleanTarget || c.uid === cleanTarget;
+                    });
+                    if (!matched) {
+                        matched = userContacts.find(c => {
+                            const cName = (c.name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+                            return cName.startsWith(cleanTarget) || cName.includes(cleanTarget);
+                        });
+                    }
+
+                    if (!matched && /^\d{10}$/.test(cleanTarget)) {
+                        matched = { uid: cleanTarget, name: "User " + cleanTarget };
+                    }
+
+                    if (matched) {
+                        speechText = `Calling ${matched.name} on ZingTalk.`;
+                        shouldEndSession = true;
+                        commandPayload = {
+                            intent: 'ZingaudioCallIntent',
+                            action: 'audio_call',
+                            contact: matched.name,
+                            targetUid: matched.uid,
+                            timestamp: Date.now()
+                        };
+                    } else {
+                        speechText = `Sorry, ${rawName} is not saved in your ZingTalk contacts.`;
+                        shouldEndSession = true;
+                    }
+                    break;
+                }
+                case 'ZingvideoIntent': {
+                    const rawName = extractSlotVal(slots, 'name', 'contact', 'person', 'user', 'Name', 'Contact', 'target');
+                    if (!rawName) {
+                        speechText = "Who would you like to video call on ZingTalk?";
+                        shouldEndSession = false;
+                        break;
+                    }
+
+                    const cleanTarget = rawName.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+                    let matched = userContacts.find(c => {
+                        const cName = (c.name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+                        return cName === cleanTarget || c.uid === cleanTarget;
+                    });
+                    if (!matched) {
+                        matched = userContacts.find(c => {
+                            const cName = (c.name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+                            return cName.startsWith(cleanTarget) || cName.includes(cleanTarget);
+                        });
+                    }
+
+                    if (!matched && /^\d{10}$/.test(cleanTarget)) {
+                        matched = { uid: cleanTarget, name: "User " + cleanTarget };
+                    }
+
+                    if (matched) {
+                        speechText = `Starting video call with ${matched.name} on ZingTalk.`;
+                        shouldEndSession = true;
+                        commandPayload = {
+                            intent: 'ZingvideoIntent',
+                            action: 'video_call',
+                            contact: matched.name,
+                            targetUid: matched.uid,
+                            timestamp: Date.now()
+                        };
+                    } else {
+                        speechText = `Sorry, ${rawName} is not saved in your ZingTalk contacts.`;
+                        shouldEndSession = true;
+                    }
+                    break;
+                }
+                case 'ZingTypeIntent': {
+                    const text = extractSlotVal(slots, 'message', 'text', 'Message', 'Text');
+                    speechText = `Typing: ${text}`;
+                    shouldEndSession = false;
+                    commandPayload = {
+                        intent: 'ZingTypeIntent',
+                        action: 'type_message',
+                        message: text,
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'ZingSendMessageIntent': {
+                    const rawMsg = extractSlotVal(slots, 'RawMessage', 'message', 'text', 'Message');
+                    speechText = `Sending message: ${rawMsg} on ZingTalk.`;
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'ZingSendMessageIntent',
+                        action: 'send_message',
+                        message: rawMsg,
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'ZingEndCallIntent': {
+                    speechText = "Ending call on ZingTalk.";
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'ZingEndCallIntent',
+                        action: 'end_call',
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'AMAZON.NavigateHomeIntent': {
+                    speechText = "Returning to ZingTalk home screen.";
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'AMAZON.NavigateHomeIntent',
+                        action: 'navigate_home',
+                        timestamp: Date.now()
+                    };
+                    break;
+                }
+                case 'AMAZON.HelpIntent': {
+                    speechText = "You can ask ZingTalk to start an audio call, video call, send a text message, or hang up an active call.";
+                    shouldEndSession = false;
+                    break;
+                }
+                case 'AMAZON.CancelIntent':
+                case 'AMAZON.StopIntent': {
+                    speechText = "Goodbye from ZingTalk!";
+                    shouldEndSession = true;
+                    break;
+                }
+                default: {
+                    speechText = "ZingTalk heard your request.";
+                    shouldEndSession = false;
+                }
+            }
+
+            if (commandPayload) {
+                // Broadcast to connected Fire TV client
+                io.emit('alexa_command', commandPayload);
+                console.log('[Alexa Skill Webhook] Dispatched alexa_command to TV client:', commandPayload);
+            }
+        } else if (reqType === 'SessionEndedRequest') {
+            speechText = "";
+            shouldEndSession = true;
+        }
+
+        // Return standard ASK JSON response format
+        return res.json({
+            version: "1.0",
+            response: {
+                outputSpeech: {
+                    type: "PlainText",
+                    text: speechText
+                },
+                shouldEndSession: shouldEndSession
+            }
+        });
+    } catch (err) {
+        return res.status(500).json({
+            version: "1.0",
+            response: {
+                outputSpeech: {
+                    type: "PlainText",
+                    text: "Sorry, ZingTalk encountered an error processing your voice command."
+                },
+                shouldEndSession: true
+            }
+        });
+    }
 });
 
 // SPA fallback
