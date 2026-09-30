@@ -427,7 +427,118 @@ io.on('connection', (socket) => {
     });
 });
 
-// ----------------- Alexa Skill Webhook Endpoint -----------------
+// ----------------- Alexa Smart Voice NLP Engine & Webhook -----------------
+let lastCalledTarget = null;
+
+function levenshtein(a, b) {
+    const dp = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+    for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+    for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+    for (let i = 1; i <= a.length; i++) {
+        for (let j = 1; j <= b.length; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+        }
+    }
+    return dp[a.length][b.length];
+}
+
+function cleanVoiceInput(raw) {
+    if (!raw) return "";
+    let text = String(raw).toLowerCase().trim();
+    // Strip common conversational prefixes (English & Hinglish)
+    text = text.replace(/^(?:please\s+)?(?:call\s+to|call\s+my\s+friend|call\s+my|call|audio\s+call\s+to|audio\s+call|video\s+call\s+to|video\s+call|dial|connect\s+with|connect\s+to|start\s+call\s+with|start\s+video\s+call\s+with|phone\s+karo|lagao|milao)\s+/i, "");
+    // Strip trailing conversational suffixes / noise
+    text = text.replace(/\s+(?:ko|se|par|pe|toll|tell|please|now|call|video\s+call|audio\s+call)$/i, "");
+    return text.trim();
+}
+
+function wordsToDigits(str) {
+    const wordMap = {
+        "zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3",
+        "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8",
+        "nine": "9", "ten": "10"
+    };
+    let res = "";
+    const words = String(str).toLowerCase().split(/\s+/);
+    for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        if (w === "double" && i + 1 < words.length && wordMap[words[i + 1]]) {
+            res += wordMap[words[i + 1]] + wordMap[words[i + 1]];
+            i++;
+        } else if (w === "triple" && i + 1 < words.length && wordMap[words[i + 1]]) {
+            res += wordMap[words[i + 1]] + wordMap[words[i + 1]] + wordMap[words[i + 1]];
+            i++;
+        } else if (wordMap[w]) {
+            res += wordMap[w];
+        } else if (/^\d+$/.test(w)) {
+            res += w;
+        }
+    }
+    return res;
+}
+
+function smartFindContact(rawInput, contacts) {
+    if (!rawInput || !Array.isArray(contacts)) return null;
+    const cleaned = cleanVoiceInput(rawInput);
+    const cleanAlpha = cleaned.replace(/[^a-z0-9]/g, "");
+    if (!cleanAlpha) return null;
+
+    // 1. Direct UID match
+    if (/^\d{10}$/.test(cleanAlpha)) {
+        const existing = contacts.find(c => c.uid === cleanAlpha);
+        return existing || { uid: cleanAlpha, name: "User " + cleanAlpha };
+    }
+
+    // 2. Spoken digit conversion (e.g. "one zero zero zero...")
+    const digits = wordsToDigits(cleaned);
+    if (/^\d{10}$/.test(digits)) {
+        const existing = contacts.find(c => c.uid === digits);
+        return existing || { uid: digits, name: "User " + digits };
+    }
+
+    // 3. Exact name match (case-insensitive)
+    let match = contacts.find(c => {
+        const cAlpha = (c.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        return cAlpha === cleanAlpha || c.uid === cleanAlpha;
+    });
+    if (match) return match;
+
+    // 4. Word-token / prefix match
+    match = contacts.find(c => {
+        const cAlpha = (c.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        return cAlpha.startsWith(cleanAlpha) || cleanAlpha.startsWith(cAlpha) ||
+               (c.name || "").toLowerCase().split(/\s+/).some(part => part === cleaned);
+    });
+    if (match) return match;
+
+    // 5. Fuzzy phonetic match (Levenshtein distance <= 2 for similar pronunciations)
+    let bestMatch = null;
+    let minDistance = 999;
+    contacts.forEach(c => {
+        const cAlpha = (c.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const dist = levenshtein(cleanAlpha, cAlpha);
+        if (dist <= 2 && dist < minDistance && cleanAlpha.length >= 3) {
+            minDistance = dist;
+            bestMatch = c;
+        }
+    });
+
+    return bestMatch;
+}
+
+function detectCallMode(rawUtterance, defaultMode = 'audio') {
+    if (!rawUtterance) return defaultMode;
+    const lower = String(rawUtterance).toLowerCase();
+    if (lower.includes('video') || lower.includes('camera') || lower.includes('face') || lower.includes('visual')) {
+        return 'video';
+    }
+    if (lower.includes('audio') || lower.includes('voice') || lower.includes('phone')) {
+        return 'audio';
+    }
+    return defaultMode;
+}
+
 function extractSlotVal(slots, ...names) {
     if (!slots) return '';
     for (const name of names) {
@@ -445,6 +556,9 @@ app.post('/api/alexa', async (req, res) => {
         const body = req.body || {};
         const request = body.request || {};
         const reqType = request.type || '';
+        const incomingSessionAttributes = (body.session && body.session.attributes) || {};
+        let sessionAttributes = { ...incomingSessionAttributes };
+
         console.log(`[Alexa Skill Webhook] Received ${reqType} from Alexa`);
 
         let speechText = "Welcome to ZingTalk on Fire TV. Who would you like to call?";
@@ -485,8 +599,10 @@ app.post('/api/alexa', async (req, res) => {
         }
 
         if (reqType === 'LaunchRequest') {
-            speechText = "Welcome to ZingTalk on Fire TV. Who would you like to call?";
+            const sampleNames = userContacts.slice(0, 3).map(c => c.name).join(', ');
+            speechText = `Welcome to ZingTalk on Fire TV. Who would you like to call? You have ${sampleNames || 'contacts'} in your list.`;
             shouldEndSession = false;
+            sessionAttributes = { pendingAction: 'call', mode: 'audio' };
             commandPayload = {
                 intent: 'LaunchRequest',
                 action: 'launch',
@@ -500,83 +616,90 @@ app.post('/api/alexa', async (req, res) => {
             console.log(`[Alexa Skill Webhook] Handling intent: ${intentName}`, slots);
 
             switch (intentName) {
-                case 'ZingaudioCallIntent': {
-                    const rawName = extractSlotVal(slots, 'contact', 'name', 'person', 'user', 'Contact', 'Name', 'target');
+                case 'ZingaudioCallIntent':
+                case 'ZingvideoIntent': {
+                    const defaultMode = intentName === 'ZingvideoIntent' ? 'video' : 'audio';
+                    let rawName = extractSlotVal(slots, 'contact', 'name', 'person', 'user', 'Contact', 'Name', 'target', 'query');
+                    
                     if (!rawName) {
-                        speechText = "Who would you like to call on ZingTalk?";
+                        for (const k of Object.keys(slots)) {
+                            if (slots[k]?.value) {
+                                rawName = slots[k].value;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!rawName) {
+                        const sampleNames = userContacts.slice(0, 3).map(c => c.name).join(', ');
+                        speechText = `Who would you like to call on ZingTalk? You have ${sampleNames || 'saved contacts'} in your list.`;
                         shouldEndSession = false;
+                        sessionAttributes = { pendingAction: 'call', mode: defaultMode };
                         break;
                     }
 
-                    const cleanTarget = rawName.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-                    let matched = userContacts.find(c => {
-                        const cName = (c.name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-                        return cName === cleanTarget || c.uid === cleanTarget;
-                    });
-                    if (!matched) {
-                        matched = userContacts.find(c => {
-                            const cName = (c.name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-                            return cName.startsWith(cleanTarget) || cName.includes(cleanTarget);
-                        });
-                    }
-
-                    if (!matched && /^\d{10}$/.test(cleanTarget)) {
-                        matched = { uid: cleanTarget, name: "User " + cleanTarget };
-                    }
+                    const mode = detectCallMode(rawName, defaultMode);
+                    const matched = smartFindContact(rawName, userContacts);
 
                     if (matched) {
-                        speechText = `Calling ${matched.name} on ZingTalk.`;
+                        lastCalledTarget = { uid: matched.uid, name: matched.name, mode: mode };
+                        if (mode === 'video') {
+                            speechText = `Starting video call with ${matched.name} on ZingTalk.`;
+                            commandPayload = {
+                                intent: 'ZingvideoIntent',
+                                action: 'video_call',
+                                contact: matched.name,
+                                targetUid: matched.uid,
+                                timestamp: Date.now()
+                            };
+                        } else {
+                            speechText = `Calling ${matched.name} on ZingTalk.`;
+                            commandPayload = {
+                                intent: 'ZingaudioCallIntent',
+                                action: 'audio_call',
+                                contact: matched.name,
+                                targetUid: matched.uid,
+                                timestamp: Date.now()
+                            };
+                        }
                         shouldEndSession = true;
-                        commandPayload = {
-                            intent: 'ZingaudioCallIntent',
-                            action: 'audio_call',
-                            contact: matched.name,
-                            targetUid: matched.uid,
-                            timestamp: Date.now()
-                        };
+                        sessionAttributes = {};
                     } else {
                         speechText = `Sorry, ${rawName} is not saved in your ZingTalk contacts.`;
                         shouldEndSession = true;
+                        sessionAttributes = {};
                     }
                     break;
                 }
-                case 'ZingvideoIntent': {
-                    const rawName = extractSlotVal(slots, 'name', 'contact', 'person', 'user', 'Name', 'Contact', 'target');
-                    if (!rawName) {
-                        speechText = "Who would you like to video call on ZingTalk?";
-                        shouldEndSession = false;
-                        break;
+                case 'ZingListContactsIntent':
+                case 'ZingWhoCanICallIntent': {
+                    if (userContacts.length === 0) {
+                        speechText = "You do not have any contacts saved on ZingTalk yet. You can add a contact using a 10-digit UID in the app.";
+                    } else {
+                        const names = userContacts.map(c => c.name).join(', ');
+                        speechText = `You have ${userContacts.length} contacts on ZingTalk: ${names}. Say: call, followed by a name to start.`;
                     }
-
-                    const cleanTarget = rawName.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-                    let matched = userContacts.find(c => {
-                        const cName = (c.name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-                        return cName === cleanTarget || c.uid === cleanTarget;
-                    });
-                    if (!matched) {
-                        matched = userContacts.find(c => {
-                            const cName = (c.name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-                            return cName.startsWith(cleanTarget) || cName.includes(cleanTarget);
-                        });
-                    }
-
-                    if (!matched && /^\d{10}$/.test(cleanTarget)) {
-                        matched = { uid: cleanTarget, name: "User " + cleanTarget };
-                    }
-
-                    if (matched) {
-                        speechText = `Starting video call with ${matched.name} on ZingTalk.`;
+                    shouldEndSession = false;
+                    sessionAttributes = { pendingAction: 'call' };
+                    break;
+                }
+                case 'ZingRedialIntent':
+                case 'ZingCallLastIntent': {
+                    if (lastCalledTarget) {
+                        const mode = lastCalledTarget.mode || 'audio';
+                        speechText = `Calling ${lastCalledTarget.name} again on ZingTalk.`;
                         shouldEndSession = true;
                         commandPayload = {
-                            intent: 'ZingvideoIntent',
-                            action: 'video_call',
-                            contact: matched.name,
-                            targetUid: matched.uid,
+                            intent: 'ZingRedialIntent',
+                            action: mode === 'video' ? 'video_call' : 'audio_call',
+                            contact: lastCalledTarget.name,
+                            targetUid: lastCalledTarget.uid,
                             timestamp: Date.now()
                         };
                     } else {
-                        speechText = `Sorry, ${rawName} is not saved in your ZingTalk contacts.`;
-                        shouldEndSession = true;
+                        speechText = "You haven't made any calls on ZingTalk recently. Who would you like to call?";
+                        shouldEndSession = false;
+                        sessionAttributes = { pendingAction: 'call' };
                     }
                     break;
                 }
@@ -625,19 +748,53 @@ app.post('/api/alexa', async (req, res) => {
                     break;
                 }
                 case 'AMAZON.HelpIntent': {
-                    speechText = "You can ask ZingTalk to start an audio call, video call, send a text message, or hang up an active call.";
+                    speechText = "You can ask ZingTalk to call a contact, start a video call, redial, or hang up an active call. Who would you like to call?";
                     shouldEndSession = false;
+                    sessionAttributes = { pendingAction: 'call' };
                     break;
                 }
                 case 'AMAZON.CancelIntent':
                 case 'AMAZON.StopIntent': {
                     speechText = "Goodbye from ZingTalk!";
                     shouldEndSession = true;
+                    sessionAttributes = {};
                     break;
                 }
+                case 'AMAZON.FallbackIntent':
                 default: {
-                    speechText = "ZingTalk heard your request.";
+                    // Smart fallback: check if any slot contains a contact name
+                    let candidateName = '';
+                    for (const key of Object.keys(slots)) {
+                        const val = slots[key]?.value;
+                        if (val && typeof val === 'string' && val.length > 1) {
+                            candidateName = val;
+                            break;
+                        }
+                    }
+
+                    if (candidateName) {
+                        const matched = smartFindContact(candidateName, userContacts);
+                        if (matched) {
+                            const mode = detectCallMode(candidateName, sessionAttributes.mode || 'audio');
+                            lastCalledTarget = { uid: matched.uid, name: matched.name, mode: mode };
+                            speechText = mode === 'video' 
+                                ? `Starting video call with ${matched.name} on ZingTalk.`
+                                : `Calling ${matched.name} on ZingTalk.`;
+                            shouldEndSession = true;
+                            commandPayload = {
+                                intent: 'ZingSmartCall',
+                                action: mode === 'video' ? 'video_call' : 'audio_call',
+                                contact: matched.name,
+                                targetUid: matched.uid,
+                                timestamp: Date.now()
+                            };
+                            break;
+                        }
+                    }
+
+                    speechText = "I didn't quite catch that. You can say: call Raman, video call Rahul, or end call.";
                     shouldEndSession = false;
+                    break;
                 }
             }
 
@@ -651,13 +808,20 @@ app.post('/api/alexa', async (req, res) => {
             shouldEndSession = true;
         }
 
-        // Return standard ASK JSON response format
+        // Return standard ASK JSON response format with sessionAttributes & reprompt
         return res.json({
             version: "1.0",
+            sessionAttributes: sessionAttributes,
             response: {
                 outputSpeech: {
                     type: "PlainText",
                     text: speechText
+                },
+                reprompt: shouldEndSession ? undefined : {
+                    outputSpeech: {
+                        type: "PlainText",
+                        text: "Who would you like to call on ZingTalk?"
+                    }
                 },
                 shouldEndSession: shouldEndSession
             }
