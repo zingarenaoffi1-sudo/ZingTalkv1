@@ -166,12 +166,20 @@ jobs:
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:214252384173:android:c7af5b0d4c3c0f41f77b24",
+        "mobilesdk_app_id": "1:214252384173:android:ad23e53e2d5a7c93f77b24",
         "android_client_info": {
           "package_name": "com.zingtalk.com"
         }
       },
       "oauth_client": [
+        {
+          "client_id": "214252384173-tat5eg3m0jf1u2b1b47ivufgidr7e3to.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.zingtalk.com",
+            "certificate_hash": "2225e7407aef0e47ab833ee9514addfe62fca569"
+          }
+        },
         {
           "client_id": "214252384173-5222k1sa5mvl002c7kd7g90c2g70h69c.apps.googleusercontent.com",
           "client_type": 3
@@ -184,7 +192,12 @@ jobs:
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "214252384173-5222k1sa5mvl002c7kd7g90c2g70h69c.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
@@ -197,12 +210,12 @@ EOF
             cp zingtalk-release.keystore android/app/zingtalk-release.keystore
             echo "zingtalk-release.keystore successfully copied to android/app/"
           else
-            echo "Generating 50-year release keystore fallback..."
-            keytool -genkey -v -keystore android/app/zingtalk-release.keystore \
-              -alias zingtalk -keyalg RSA -keysize 2048 -validity 18250 \
+            echo "Generating 70-year release keystore fallback..."
+            keytool -genkeypair -v -keystore android/app/zingtalk-release.keystore \
+              -alias zingtalk -keyalg RSA -keysize 2048 -validity 25550 \
               -storepass zingtalk123456 -keypass zingtalk123456 \
               -dname "CN=ZingTalk, OU=Mobile, O=ZingTalk, L=Delhi, ST=Delhi, C=IN"
-            echo "50-year release keystore generated successfully."
+            echo "70-year release keystore generated successfully."
           fi
 
       - name: Configure Signing in build.gradle

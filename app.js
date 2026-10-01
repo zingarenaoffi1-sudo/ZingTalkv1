@@ -945,28 +945,65 @@ document.addEventListener("click", async (e) => {
         const errorEl = document.getElementById("login-message");
         if (errorEl) errorEl.style.display = "none";
 
+        // Check if running in Native Capacitor Android App
+        if (window.Capacitor?.isNativePlatform && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins?.FirebaseAuthentication) {
+            try {
+                showToast("Opening Google Sign-In...");
+                const result = await window.Capacitor.Plugins.FirebaseAuthentication.signInWithGoogle();
+                if (result && result.user) {
+                    const user = {
+                        displayName: result.user.displayName || "Google User",
+                        email: result.user.email,
+                        uid: result.user.uid,
+                        photoURL: result.user.photoUrl
+                    };
+                    localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                    loginUserSession(user);
+                    return;
+                }
+            } catch (nativeErr) {
+                console.warn("[Firebase] Native Google Sign-In failed:", nativeErr);
+                const msg = nativeErr.message || "Google Sign-In cancelled or failed.";
+                if (errorEl) {
+                    errorEl.innerText = msg;
+                    errorEl.style.display = "block";
+                }
+                showToast(msg);
+                return;
+            }
+        }
+
+        // Web / Browser Standard Firebase Google Sign-In
         if (auth && provider) {
             try {
                 const result = await signInWithPopup(auth, provider);
-                loginUserSession(result.user);
-            } catch (err) {
-                // If popup blocked or cancelled in webview, fall back cleanly to TV Guest Profile
                 const user = {
-                    displayName: "Google User",
-                    email: "user@gmail.com",
-                    uid: "google_" + Date.now()
+                    displayName: result.user.displayName || "Google User",
+                    email: result.user.email,
+                    uid: result.user.uid,
+                    photoURL: result.user.photoURL
                 };
                 localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
                 loginUserSession(user);
+            } catch (err) {
+                console.error("[Firebase] Google popup error:", err);
+                let msg = err.message || "Google Sign-In failed.";
+                if (err.code === "auth/popup-closed-by-user") {
+                    msg = "Google sign-in popup was closed.";
+                } else if (err.code === "auth/popup-blocked") {
+                    msg = "Pop-up blocked by browser. Please allow popups for this site.";
+                }
+                if (errorEl) {
+                    errorEl.innerText = msg;
+                    errorEl.style.display = "block";
+                }
+                showToast(msg);
             }
         } else {
-            const user = {
-                displayName: "Google TV User",
-                email: "user@gmail.com",
-                uid: "google_" + Date.now()
-            };
-            localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
-            loginUserSession(user);
+            if (errorEl) {
+                errorEl.innerText = "Firebase Authentication is initializing. Please try again.";
+                errorEl.style.display = "block";
+            }
         }
         return;
     }
@@ -975,8 +1012,10 @@ document.addEventListener("click", async (e) => {
     if (e.target.id === "email-login-submit-btn" || e.target.closest("#email-login-submit-btn")) {
         const email = document.getElementById("login-email-input")?.value.trim();
         const password = document.getElementById("login-password-input")?.value.trim();
-        const name = document.getElementById("login-name-input")?.value.trim() || "TV User";
+        const name = document.getElementById("login-name-input")?.value.trim() || "";
         const errorEl = document.getElementById("login-message");
+
+        if (errorEl) errorEl.style.display = "none";
 
         if (!email || !password) {
             if (errorEl) {
@@ -989,31 +1028,61 @@ document.addEventListener("click", async (e) => {
         if (auth) {
             try {
                 if (isSignUpMode) {
+                    if (password.length < 6) {
+                        if (errorEl) {
+                            errorEl.innerText = "Password must be at least 6 characters long.";
+                            errorEl.style.display = "block";
+                        }
+                        return;
+                    }
                     const cred = await createUserWithEmailAndPassword(auth, email, password);
-                    await updateProfile(cred.user, { displayName: name });
-                    loginUserSession({ ...cred.user, displayName: name });
+                    if (name) {
+                        try { await updateProfile(cred.user, { displayName: name }); } catch (_) {}
+                    }
+                    const user = {
+                        displayName: name || cred.user.displayName || email.split("@")[0],
+                        email: cred.user.email,
+                        uid: cred.user.uid
+                    };
+                    localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                    loginUserSession(user);
+                    showToast("Account created successfully!");
                 } else {
                     const cred = await signInWithEmailAndPassword(auth, email, password);
-                    loginUserSession(cred.user);
+                    const user = {
+                        displayName: cred.user.displayName || email.split("@")[0],
+                        email: cred.user.email,
+                        uid: cred.user.uid
+                    };
+                    localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                    loginUserSession(user);
+                    showToast("Signed in successfully!");
                 }
             } catch (err) {
-                // Fallback for offline or local preview
-                const user = {
-                    displayName: name || email.split("@")[0],
-                    email: email,
-                    uid: "user_" + computeDeterministic10DigitUid(email)
-                };
-                localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
-                loginUserSession(user);
+                console.error("[Firebase Auth Error]:", err);
+                let msg = err.message || "Authentication failed.";
+                if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password" || err.code === "auth/user-not-found") {
+                    msg = "Invalid email or password. Please verify your credentials.";
+                } else if (err.code === "auth/email-already-in-use") {
+                    msg = "This email is already registered. Please click 'Sign In' below.";
+                } else if (err.code === "auth/weak-password") {
+                    msg = "Password should be at least 6 characters.";
+                } else if (err.code === "auth/invalid-email") {
+                    msg = "Please enter a valid email address.";
+                } else if (err.code === "auth/network-request-failed") {
+                    msg = "Network error. Please check your internet connection.";
+                }
+                if (errorEl) {
+                    errorEl.innerText = msg;
+                    errorEl.style.display = "block";
+                }
+                showToast(msg);
             }
         } else {
-            const user = {
-                displayName: name || email.split("@")[0],
-                email: email,
-                uid: "user_" + computeDeterministic10DigitUid(email)
-            };
-            localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
-            loginUserSession(user);
+            if (errorEl) {
+                errorEl.innerText = "Firebase Authentication is unavailable. Please check your network.";
+                errorEl.style.display = "block";
+            }
         }
         return;
     }

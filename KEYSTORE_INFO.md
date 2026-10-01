@@ -12,17 +12,18 @@ These credentials are used by GitHub Actions to build a **Signed Release APK** t
 - **Keystore Password**: `zingtalk123456`
 - **Key Alias**: `zingtalk`
 - **Key Password**: `zingtalk123456`
-- **Validity**: **50 Years** (Valid until Year 2076)
+- **Validity**: **70 Years** (25,550 days, valid until Year 2096)
 - **Organization / CN**: `CN=ZingTalk, OU=Mobile, O=ZingTalk, L=Delhi, ST=Delhi, C=IN`
 
 ---
 
 ## 🛡️ Certificate Fingerprints (SHA-1 & SHA-256)
 
-Add these fingerprints to your **Firebase Console** under:
-*Project settings* -> *General* -> *Your apps* -> *Android app (com.zingtalk.com)* -> *Add fingerprint*.
+These fingerprints match your **Firebase Console** configuration in `google-services.json`:
+- **Package Name**: `com.zingtalk.com`
+- **Mobile SDK App ID**: `1:214252384173:android:ad23e53e2d5a7c93f77b24`
 
-### SHA-1:
+### SHA-1 (Hex: 2225e7407aef0e47ab833ee9514addfe62fca569):
 ```
 22:25:E7:40:7A:EF:0E:47:AB:83:3E:E9:51:4A:DD:FE:62:FC:A5:69
 ```
