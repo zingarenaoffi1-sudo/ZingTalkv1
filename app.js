@@ -13,12 +13,13 @@ import {
 
 // Client Firebase configuration
 const firebaseConfig = {
-    apiKey: "AIzaSyAjvRGXKy9tHTMcyOFJXmrbYmMeVdczDjk",
+    apiKey: "AIzaSyDDi5b_GBmRLSXQOXe-_ZA3bP6KuxHZvvQ",
     authDomain: "zing-talk-c6496.firebaseapp.com",
     projectId: "zing-talk-c6496",
     storageBucket: "zing-talk-c6496.firebasestorage.app",
     messagingSenderId: "214252384173",
-    appId: "1:214252384173:web:c7af5b0d4c3c0f41f77b24"
+    appId: "1:214252384173:web:c7af5b0d4c3c0f41f77b24",
+    measurementId: "G-W87FM4ZNJ7"
 };
 
 let app, auth, provider;
@@ -49,6 +50,7 @@ export let currentTargetUid = null;
 export let socket = null;
 
 // Infrastructure Configuration (Handled in background)
+const CLOUD_SIGNALING_URL = "https://ais-pre-sdj74fx3vlp4qwhzzwnb77-609564612220.asia-east1.run.app";
 const AWS_SIGNALING_URL = "http://18.234.224.25:3000";
 const PRIMARY_STUN = "stun:stun.l.google.com:19302";
 const BACKUP_STUN = "stun:18.234.224.25:3478";
@@ -59,13 +61,20 @@ export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
     if (saved && saved.trim()) return saved.trim();
 
-    if (typeof window !== "undefined" && window.location && window.location.protocol === "https:") {
+    if (typeof window !== "undefined" && window.location) {
         const origin = window.location.origin;
-        if (!origin.includes("localhost") && !origin.includes("capacitor:") && !origin.startsWith("file:")) {
+        // When running on GitHub Pages (static CDN) or capacitor/file, route WebSocket signaling to cloud backend
+        if (origin.includes("github.io") || origin.startsWith("file:") || origin.includes("capacitor:")) {
+            return CLOUD_SIGNALING_URL;
+        }
+        if (origin.includes("run.app") || origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")) {
+            return origin;
+        }
+        if (window.location.protocol === "https:") {
             return origin;
         }
     }
-    return AWS_SIGNALING_URL;
+    return CLOUD_SIGNALING_URL;
 }
 
 // Compute deterministic 10-digit UID
@@ -1525,12 +1534,13 @@ document.addEventListener("click", async (e) => {
         return;
     }
 
-    if (e.target.id === "cancel-outgoing-btn" || e.target.closest("#cancel-outgoing-btn")) {
+    if (e.target.id === "cancel-outgoing-btn" || e.target.closest("#cancel-outgoing-btn") || e.target.id === "cancel-outgoing-call-btn" || e.target.closest("#cancel-outgoing-call-btn")) {
         document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
         if (socket && activeCallTarget) {
             socket.emit("cancel_call", { targetUid: activeCallTarget });
         }
         activeCallTarget = null;
+        isCallInitiating = false;
         return;
     }
 
