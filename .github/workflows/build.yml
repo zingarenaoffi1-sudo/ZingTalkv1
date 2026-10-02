@@ -106,32 +106,102 @@ jobs:
                   print("Injected default_web_client_id into android/app/src/main/res/values/strings.xml")
           '
 
-      - name: Inject Permissions in AndroidManifest.xml for Calls & Fire Tablets
+      - name: Inject Permissions & TV Features in AndroidManifest.xml
         run: |
           python3 -c '
-          import os
+          import os, re
 
           manifest_path = "android/app/src/main/AndroidManifest.xml"
           if os.path.exists(manifest_path):
               with open(manifest_path, "r", encoding="utf-8") as f:
                   content = f.read()
 
-              permissions = [
+              elements_to_add = [
                   "<uses-permission android:name=\"android.permission.INTERNET\" />",
                   "<uses-permission android:name=\"android.permission.RECORD_AUDIO\" />",
                   "<uses-permission android:name=\"android.permission.CAMERA\" />",
                   "<uses-permission android:name=\"android.permission.MODIFY_AUDIO_SETTINGS\" />",
-                  "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />"
+                  "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />",
+                  "<uses-permission android:name=\"android.permission.WAKE_LOCK\" />",
+                  "<uses-permission android:name=\"android.permission.FOREGROUND_SERVICE\" />",
+                  "<uses-permission android:name=\"android.permission.FOREGROUND_SERVICE_MICROPHONE\" />",
+                  "<uses-permission android:name=\"android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS\" />",
+                  "<uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />",
+                  "<uses-feature android:name=\"android.hardware.camera.autofocus\" android:required=\"false\" />",
+                  "<uses-feature android:name=\"android.hardware.microphone\" android:required=\"false\" />",
+                  "<uses-feature android:name=\"android.software.leanback\" android:required=\"false\" />",
+                  "<uses-feature android:name=\"android.hardware.touchscreen\" android:required=\"false\" />"
               ]
 
-              perms_to_add = [p for p in permissions if p not in content]
-              if perms_to_add and "<application" in content:
-                  block = "\n    " + "\n    ".join(perms_to_add) + "\n\n    "
+              to_inject = [e for e in elements_to_add if e not in content]
+              if to_inject and "<application" in content:
+                  block = "\n    " + "\n    ".join(to_inject) + "\n\n    "
                   content = content.replace("<application", block + "<application", 1)
+
+              # Ensure hardware acceleration, largeHeap, cleartextTraffic, and TV banner in <application>
+              if "<application" in content:
+                  if "android:hardwareAccelerated" not in content:
+                      content = content.replace("<application", "<application android:hardwareAccelerated=\"true\"", 1)
+                  if "android:largeHeap" not in content:
+                      content = content.replace("<application", "<application android:largeHeap=\"true\"", 1)
+                  if "android:usesCleartextTraffic" not in content:
+                      content = content.replace("<application", "<application android:usesCleartextTraffic=\"true\"", 1)
+                  if "android:banner" not in content:
+                      content = content.replace("<application", "<application android:banner=\"@mipmap/ic_launcher\"", 1)
+
+              # Inject Leanback Launcher intent-filter so ZingTalk shows in Android TV & Fire TV Home Launcher menu
+              if "android.intent.category.LEANBACK_LAUNCHER" not in content and "android.intent.category.LAUNCHER" in content:
+                  content = content.replace(
+                      "<category android:name=\"android.intent.category.LAUNCHER\" />",
+                      "<category android:name=\"android.intent.category.LAUNCHER\" />\n                <category android:name=\"android.intent.category.LEANBACK_LAUNCHER\" />"
+                  )
+
+              # Ensure keepScreenOn in <activity> so TV idle screensaver never kills long video calls (Bug 78)
+              if "<activity" in content and "android:keepScreenOn" not in content:
+                  content = content.replace("<activity", "<activity android:keepScreenOn=\"true\"", 1)
 
               with open(manifest_path, "w", encoding="utf-8") as f:
                   f.write(content)
-              print("AndroidManifest.xml safely updated with permissions before <application>.")
+              print("AndroidManifest.xml safely updated with permissions, Leanback TV launcher, features, and hardware acceleration.")
+          '
+
+      - name: Inject ProGuard Keep Rules for WebRTC & Firebase
+        run: |
+          python3 -c '
+          import os
+
+          rules_path = "android/app/proguard-rules.pro"
+          rules = """
+          # ZingTalk Production ProGuard Rules
+          -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,JavascriptInterface
+
+          # Keep Capacitor Core & Native Plugins
+          -keep class com.getcapacitor.** { *; }
+          -keep class * extends com.getcapacitor.Plugin { *; }
+          -keepclassmembers class * extends com.getcapacitor.Plugin {
+              public <methods>;
+          }
+
+          # Keep Firebase Authentication & Play Services
+          -keep class com.google.firebase.** { *; }
+          -keep class com.google.android.gms.** { *; }
+          -keep class io.capawesome.capacitorjs.plugins.firebase.authentication.** { *; }
+          -dontwarn com.google.firebase.**
+          -dontwarn com.google.android.gms.**
+
+          # Keep Android WebKit and JS Interface
+          -keepclassmembers class * {
+              @android.webkit.JavascriptInterface <methods>;
+          }
+          -keep class android.webkit.** { *; }
+
+          # Keep WebRTC & MediaCodec decoders
+          -keep class org.webrtc.** { *; }
+          -dontwarn org.webrtc.**
+          """
+          with open(rules_path, "a", encoding="utf-8") as f:
+              f.write("\n" + rules.strip() + "\n")
+          print("ProGuard keep rules successfully injected into android/app/proguard-rules.pro")
           '
 
       - name: Inject ZingTalk App Icons into Android Resources
@@ -154,57 +224,6 @@ jobs:
           if [ -f "google-services.json" ]; then
             cp google-services.json android/app/google-services.json
             echo "google-services.json successfully copied to android/app/"
-          else
-            echo "Writing google-services.json from configuration..."
-            cat << 'EOF' > android/app/google-services.json
-{
-  "project_info": {
-    "project_number": "214252384173",
-    "project_id": "zing-talk-c6496",
-    "storage_bucket": "zing-talk-c6496.firebasestorage.app"
-  },
-  "client": [
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:214252384173:android:ad23e53e2d5a7c93f77b24",
-        "android_client_info": {
-          "package_name": "com.zingtalk.com"
-        }
-      },
-      "oauth_client": [
-        {
-          "client_id": "214252384173-tat5eg3m0jf1u2b1b47ivufgidr7e3to.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.zingtalk.com",
-            "certificate_hash": "2225e7407aef0e47ab833ee9514addfe62fca569"
-          }
-        },
-        {
-          "client_id": "214252384173-5222k1sa5mvl002c7kd7g90c2g70h69c.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
-      "api_key": [
-        {
-          "current_key": "AIzaSyAjvRGXKy9tHTMcyOFJXmrbYmMeVdczDjk"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "214252384173-5222k1sa5mvl002c7kd7g90c2g70h69c.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
-        }
-      }
-    }
-  ],
-  "configuration_version": "1"
-}
-EOF
           fi
           if [ -f "zingtalk-release.keystore" ]; then
             cp zingtalk-release.keystore android/app/zingtalk-release.keystore

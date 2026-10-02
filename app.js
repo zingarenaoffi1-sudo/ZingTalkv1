@@ -6,6 +6,7 @@ import {
     onAuthStateChanged,
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
+    signInAnonymously,
     updateProfile,
     signOut
 } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js";
@@ -90,11 +91,11 @@ export function updateUidDisplays(uid) {
     if (alexaText) alexaText.innerText = `Voice: "Alexa, pair UID ${my10DigitUid}"`;
 }
 
-// WebRTC STUN Configuration (Google Primary -> AWS Failover)
+// WebRTC STUN Configuration (Google Multi-Endpoint Primary + Global Twilio/Mozilla Failover)
 const rtcConfig = {
     iceServers: [
-        { urls: [PRIMARY_STUN, "stun:stun1.l.google.com:19302"] },
-        { urls: BACKUP_STUN }
+        { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"] },
+        { urls: ["stun:global.stun.twilio.com:3478", "stun:stun.services.mozilla.com"] }
     ],
     iceCandidatePoolSize: 10
 };
@@ -123,22 +124,49 @@ let callDurationTimer = null;
 let callSecondsElapsed = 0;
 let iceCandidatesQueue = [];
 
-// Auto-login from saved session
+// Auto-login from saved session (Dual-layer: LocalStorage + Native Preferences)
 const savedSession = localStorage.getItem("zingTalkTvSession");
 if (savedSession) {
     try {
         const sessionData = JSON.parse(savedSession);
-        if (sessionData && sessionData.displayName) {
+        if (sessionData && (sessionData.displayName || sessionData.uid)) {
             loginUserSession(sessionData);
         }
     } catch (_) {}
 }
+
+// Native SharedPreferences Persistence Backup (Prevents Bug 37 & 48: WebView Storage Aggressive Clear)
+async function persistSessionBackup(key, value) {
+    try {
+        localStorage.setItem(key, value);
+        if (window.Capacitor?.Plugins?.Preferences) {
+            await window.Capacitor.Plugins.Preferences.set({ key, value });
+        }
+    } catch (_) {}
+}
+
+async function restoreSessionFromNativeBackup() {
+    try {
+        if (!currentUser && window.Capacitor?.Plugins?.Preferences) {
+            const { value } = await window.Capacitor.Plugins.Preferences.get({ key: "zingTalkTvSession" });
+            if (value) {
+                const sessionData = JSON.parse(value);
+                if (sessionData && (sessionData.displayName || sessionData.uid)) {
+                    loginUserSession(sessionData);
+                }
+            }
+        }
+    } catch (_) {}
+}
+restoreSessionFromNativeBackup();
 
 function loginUserSession(user) {
     currentUser = user;
     document.getElementById("login-screen")?.classList.add("hidden");
     document.getElementById("tv-top-bar")?.classList.remove("hidden");
     document.getElementById("main-screen")?.classList.remove("hidden");
+
+    persistSessionBackup("zingTalkTvSession", JSON.stringify(user));
 
     const displayName = user.displayName || (user.email ? user.email.split("@")[0] : "TV User");
     if (document.getElementById("my-name")) document.getElementById("my-name").innerText = displayName;
@@ -168,6 +196,9 @@ function logoutUserSession() {
     my10DigitUid = null;
     currentTargetUid = null;
     localStorage.removeItem("zingTalkTvSession");
+    if (window.Capacitor?.Plugins?.Preferences) {
+        window.Capacitor.Plugins.Preferences.remove({ key: "zingTalkTvSession" }).catch(() => {});
+    }
     if (auth) {
         signOut(auth).catch(() => {});
     }
@@ -226,6 +257,14 @@ export function registerSocketListeners(s) {
 
     s.on("contact_error", (msg) => {
         showToast(msg);
+    });
+
+    s.on("user_data", (data) => {
+        if (data && data.uid) {
+            updateUidDisplays(data.uid);
+            const cacheKey = "zingTalkUid_" + (currentUser?.email || currentUser?.uid || data.uid);
+            try { localStorage.setItem(cacheKey, data.uid); } catch (_) {}
+        }
     });
 
     s.on("receive_message", (data) => {
@@ -500,6 +539,58 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Screen WakeLock for Android TV / Mobile (Prevents OEM Background Sleep & Media Disconnect)
+let wakeLock = null;
+async function acquireScreenWakeLock() {
+    try {
+        if ('wakeLock' in navigator && navigator.wakeLock) {
+            wakeLock = await navigator.wakeLock.request('screen');
+            wakeLock.addEventListener('release', () => {
+                wakeLock = null;
+            });
+        }
+    } catch (_) {}
+}
+
+function releaseScreenWakeLock() {
+    if (wakeLock) {
+        try { wakeLock.release(); } catch (_) {}
+        wakeLock = null;
+    }
+}
+
+// App Surface Lifecycle Handler (Prevents Minimization Video Freeze, HDMI Focus Loss, and GPU Context Loss)
+function resumeMediaPlayback() {
+    const remote = document.getElementById("remote-video");
+    const local = document.getElementById("local-video");
+    if (remote && remote.srcObject && remote.paused) {
+        remote.play().catch(() => {});
+    }
+    if (local && local.srcObject && local.paused) {
+        local.play().catch(() => {});
+    }
+    if (peerConnection) {
+        acquireScreenWakeLock();
+    }
+}
+
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+        resumeMediaPlayback();
+    }
+});
+
+window.addEventListener("focus", () => {
+    resumeMediaPlayback();
+});
+
+// Audio Hardware Hotplug Handler (Prevents Bug 69: Audio Jack Hotplug Crash)
+if (navigator.mediaDevices && 'ondevicechange' in navigator.mediaDevices) {
+    navigator.mediaDevices.ondevicechange = () => {
+        resumeMediaPlayback();
+    };
+}
+
 // ----------------- WebRTC HD Calling (Google STUN + AWS Fallback) -----------------
 async function startWebRTC(isCaller) {
     document.getElementById("full-call-screen")?.classList.remove("hidden");
@@ -514,6 +605,53 @@ async function startWebRTC(isCaller) {
     const knownContact = myContacts.find(c => c.uid === activeCallTarget);
     if (knownContact) peerNameToShow = knownContact.name;
 
+    // Acquire WakeLock so CPU & screen stay active during call
+    await acquireScreenWakeLock();
+
+    // Resilient Hardware Media Ladder:
+    // 1. Mono, 48kHz, full software AEC + ANS + AGC (prevents TV howl and robot voice)
+    // 2. 720p 30fps safe bounds (Safe for TV MediaCodec hardware decoders)
+    const audioConstraints = {
+        echoCancellation: { ideal: true },
+        noiseSuppression: { ideal: true },
+        autoGainControl: { ideal: true },
+        channelCount: { ideal: 1 },
+        sampleRate: { ideal: 48000 }
+    };
+
+    let streamObtained = null;
+    if (currentCallType === "video") {
+        try {
+            streamObtained = await navigator.mediaDevices.getUserMedia({
+                audio: audioConstraints,
+                video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 } }
+            });
+        } catch (vidErr) {
+            console.warn("[WebRTC] Video media request failed, attempting standard video fallback:", vidErr);
+            try {
+                streamObtained = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: true });
+            } catch (fallbackErr) {
+                console.warn("[WebRTC] Camera unavailable on this device, gracefully falling back to Audio Call:", fallbackErr);
+                currentCallType = "audio";
+                showToast("Camera not available on this device. Switched to HD Audio Call.");
+            }
+        }
+    }
+
+    if (!streamObtained) {
+        try {
+            streamObtained = await navigator.mediaDevices.getUserMedia({
+                audio: audioConstraints,
+                video: false
+            });
+        } catch (audErr) {
+            showToast("Microphone access required: " + audErr.message);
+            endCall();
+            return;
+        }
+    }
+    localStream = streamObtained;
+
     if (currentCallType === "audio") {
         if (localVideo) localVideo.classList.add("hidden");
         if (remoteVideo) remoteVideo.style.opacity = "0";
@@ -527,27 +665,68 @@ async function startWebRTC(isCaller) {
         if (audioVisualizer) audioVisualizer.classList.add("hidden");
     }
 
-    const constraints = { audio: true, video: currentCallType === "video" };
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch (err) {
-        showToast("Media access required: " + err.message);
-        endCall();
-        return;
-    }
-
     if (localVideo && currentCallType === "video") {
         localVideo.srcObject = localStream;
+        localVideo.play().catch(() => {});
     }
 
     peerConnection = new RTCPeerConnection(rtcConfig);
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+    // Dynamic bandwidth floor and balanced resolution degradation (Prevents Minecraft pixels & MTU drops)
+    try {
+        const senders = peerConnection.getSenders();
+        const videoSender = senders.find(s => s.track && s.track.kind === "video");
+        if (videoSender && videoSender.getParameters) {
+            const params = videoSender.getParameters();
+            if (params) {
+                if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+                params.degradationPreference = "balanced";
+                params.encodings[0].maxBitrate = 2500000;
+                params.encodings[0].minBitrate = 350000;
+                videoSender.setParameters(params).catch(() => {});
+            }
+        }
+    } catch (_) {}
+
+    // Universal Codec Prioritization: VP8 & H.264 first (Prevents Bug 74: H.265 reject & Bug 75: VP9 CPU spikes)
+    try {
+        if ('RTCRtpSender' in window && 'getCapabilities' in RTCRtpSender) {
+            const capabilities = RTCRtpSender.getCapabilities('video');
+            if (capabilities && capabilities.codecs) {
+                const sortedCodecs = [...capabilities.codecs].sort((a, b) => {
+                    const aMime = (a.mimeType || "").toLowerCase();
+                    const bMime = (b.mimeType || "").toLowerCase();
+                    if (aMime.includes("vp8") || aMime.includes("h264")) return -1;
+                    if (bMime.includes("vp8") || bMime.includes("h264")) return 1;
+                    return 0;
+                });
+                peerConnection.getTransceivers().forEach(t => {
+                    if (t.setCodecPreferences) {
+                        try { t.setCodecPreferences(sortedCodecs); } catch (_) {}
+                    }
+                });
+            }
+        }
+    } catch (_) {}
 
     peerConnection.ontrack = (event) => {
         const remote = document.getElementById("remote-video");
         if (remote) {
             remote.srcObject = event.streams[0];
             remote.play().catch(() => {});
+            // Audio focus recovery: if OS transiently pauses remote playback (e.g. alarm/notification), auto-resume
+            remote.onpause = () => {
+                if (peerConnection && (peerConnection.iceConnectionState === "connected" || peerConnection.iceConnectionState === "completed")) {
+                    remote.play().catch(() => {});
+                }
+            };
+            // GPU context or buffer stall recovery (Bug 53 & 55)
+            remote.onstalled = () => {
+                if (peerConnection && (peerConnection.iceConnectionState === "connected" || peerConnection.iceConnectionState === "completed")) {
+                    remote.play().catch(() => {});
+                }
+            };
         }
     };
 
@@ -594,18 +773,49 @@ async function startWebRTC(isCaller) {
 
 function endCallCleanup() {
     clearInterval(callDurationTimer);
+    releaseScreenWakeLock();
+
+    // 1. Unbind and safely close PeerConnection (prevents SIGSEGV / JNI / Context Leaks)
     if (peerConnection) {
-        peerConnection.close();
+        try {
+            peerConnection.ontrack = null;
+            peerConnection.onicecandidate = null;
+            peerConnection.oniceconnectionstatechange = null;
+            peerConnection.onicecandidateerror = null;
+            peerConnection.onnegotiationneeded = null;
+            peerConnection.close();
+        } catch (_) {}
         peerConnection = null;
     }
+
+    // 2. Stop and release all hardware camera/mic tracks
     if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
+        localStream.getTracks().forEach(track => {
+            try {
+                track.stop();
+                localStream.removeTrack(track);
+            } catch (_) {}
+        });
         localStream = null;
     }
+
+    // 3. Clear video element surfaces so OpenGL EglBase surfaces are cleanly released
+    const remoteVideo = document.getElementById("remote-video");
+    if (remoteVideo) {
+        try { remoteVideo.pause(); remoteVideo.srcObject = null; } catch (_) {}
+    }
+    const localVideo = document.getElementById("local-video");
+    if (localVideo) {
+        try { localVideo.pause(); localVideo.srcObject = null; } catch (_) {}
+    }
+
     activeCallTarget = null;
+    isCallInitiating = false;
     iceCandidatesQueue = [];
     document.getElementById("full-call-screen")?.classList.add("hidden");
     document.getElementById("audio-call-visualizer")?.classList.add("hidden");
+    document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
+    document.getElementById("incoming-call-overlay")?.classList.add("hidden");
 }
 
 function endCall() {
@@ -615,12 +825,20 @@ function endCall() {
     endCallCleanup();
 }
 
+let isCallInitiating = false;
+
 function initiateDirectCall(targetUid, type) {
     if (!targetUid) return;
+    if (isCallInitiating || peerConnection) {
+        return; // Prevents Bug 86: Remote Double-Bounce & Fast Finger duplicate calls
+    }
     if (targetUid === my10DigitUid) {
         showToast("You cannot call your own UID");
         return;
     }
+
+    isCallInitiating = true;
+    setTimeout(() => { isCallInitiating = false; }, 1200);
 
     currentCallType = type || "video";
     activeCallTarget = targetUid;
@@ -839,7 +1057,10 @@ function handleDpadNavigation(direction) {
     }
 }
 
-function handleBackKey() {
+let backPressCount = 0;
+let backPressTimer = null;
+
+function handleBackKey(canGoBack) {
     const openModal = document.querySelector('.tv-modal-backdrop:not(.hidden)');
     if (openModal) {
         openModal.classList.add("hidden");
@@ -866,6 +1087,27 @@ function handleBackKey() {
         closeChat();
         return;
     }
+
+    // Graceful double-back exit to prevent accidental kills on TV/Phone
+    backPressCount++;
+    if (backPressCount === 1) {
+        showToast("Press Back again to exit ZingTalk");
+        clearTimeout(backPressTimer);
+        backPressTimer = setTimeout(() => {
+            backPressCount = 0;
+        }, 2000);
+    } else {
+        if (window.Capacitor?.Plugins?.App?.exitApp) {
+            window.Capacitor.Plugins.App.exitApp();
+        }
+    }
+}
+
+// Capacitor Native Hardware Back Button Event (Prevents Bug 44: Accidental Exit)
+if (window.Capacitor?.Plugins?.App) {
+    window.Capacitor.Plugins.App.addListener('backButton', ({ canGoBack }) => {
+        handleBackKey(canGoBack);
+    });
 }
 
 // Global Remote Keydown Event Listener
@@ -881,7 +1123,7 @@ window.addEventListener("keydown", (e) => {
         if (!isTyping) { e.preventDefault(); handleDpadNavigation("left"); }
     } else if (e.key === "ArrowRight") {
         if (!isTyping) { e.preventDefault(); handleDpadNavigation("right"); }
-    } else if (e.key === "Escape" || e.keyCode === 10009 || (e.key === "Backspace" && !isTyping)) {
+    } else if (e.key === "Escape" || e.keyCode === 4 || e.keyCode === 10009 || e.key === "GoBack" || e.key === "Back" || (e.key === "Backspace" && !isTyping)) {
         e.preventDefault();
         handleBackKey();
     }
@@ -1087,20 +1329,72 @@ document.addEventListener("click", async (e) => {
         return;
     }
 
-    // Guest Mode Login Action
+    // Guest Mode Login Action (Official Firebase Anonymous Authentication)
     if (e.target.id === "guest-login-btn" || e.target.closest("#guest-login-btn")) {
         const nameInput = document.getElementById("guest-name-input");
-        const name = nameInput?.value.trim() || "Living Room TV";
-        const email = `${name.toLowerCase().replace(/[^a-z0-9]/g, '')}@tv.local`;
+        const name = nameInput?.value.trim() || "Guest User";
+        const errorEl = document.getElementById("login-message");
+        if (errorEl) errorEl.style.display = "none";
 
-        const user = {
-            displayName: name,
-            email: email,
-            uid: "tv_" + computeDeterministic10DigitUid(email)
-        };
+        // Check if running in Native Capacitor Android App
+        if (window.Capacitor?.isNativePlatform && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins?.FirebaseAuthentication) {
+            try {
+                showToast("Connecting as Guest via Firebase...");
+                const result = await window.Capacitor.Plugins.FirebaseAuthentication.signInAnonymously();
+                if (result && result.user) {
+                    const user = {
+                        displayName: name,
+                        email: null,
+                        uid: result.user.uid,
+                        isAnonymous: true
+                    };
+                    localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                    loginUserSession(user);
+                    showToast(`Welcome ${name}!`);
+                    return;
+                }
+            } catch (nativeErr) {
+                console.warn("[Firebase] Native Anonymous Auth failed:", nativeErr);
+            }
+        }
 
-        localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
-        loginUserSession(user);
+        // Web / Browser Official Firebase Anonymous Authentication
+        if (auth) {
+            try {
+                showToast("Connecting to Firebase...");
+                const cred = await signInAnonymously(auth);
+                if (name) {
+                    try { await updateProfile(cred.user, { displayName: name }); } catch (_) {}
+                }
+                const user = {
+                    displayName: name || cred.user.displayName || "Guest User",
+                    email: null,
+                    uid: cred.user.uid,
+                    isAnonymous: true
+                };
+                localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                loginUserSession(user);
+                showToast(`Welcome ${name}!`);
+            } catch (err) {
+                console.error("[Firebase Anonymous Auth Error]:", err);
+                const msg = err.message || "Failed to sign in as guest via Firebase.";
+                if (errorEl) {
+                    errorEl.innerText = msg;
+                    errorEl.style.display = "block";
+                }
+                showToast(msg);
+            }
+        } else {
+            const instantUid = computeDeterministic10DigitUid(Date.now().toString());
+            const user = {
+                displayName: name,
+                email: null,
+                uid: "guest_" + instantUid,
+                isAnonymous: true
+            };
+            localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+            loginUserSession(user);
+        }
         return;
     }
 

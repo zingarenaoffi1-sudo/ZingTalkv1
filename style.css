@@ -30,6 +30,7 @@
 body.tv-body {
     width: 100vw;
     height: 100vh;
+    padding: env(safe-area-inset-top, 12px) env(safe-area-inset-right, 20px) env(safe-area-inset-bottom, 12px) env(safe-area-inset-left, 20px);
     overflow: hidden;
     background-color: var(--tv-bg);
     color: var(--tv-text-primary);
@@ -842,7 +843,7 @@ body.tv-body {
 
 .tv-call-controls-dock {
     position: absolute;
-    bottom: 44px;
+    bottom: max(44px, env(safe-area-inset-bottom, 48px));
     left: 50%;
     transform: translateX(-50%);
     background: rgba(17, 23, 38, 0.92);

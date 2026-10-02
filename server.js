@@ -156,63 +156,51 @@ io.on('connection', (socket) => {
             if (!data) data = {};
             let uid;
             let usersRef = db.collection('users');
-            let snapshot = { empty: true, docs: [] };
-            
-            try {
-                if (data.email) {
-                    snapshot = await usersRef.where('email', '==', data.email).get();
-                } else if (data.uid) {
-                    const docSnap = await usersRef.doc(String(data.uid)).get();
-                    if (docSnap.exists) {
-                        snapshot = { empty: false, docs: [{ data: () => docSnap.data() }] };
-                    }
-                }
-            } catch (fsErr) {
-                console.warn('[ZingTalk] Database query failed, falling back to memory store:', fsErr.message);
-                db = memoryDb;
-                usersRef = db.collection('users');
-                if (data.email) {
-                    snapshot = await usersRef.where('email', '==', data.email).get();
-                }
-            }
 
-            const existingDoc = !snapshot.empty ? snapshot.docs[0].data() : null;
-            const existingUid = existingDoc ? String(existingDoc.uid || "") : "";
-
-            // Strict enforcement: UID MUST be exactly 10 digits and strictly unique across all users
-            if (snapshot.empty || !existingUid || existingUid.length !== 10) {
-                let isUnique = false;
-                let attempts = 0;
-                while (!isUnique && attempts < 30) {
-                    attempts++;
-                    uid = generate10DigitUid();
-                    // Double check doc existence AND where query to guarantee NO two users get same UID
-                    const docCheck = await usersRef.doc(uid).get();
-                    if (!docCheck.exists) {
-                        const uidCheck = await usersRef.where('uid', '==', uid).get();
-                        if (uidCheck.empty) isUnique = true;
-                    }
-                }
-                const newUser = {
-                    ...(existingDoc || {}),
-                    uid: uid,
-                    email: data.email || (existingDoc && existingDoc.email) || `guest_${uid}@zingtalk.local`,
-                    name: data.name || (existingDoc && existingDoc.name) || "User",
-                    contacts: (existingDoc && existingDoc.contacts) || []
-                };
-                await usersRef.doc(uid).set(newUser, { merge: true });
-                console.log(`[ZingTalk] New 10-digit UID assigned: ${uid} for ${newUser.email}`);
+            // 1. If client provided a valid 10-digit UID (from deterministic Firebase UID hashing), honor it directly
+            if (data.uid && String(data.uid).replace(/\D/g, '').length === 10) {
+                uid = String(data.uid).replace(/\D/g, '');
             } else {
-                uid = existingUid;
+                // Otherwise lookup existing record or generate fresh 10-digit UID
+                let snapshot = { empty: true, docs: [] };
+                try {
+                    if (data.email) {
+                        snapshot = await usersRef.where('email', '==', data.email).get();
+                    }
+                } catch (fsErr) {
+                    console.warn('[ZingTalk] Database query failed, falling back to memory store:', fsErr.message);
+                    db = memoryDb;
+                    usersRef = db.collection('users');
+                }
+
+                const existingDoc = !snapshot.empty ? snapshot.docs[0].data() : null;
+                const existingUid = existingDoc ? String(existingDoc.uid || "") : "";
+
+                if (existingUid && existingUid.length === 10) {
+                    uid = existingUid;
+                } else {
+                    uid = generate10DigitUid();
+                }
             }
 
+            const userObj = {
+                uid: uid,
+                email: data.email || `user_${uid}@zingtalk.local`,
+                name: data.name || "User",
+                contacts: (data.contacts && Array.isArray(data.contacts)) ? data.contacts : []
+            };
+            await usersRef.doc(uid).set(userObj, { merge: true });
+
+            // CRITICAL: Guarantee socket joins private room for this exact 10-digit UID
             connectedUsers.set(uid, socket.id);
             lastActiveTvUid = uid;
             socket.join(uid);
 
-            if (data.contacts && Array.isArray(data.contacts)) {
-                userContactsRegistry.set(uid, data.contacts);
+            if (userObj.contacts && userObj.contacts.length > 0) {
+                userContactsRegistry.set(uid, userObj.contacts);
             }
+
+            console.log(`[ZingTalk] Socket ${socket.id} registered and joined private room for UID: ${uid} (${userObj.name})`);
 
             // Auto-join existing in-memory group rooms
             for (const [groupId, group] of inMemoryGroups.entries()) {
