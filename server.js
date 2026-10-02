@@ -82,37 +82,71 @@ function createMemoryDb() {
 const memoryDb = createMemoryDb();
 let db = memoryDb;
 
-// Initialize Firebase Admin with Firestore if credentials are provided
-const rawSdkConfig = process.env.Firebase_Admin_SDK || process.env.FIREBASE_ADMIN_SDK;
+const fs = require('fs');
 
-if (rawSdkConfig) {
-    try {
-        let serviceAccount;
-        if (typeof rawSdkConfig === 'string') {
-            const trimmed = rawSdkConfig.trim();
-            if (trimmed.startsWith('{')) {
-                serviceAccount = JSON.parse(trimmed);
-            } else {
+// Initialize Firebase Admin with Firestore if credentials are provided in environment or local file
+function loadAdminCredentials() {
+    const envVars = [
+        'Firebase_Admin_SDK',
+        'FIREBASE_ADMIN_SDK',
+        'FIREBASE_CONFIG',
+        'FIREBASE_SERVICE_ACCOUNT',
+        'SERVICE_ACCOUNT',
+        'FIREBASE_CREDENTIALS',
+        'GOOGLE_APPLICATION_CREDENTIALS',
+        'FIREBASE_KEY'
+    ];
+
+    for (const key of envVars) {
+        const val = process.env[key];
+        if (val && typeof val === 'string' && val.trim()) {
+            const trimmed = val.trim();
+            if (fs.existsSync(trimmed)) {
                 try {
-                    const decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
-                    serviceAccount = JSON.parse(decoded);
-                } catch (_) {
-                    serviceAccount = JSON.parse(trimmed.replace(/\\n/g, '\n'));
-                }
+                    return JSON.parse(fs.readFileSync(trimmed, 'utf-8'));
+                } catch (_) {}
             }
-        } else {
-            serviceAccount = rawSdkConfig;
+            if (trimmed.startsWith('{')) {
+                try {
+                    return JSON.parse(trimmed);
+                } catch (_) {}
+            }
+            try {
+                const decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
+                if (decoded.startsWith('{')) return JSON.parse(decoded);
+            } catch (_) {}
+            try {
+                return JSON.parse(trimmed.replace(/\\n/g, '\n'));
+            } catch (_) {}
         }
+    }
 
-        if (serviceAccount && serviceAccount.private_key) {
-            serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+    const files = ['serviceAccountKey.json', 'firebase-adminsdk.json', 'firebase-admin.json', 'admin.json'];
+    for (const f of files) {
+        const p = path.join(__dirname, f);
+        if (fs.existsSync(p)) {
+            try {
+                return JSON.parse(fs.readFileSync(p, 'utf-8'));
+            } catch (_) {}
         }
+    }
+    return null;
+}
 
+const loadedServiceAccount = loadAdminCredentials();
+
+if (loadedServiceAccount) {
+    try {
+        if (loadedServiceAccount.private_key) {
+            loadedServiceAccount.private_key = loadedServiceAccount.private_key.replace(/\\n/g, '\n');
+        }
         admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
+            credential: admin.credential.cert(loadedServiceAccount)
         });
         db = admin.firestore();
+        console.log(`[ZingTalk] Firebase Admin SDK active for project: ${loadedServiceAccount.project_id || 'unknown'}`);
     } catch (err) {
+        console.warn("[ZingTalk] Firebase Admin init error:", err.message);
         db = memoryDb;
     }
 } else if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
@@ -127,9 +161,13 @@ if (rawSdkConfig) {
             })
         });
         db = admin.firestore();
+        console.log(`[ZingTalk] Firebase Admin SDK active for project: ${process.env.FIREBASE_PROJECT_ID}`);
     } catch (err) {
+        console.warn("[ZingTalk] Firebase Admin init error from individual env vars:", err.message);
         db = memoryDb;
     }
+} else {
+    console.log("[ZingTalk] Using High-Performance In-Memory DB (No Firebase Admin credentials provided)");
 }
 
 // Unique 10-digit UID generator
@@ -1023,7 +1061,7 @@ app.get('*', (req, res, next) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`[ZingTalk] Server running on http://0.0.0.0:${PORT}`);
 });

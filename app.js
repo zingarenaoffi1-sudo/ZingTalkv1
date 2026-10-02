@@ -100,10 +100,11 @@ export function updateUidDisplays(uid) {
     if (alexaText) alexaText.innerText = `Voice: "Alexa, pair UID ${my10DigitUid}"`;
 }
 
-// WebRTC STUN Configuration (Google Multi-Endpoint Primary + Global Twilio/Mozilla Failover)
+// WebRTC STUN/TURN Configuration (Google Primary + User AWS EC2 Port 3478 + Twilio/Mozilla Fallback)
 const rtcConfig = {
     iceServers: [
         { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"] },
+        { urls: ["stun:18.234.224.25:3478", "turn:18.234.224.25:3478"] },
         { urls: ["stun:global.stun.twilio.com:3478", "stun:stun.services.mozilla.com"] }
     ],
     iceCandidatePoolSize: 10
@@ -235,9 +236,30 @@ export function registerSocketListeners(s) {
     if (!s) return;
 
     s.on("connect", () => {
+        const alexaDot = document.querySelector(".tv-alexa-dot");
+        if (alexaDot) {
+            alexaDot.style.background = "#10b981";
+            alexaDot.style.boxShadow = "0 0 8px #10b981";
+        }
         if (currentUser) {
             s.emit("login_user", { email: currentUser.email, name: currentUser.displayName || "TV User", uid: my10DigitUid, contacts: myContacts });
             s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+        }
+    });
+
+    s.on("disconnect", () => {
+        const alexaDot = document.querySelector(".tv-alexa-dot");
+        if (alexaDot) {
+            alexaDot.style.background = "#f59e0b";
+            alexaDot.style.boxShadow = "none";
+        }
+    });
+
+    s.on("connect_error", () => {
+        const alexaDot = document.querySelector(".tv-alexa-dot");
+        if (alexaDot) {
+            alexaDot.style.background = "#ef4444";
+            alexaDot.style.boxShadow = "none";
         }
     });
 
@@ -504,7 +526,13 @@ function closeChat() {
 function sendMessageLogic() {
     const input = document.getElementById("message-input");
     const text = input?.value.trim();
-    if (!text || !currentTargetUid || !socket) return;
+    if (!text || !currentTargetUid) return;
+
+    if (!socket || !socket.connected) {
+        showToast("Connecting to call server... please wait 2 seconds.");
+        connectSocket();
+        return;
+    }
 
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const msgData = {
@@ -1348,7 +1376,7 @@ document.addEventListener("click", async (e) => {
         // Check if running in Native Capacitor Android App
         if (window.Capacitor?.isNativePlatform && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins?.FirebaseAuthentication) {
             try {
-                showToast("Connecting as Guest via Firebase...");
+                showToast("Connecting to server...");
                 const result = await window.Capacitor.Plugins.FirebaseAuthentication.signInAnonymously();
                 if (result && result.user) {
                     const user = {
@@ -1370,7 +1398,7 @@ document.addEventListener("click", async (e) => {
         // Web / Browser Official Firebase Anonymous Authentication
         if (auth) {
             try {
-                showToast("Connecting to Firebase...");
+                showToast("Connecting to server...");
                 const cred = await signInAnonymously(auth);
                 if (name) {
                     try { await updateProfile(cred.user, { displayName: name }); } catch (_) {}
