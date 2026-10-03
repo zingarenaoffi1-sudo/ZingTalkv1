@@ -78,32 +78,6 @@ jobs:
                       f.write(content)
                   print("Applied com.google.gms.google-services to android/app/build.gradle")
 
-          # 3. variables.gradle for @capacitor-firebase/authentication
-          var_gradle = "android/variables.gradle"
-          if os.path.exists(var_gradle):
-              with open(var_gradle, "r", encoding="utf-8") as f:
-                  vcontent = f.read()
-              if "rgcfaIncludeGoogle" not in vcontent:
-                  vcontent = re.sub(
-                      r"(ext\s*\{)",
-                      r"\1\n    rgcfaIncludeGoogle = false",
-                      vcontent,
-                      count=1
-                  )
-                  with open(var_gradle, "w", encoding="utf-8") as f:
-                      f.write(vcontent)
-                  print("Disabled rgcfaIncludeGoogle in android/variables.gradle")
-
-          # 4. Inject default_web_client_id into strings.xml
-          strings_path = "android/app/src/main/res/values/strings.xml"
-          if os.path.exists(strings_path):
-              with open(strings_path, "r", encoding="utf-8") as f:
-                  scontent = f.read()
-              if "default_web_client_id" not in scontent:
-                  scontent = scontent.replace("</resources>", "    <string name=\"default_web_client_id\">214252384173-5222k1sa5mvl002c7kd7g90c2g70h69c.apps.googleusercontent.com</string>\n</resources>")
-                  with open(strings_path, "w", encoding="utf-8") as f:
-                      f.write(scontent)
-                  print("Injected default_web_client_id into android/app/src/main/res/values/strings.xml")
           '
 
       - name: Inject Permissions & TV Features in AndroidManifest.xml

@@ -23,19 +23,12 @@ filesToCopy.forEach(file => {
     }
 });
 
-// Copy Capacitor runtime & Firebase Authentication plugin bundles
+// Copy Capacitor runtime bundle
 const capCorePath = path.join(__dirname, 'node_modules/@capacitor/core/dist/capacitor.js');
 if (fs.existsSync(capCorePath)) {
     fs.copyFileSync(capCorePath, path.join(distDir, 'capacitor.js'));
     fs.copyFileSync(capCorePath, path.join(__dirname, 'capacitor.js'));
     console.log('[build-dist] Copied capacitor.js -> dist/capacitor.js & root');
-}
-
-const capAuthPath = path.join(__dirname, 'node_modules/@capacitor-firebase/authentication/dist/plugin.js');
-if (fs.existsSync(capAuthPath)) {
-    fs.copyFileSync(capAuthPath, path.join(distDir, 'capacitor-firebase-auth.js'));
-    fs.copyFileSync(capAuthPath, path.join(__dirname, 'capacitor-firebase-auth.js'));
-    console.log('[build-dist] Copied capacitor-firebase-auth.js -> dist/capacitor-firebase-auth.js & root');
 }
 
 // Copy assets folder (icons, logos)
