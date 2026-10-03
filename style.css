@@ -61,10 +61,28 @@ body.tv-body {
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
     user-select: none;
+    cursor: pointer;
     transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), 
                 box-shadow 0.16s cubic-bezier(0.16, 1, 0.3, 1), 
                 border-color 0.16s ease,
                 background-color 0.16s ease;
+}
+
+/* Mobile Touch Support: allow touch cursor placement and keyboard input */
+input.tv-focusable, 
+textarea.tv-focusable {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    cursor: text !important;
+    touch-action: auto !important;
+}
+
+/* Mobile Touch Support: smooth touch inertia scrolling */
+.tv-contacts-list,
+.tv-messages,
+.tv-policy-scroll {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
 }
 
 .tv-focusable:active {
