@@ -61,7 +61,7 @@ ZingTalk integrates with Amazon Alexa skills to allow remote-free voice dialing 
 
 - **Right to Clear Data**: You can wipe all local chat history and cached contacts instantly by clearing app data in your device Settings or signing out.
 - **Account Deletion**: You can request immediate removal of your account, email, and 10-digit UID mapping from Firebase by contacting `zingarenaoffi1@gmail.com`.
-- **No Third-Party Advertising / Data Selling**: ZingTalk does not sell, rent, monetize, or share your data with advertisers, third-party data brokers, or marketing networks.
+- **Private Data Protection**: ZingTalk never sells or exposes your private personal conversations, audio, or video streams to third parties.
 
 ---
 
