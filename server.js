@@ -195,41 +195,45 @@ io.on('connection', (socket) => {
             let uid;
             let usersRef = db.collection('users');
 
-            // 1. If client provided a valid 10-digit UID (from deterministic Firebase UID hashing), honor it directly
-            if (data.uid && String(data.uid).replace(/\D/g, '').length === 10) {
+            // 1. Look up existing user record by email or Firebase authUid in Firestore
+            let snapshot = { empty: true, docs: [] };
+            try {
+                if (data.email) {
+                    snapshot = await usersRef.where('email', '==', data.email).get();
+                } else if (data.authUid) {
+                    snapshot = await usersRef.where('authUid', '==', data.authUid).get();
+                }
+            } catch (fsErr) {
+                console.warn('[ZingTalk] Database query failed, falling back to memory store:', fsErr.message);
+                db = memoryDb;
+                usersRef = db.collection('users');
+            }
+
+            const existingDoc = !snapshot.empty ? snapshot.docs[0].data() : null;
+            const existingUid = existingDoc ? String(existingDoc.uid || "") : "";
+
+            if (existingUid && existingUid.length === 10) {
+                uid = existingUid;
+            } else if (data.uid && String(data.uid).replace(/\D/g, '').length === 10) {
                 uid = String(data.uid).replace(/\D/g, '');
             } else {
-                // Otherwise lookup existing record or generate fresh 10-digit UID
-                let snapshot = { empty: true, docs: [] };
-                try {
-                    if (data.email) {
-                        snapshot = await usersRef.where('email', '==', data.email).get();
-                    }
-                } catch (fsErr) {
-                    console.warn('[ZingTalk] Database query failed, falling back to memory store:', fsErr.message);
-                    db = memoryDb;
-                    usersRef = db.collection('users');
-                }
-
-                const existingDoc = !snapshot.empty ? snapshot.docs[0].data() : null;
-                const existingUid = existingDoc ? String(existingDoc.uid || "") : "";
-
-                if (existingUid && existingUid.length === 10) {
-                    uid = existingUid;
-                } else {
-                    uid = generate10DigitUid();
-                }
+                // Server generates unique 10-digit UID
+                uid = generate10DigitUid();
             }
 
             const userObj = {
                 uid: uid,
-                email: data.email || `user_${uid}@zingtalk.local`,
-                name: data.name || "User",
-                contacts: (data.contacts && Array.isArray(data.contacts)) ? data.contacts : []
+                authUid: data.authUid || (existingDoc ? existingDoc.authUid : null),
+                email: data.email || (existingDoc ? existingDoc.email : `user_${uid}@zingtalk.local`),
+                name: data.name || (existingDoc ? existingDoc.name : "TV User"),
+                contacts: (data.contacts && Array.isArray(data.contacts) && data.contacts.length > 0) 
+                    ? data.contacts 
+                    : (existingDoc && existingDoc.contacts ? existingDoc.contacts : []),
+                updatedAt: Date.now()
             };
             await usersRef.doc(uid).set(userObj, { merge: true });
 
-            // CRITICAL: Guarantee socket joins private room for this exact 10-digit UID
+            // Guarantee socket joins private room for this exact 10-digit UID
             connectedUsers.set(uid, socket.id);
             lastActiveTvUid = uid;
             socket.join(uid);
@@ -238,7 +242,7 @@ io.on('connection', (socket) => {
                 userContactsRegistry.set(uid, userObj.contacts);
             }
 
-            console.log(`[ZingTalk] Socket ${socket.id} registered and joined private room for UID: ${uid} (${userObj.name})`);
+            console.log(`[ZingTalk] Server authenticated UID: ${uid} for user: ${userObj.name} (${userObj.email})`);
 
             // Auto-join existing in-memory group rooms
             for (const [groupId, group] of inMemoryGroups.entries()) {
@@ -247,8 +251,7 @@ io.on('connection', (socket) => {
                 }
             }
             
-            const userDoc = await usersRef.doc(uid).get();
-            socket.emit('user_data', userDoc.data());
+            socket.emit('user_data', userObj);
         } catch (err) {
             console.error('[ZingTalk] Error in login_user:', err);
         }

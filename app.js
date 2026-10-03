@@ -186,7 +186,13 @@ function loginUserSession(user) {
     }
 
     if (socket && socket.connected) {
-        socket.emit("login_user", { email: user.email, name: displayName, uid: my10DigitUid, contacts: myContacts });
+        socket.emit("login_user", {
+            email: user.email,
+            name: displayName,
+            authUid: user.uid,
+            uid: my10DigitUid,
+            contacts: myContacts
+        });
         socket.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
     }
 
@@ -235,7 +241,13 @@ export function registerSocketListeners(s) {
             alexaDot.style.boxShadow = "0 0 8px #10b981";
         }
         if (currentUser) {
-            s.emit("login_user", { email: currentUser.email, name: currentUser.displayName || "TV User", uid: my10DigitUid, contacts: myContacts });
+            s.emit("login_user", {
+                email: currentUser.email,
+                name: currentUser.displayName || "TV User",
+                authUid: currentUser.uid,
+                uid: my10DigitUid,
+                contacts: myContacts
+            });
             s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
         }
     });
