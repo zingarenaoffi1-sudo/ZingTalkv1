@@ -78,7 +78,7 @@ jobs:
                       f.write(content)
                   print("Applied com.google.gms.google-services to android/app/build.gradle")
 
-          # 3. variables.gradle for @capacitor-firebase/authentication Google Sign-In
+          # 3. variables.gradle for @capacitor-firebase/authentication
           var_gradle = "android/variables.gradle"
           if os.path.exists(var_gradle):
               with open(var_gradle, "r", encoding="utf-8") as f:
@@ -86,13 +86,13 @@ jobs:
               if "rgcfaIncludeGoogle" not in vcontent:
                   vcontent = re.sub(
                       r"(ext\s*\{)",
-                      r"\1\n    rgcfaIncludeGoogle = true\n    playServicesAuthVersion = '\''20.7.0'\''",
+                      r"\1\n    rgcfaIncludeGoogle = false",
                       vcontent,
                       count=1
                   )
                   with open(var_gradle, "w", encoding="utf-8") as f:
                       f.write(vcontent)
-                  print("Added rgcfaIncludeGoogle and playServicesAuthVersion to android/variables.gradle")
+                  print("Disabled rgcfaIncludeGoogle in android/variables.gradle")
 
           # 4. Inject default_web_client_id into strings.xml
           strings_path = "android/app/src/main/res/values/strings.xml"

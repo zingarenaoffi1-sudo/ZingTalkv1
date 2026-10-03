@@ -1,11 +1,10 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js";
 import { 
     getAuth, 
-    signInWithPopup, 
-    GoogleAuthProvider, 
     onAuthStateChanged,
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
+    sendPasswordResetEmail,
     signInAnonymously,
     updateProfile,
     signOut
@@ -22,11 +21,10 @@ const firebaseConfig = {
     measurementId: "G-W87FM4ZNJ7"
 };
 
-let app, auth, provider;
+let app, auth;
 try {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
-    provider = new GoogleAuthProvider();
 } catch (e) {
     // Initialized in offline fallback mode
 }
@@ -1161,16 +1159,7 @@ let isSignUpMode = false;
 document.addEventListener("click", async (e) => {
     if (e.target.tagName === "BUTTON") e.preventDefault();
 
-    // 1. Login Tabs Switching
-    if (e.target.id === "tab-btn-google") {
-        document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
-        document.querySelectorAll(".tv-tab-pane").forEach(p => p.classList.add("hidden"));
-        e.target.classList.add("active");
-        document.getElementById("pane-google")?.classList.remove("hidden");
-        document.getElementById("google-login-btn")?.focus();
-        return;
-    }
-
+    // 1. Login Tabs Switching (Email & Password / Guest Mode)
     if (e.target.id === "tab-btn-email") {
         document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
         document.querySelectorAll(".tv-tab-pane").forEach(p => p.classList.add("hidden"));
@@ -1208,70 +1197,75 @@ document.addEventListener("click", async (e) => {
         return;
     }
 
-    // Google Login Action
-    if (e.target.id === "google-login-btn" || e.target.closest("#google-login-btn")) {
-        const errorEl = document.getElementById("login-message");
-        if (errorEl) errorEl.style.display = "none";
+    // Forgot Password Link Click
+    if (e.target.id === "forgot-password-link") {
+        const loginEmail = document.getElementById("login-email-input")?.value.trim() || "";
+        const resetInput = document.getElementById("reset-email-input");
+        const statusEl = document.getElementById("reset-status-message");
+        if (resetInput) resetInput.value = loginEmail;
+        if (statusEl) {
+            statusEl.style.display = "none";
+            statusEl.innerText = "";
+        }
+        document.getElementById("forgot-password-modal")?.classList.remove("hidden");
+        resetInput?.focus();
+        return;
+    }
 
-        // Check if running in Native Capacitor Android App
-        if (window.Capacitor?.isNativePlatform && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins?.FirebaseAuthentication) {
-            try {
-                showToast("Opening Google Sign-In...");
-                const result = await window.Capacitor.Plugins.FirebaseAuthentication.signInWithGoogle();
-                if (result && result.user) {
-                    const user = {
-                        displayName: result.user.displayName || "Google User",
-                        email: result.user.email,
-                        uid: result.user.uid,
-                        photoURL: result.user.photoUrl
-                    };
-                    localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
-                    loginUserSession(user);
-                    return;
-                }
-            } catch (nativeErr) {
-                console.warn("[Firebase] Native Google Sign-In failed:", nativeErr);
-                const msg = nativeErr.message || "Google Sign-In cancelled or failed.";
-                if (errorEl) {
-                    errorEl.innerText = msg;
-                    errorEl.style.display = "block";
-                }
-                showToast(msg);
-                return;
+    // Close Forgot Password Modal
+    if (e.target.id === "close-forgot-modal-btn" || e.target.id === "cancel-reset-btn") {
+        document.getElementById("forgot-password-modal")?.classList.add("hidden");
+        document.getElementById("login-password-input")?.focus();
+        return;
+    }
+
+    // Send Password Reset Link Action
+    if (e.target.id === "send-reset-link-btn" || e.target.closest("#send-reset-link-btn")) {
+        const email = document.getElementById("reset-email-input")?.value.trim();
+        const statusEl = document.getElementById("reset-status-message");
+        if (statusEl) statusEl.style.display = "none";
+
+        if (!email) {
+            if (statusEl) {
+                statusEl.innerText = "Please enter your registered email address.";
+                statusEl.style.display = "block";
             }
+            return;
         }
 
-        // Web / Browser Standard Firebase Google Sign-In
-        if (auth && provider) {
-            try {
-                const result = await signInWithPopup(auth, provider);
-                const user = {
-                    displayName: result.user.displayName || "Google User",
-                    email: result.user.email,
-                    uid: result.user.uid,
-                    photoURL: result.user.photoURL
-                };
-                localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
-                loginUserSession(user);
-            } catch (err) {
-                console.error("[Firebase] Google popup error:", err);
-                let msg = err.message || "Google Sign-In failed.";
-                if (err.code === "auth/popup-closed-by-user") {
-                    msg = "Google sign-in popup was closed.";
-                } else if (err.code === "auth/popup-blocked") {
-                    msg = "Pop-up blocked by browser. Please allow popups for this site.";
-                }
-                if (errorEl) {
-                    errorEl.innerText = msg;
-                    errorEl.style.display = "block";
-                }
-                showToast(msg);
+        if (!auth) {
+            if (statusEl) {
+                statusEl.innerText = "Authentication service is currently offline. Please try again later.";
+                statusEl.style.display = "block";
             }
-        } else {
-            if (errorEl) {
-                errorEl.innerText = "Firebase Authentication is initializing. Please try again.";
-                errorEl.style.display = "block";
+            return;
+        }
+
+        try {
+            showToast("Sending reset link...");
+            await sendPasswordResetEmail(auth, email);
+            if (statusEl) {
+                statusEl.innerHTML = `<span style="color: #00d29d; font-weight: 700;">✅ Password reset email sent! Check your inbox and spam folder.</span>`;
+                statusEl.style.display = "block";
             }
+            showToast("Reset email sent to " + email);
+            setTimeout(() => {
+                document.getElementById("forgot-password-modal")?.classList.add("hidden");
+                document.getElementById("login-password-input")?.focus();
+            }, 3200);
+        } catch (err) {
+            console.error("[Password Reset Error]:", err);
+            let msg = err.message || "Failed to send password reset email.";
+            if (err.code === "auth/user-not-found") {
+                msg = "No registered account found with this email.";
+            } else if (err.code === "auth/invalid-email") {
+                msg = "Please enter a valid email address.";
+            }
+            if (statusEl) {
+                statusEl.innerText = msg;
+                statusEl.style.display = "block";
+            }
+            showToast(msg);
         }
         return;
     }

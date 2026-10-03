@@ -46,29 +46,14 @@
                     <p class="tv-auth-subtitle">Real-Time Chat & HD Audio/Video Calling</p>
                 </div>
 
-                <!-- 3 Original Login Options Segmented Tabs -->
+                <!-- 2 Login Options: Email & Password or Guest Mode -->
                 <div class="tv-login-tabs">
-                    <button type="button" class="tv-login-tab active tv-focusable" id="tab-btn-google" tabindex="0">Google</button>
-                    <button type="button" class="tv-login-tab tv-focusable" id="tab-btn-email" tabindex="0">Email & Pass</button>
+                    <button type="button" class="tv-login-tab active tv-focusable" id="tab-btn-email" tabindex="0">Email & Password</button>
                     <button type="button" class="tv-login-tab tv-focusable" id="tab-btn-guest" tabindex="0">Guest Mode</button>
                 </div>
 
-                <!-- Tab 1: Google Login -->
-                <div id="pane-google" class="tv-tab-pane">
-                    <p class="tv-tab-note">Direct 1-tap Google Sign-In</p>
-                    <button type="button" id="google-login-btn" class="tv-primary-btn tv-google-btn tv-focusable" tabindex="0">
-                        <svg width="22" height="22" viewBox="0 0 18 18">
-                            <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.616z"/>
-                            <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
-                            <path fill="#FBBC05" d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707s.102-1.167.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/>
-                            <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z"/>
-                        </svg>
-                        <span>Continue with Google</span>
-                    </button>
-                </div>
-
-                <!-- Tab 2: Email & Password Login -->
-                <div id="pane-email" class="tv-tab-pane hidden">
+                <!-- Tab 1: Email & Password Login -->
+                <div id="pane-email" class="tv-tab-pane">
                     <div class="tv-auth-form">
                         <div id="email-signup-name-group" class="tv-input-group hidden">
                             <label class="tv-input-label" for="login-name-input">Full Name</label>
@@ -79,7 +64,10 @@
                             <input type="email" id="login-email-input" class="tv-input tv-focusable" tabindex="0" placeholder="user@domain.com">
                         </div>
                         <div class="tv-input-group">
-                            <label class="tv-input-label" for="login-password-input">Password</label>
+                            <div class="tv-label-row">
+                                <label class="tv-input-label" for="login-password-input">Password</label>
+                                <button type="button" id="forgot-password-link" class="tv-forgot-link tv-focusable" tabindex="0">Forgot Password?</button>
+                            </div>
                             <input type="password" id="login-password-input" class="tv-input tv-focusable" tabindex="0" placeholder="••••••••">
                         </div>
                         <button type="button" id="email-login-submit-btn" class="tv-primary-btn tv-focusable" tabindex="0">
@@ -91,7 +79,7 @@
                     </div>
                 </div>
 
-                <!-- Tab 3: Guest Mode (Instant TV Quick-Start) -->
+                <!-- Tab 2: Guest Mode (Instant TV Quick-Start) -->
                 <div id="pane-guest" class="tv-tab-pane hidden">
                     <div class="tv-auth-form">
                         <div class="tv-input-group">
@@ -354,6 +342,32 @@
                 </div>
                 <div class="tv-dialog-buttons" style="margin-top: 16px;">
                     <button type="button" id="policy-ok-btn" class="tv-dialog-btn tv-focusable" tabindex="0">I Understand & Accept</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 8. FORGOT PASSWORD MODAL -->
+        <div id="forgot-password-modal" class="tv-modal-backdrop hidden">
+            <div class="tv-dialog-card" style="max-width: 520px; width: 90%; text-align: left;">
+                <div class="tv-dialog-header">
+                    <h3 class="tv-dialog-title">🔑 Reset Your Password</h3>
+                    <button type="button" id="close-forgot-modal-btn" class="tv-icon-btn tv-focusable" tabindex="0" title="Close">&times;</button>
+                </div>
+                <p style="font-size: 14.5px; color: var(--tv-text-secondary); line-height: 1.6; margin-bottom: 20px;">
+                    Enter your registered email address below. We will send a secure password reset link to your email inbox.
+                </p>
+                <div class="tv-input-group" style="margin-bottom: 16px;">
+                    <label class="tv-input-label" for="reset-email-input">Registered Email</label>
+                    <input type="email" id="reset-email-input" class="tv-input tv-focusable" tabindex="0" placeholder="user@domain.com">
+                </div>
+                <div id="reset-status-message" class="tv-error-text" style="display: none; margin-bottom: 16px; text-align: left;"></div>
+                <div class="tv-dialog-buttons" style="flex-direction: column; gap: 10px;">
+                    <button type="button" id="send-reset-link-btn" class="tv-primary-btn tv-focusable" tabindex="0">
+                        <span>Send Password Reset Link</span>
+                    </button>
+                    <button type="button" id="cancel-reset-btn" class="tv-dialog-btn tv-focusable" tabindex="0">
+                        Cancel
+                    </button>
                 </div>
             </div>
         </div>

@@ -373,6 +373,31 @@ textarea.tv-focusable {
     gap: 6px;
 }
 
+.tv-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.tv-forgot-link {
+    background: none;
+    border: none;
+    color: var(--tv-cyan-glow);
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+    opacity: 0.9;
+    padding: 2px 4px;
+    border-radius: 6px;
+}
+
+.tv-forgot-link:hover,
+.tv-forgot-link:focus {
+    opacity: 1;
+    color: #38bdf8;
+}
+
 .tv-input-label {
     font-size: 13px;
     font-weight: 700;
