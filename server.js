@@ -185,6 +185,9 @@ const inMemoryGroups = new Map();
 // In-Memory Block Registry (blockerUid -> Set of blockedUids)
 const inMemoryBlocks = new Map();
 
+// Ephemeral in-memory message queue (Zero-Retention: automatically purged upon delivery)
+const ephemeralMessageQueue = new Map();
+
 // Persistent Alexa Device to ZingTalk User UID Registry (amazonUserId -> 10-digit UID)
 const alexaDevicePairings = new Map();
 
@@ -252,6 +255,13 @@ io.on('connection', (socket) => {
             }
             
             socket.emit('user_data', userObj);
+
+            // Zero-Retention Delivery: Deliver buffered messages and immediately purge from RAM
+            if (ephemeralMessageQueue.has(uid)) {
+                const pendingMessages = ephemeralMessageQueue.get(uid) || [];
+                pendingMessages.forEach(msg => socket.emit('receive_message', msg));
+                ephemeralMessageQueue.delete(uid);
+            }
         } catch (err) {
             console.error('[ZingTalk] Error in login_user:', err);
         }
@@ -320,14 +330,35 @@ io.on('connection', (socket) => {
     });
 
     socket.on('send_message', (data) => {
+        if (!data || !data.receiverUid) return;
+
         // Block check: If receiver has blocked sender, do not deliver
         const receiverBlockedList = inMemoryBlocks.get(data.receiverUid);
         if (receiverBlockedList && receiverBlockedList.has(data.senderUid)) {
             socket.emit('message_status', { msgId: data.id, delivered: false });
             return;
         }
-        io.to(data.receiverUid).emit('receive_message', data);
-        socket.emit('message_status', { msgId: data.id, delivered: true });
+
+        const isOnline = connectedUsers.has(data.receiverUid);
+        if (isOnline) {
+            io.to(data.receiverUid).emit('receive_message', data);
+            socket.emit('message_status', { msgId: data.id, delivered: true });
+        } else {
+            // Buffer transiently in volatile RAM until recipient connects
+            if (!ephemeralMessageQueue.has(data.receiverUid)) {
+                ephemeralMessageQueue.set(data.receiverUid, []);
+            }
+            const q = ephemeralMessageQueue.get(data.receiverUid);
+            if (q.length > 50) q.shift();
+            q.push(data);
+            socket.emit('message_status', { msgId: data.id, delivered: false, queued: true });
+        }
+    });
+
+    socket.on('message_seen', (data) => {
+        if (data && data.receiverUid && ephemeralMessageQueue.has(data.receiverUid)) {
+            ephemeralMessageQueue.delete(data.receiverUid);
+        }
     });
 
     // Group Management

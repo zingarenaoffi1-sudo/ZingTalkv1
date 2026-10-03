@@ -301,6 +301,7 @@ export function registerSocketListeners(s) {
         if (currentTargetUid === sender) {
             appendMessage(data, "msg-received");
         }
+        s.emit("message_seen", { receiverUid: my10DigitUid, msgId: data.id });
     });
 
     s.on("incoming_call", (data) => {
@@ -1594,12 +1595,13 @@ document.addEventListener("click", async (e) => {
     }
 
     // Policy Modal
-    if (e.target.id === "open-policy-btn") {
+    if (e.target.id === "open-policy-btn" || e.target.id === "sidebar-policy-btn" || e.target.id === "profile-policy-btn" || e.target.closest(".tv-policy-btn-trigger")) {
+        document.getElementById("profile-modal")?.classList.add("hidden");
         document.getElementById("policy-modal")?.classList.remove("hidden");
         return;
     }
 
-    if (e.target.id === "close-policy-btn") {
+    if (e.target.id === "close-policy-btn" || e.target.id === "policy-ok-btn") {
         document.getElementById("policy-modal")?.classList.add("hidden");
         return;
     }

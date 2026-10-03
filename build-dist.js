@@ -10,7 +10,6 @@ const filesToCopy = [
     'index.html',
     'style.css',
     'app.js',
-    'calling.js',
     'manifest.json',
     'service-worker.js'
 ];

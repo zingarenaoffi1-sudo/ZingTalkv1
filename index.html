@@ -160,6 +160,12 @@
                         <div class="tv-section-title">Saved Contacts</div>
                         <div id="contacts-list" class="tv-contacts-list"></div>
                     </div>
+
+                    <div class="tv-sidebar-footer">
+                        <button type="button" id="sidebar-policy-btn" class="tv-subtle-link tv-policy-btn-trigger tv-focusable" tabindex="0">
+                            🔒 Privacy Policy & Zero-Storage Terms
+                        </button>
+                    </div>
                 </aside>
 
                 <!-- Right Stage: TV Conversation & Calling Studio -->
@@ -290,6 +296,7 @@
                 </div>
 
                 <div class="tv-dialog-buttons">
+                    <button type="button" id="profile-policy-btn" class="tv-dialog-btn tv-policy-btn-trigger tv-focusable" tabindex="0">Privacy Policy</button>
                     <button type="button" id="close-profile-btn" class="tv-dialog-btn tv-focusable" tabindex="0">Close</button>
                     <button type="button" id="modal-logout-btn" class="tv-dialog-btn tv-danger-btn tv-focusable" tabindex="0">Log Out</button>
                 </div>
@@ -300,14 +307,54 @@
         <div id="policy-modal" class="tv-modal-backdrop hidden">
             <div class="tv-dialog-card tv-policy-dialog">
                 <div class="tv-dialog-header">
-                    <h3 class="tv-dialog-title">Privacy Policy & Terms</h3>
-                    <button type="button" id="close-policy-btn" class="tv-icon-btn tv-focusable" tabindex="0">&times;</button>
+                    <h3 class="tv-dialog-title">🔒 ZingTalk Enterprise Privacy Policy & Terms</h3>
+                    <button type="button" id="close-policy-btn" class="tv-icon-btn tv-focusable" tabindex="0" title="Close">&times;</button>
                 </div>
                 <div class="tv-policy-scroll">
-                    <h4>Direct Peer-to-Peer Architecture</h4>
-                    <p>ZingTalk establishes direct encrypted connections between peers. Video, audio, and media streams are transmitted directly between devices without central server storage.</p>
-                    <h4>Safety & Compliance</h4>
-                    <p>Users must not transmit unlawful or abusive content. Account access may be revoked for violations.</p>
+                    <div class="tv-policy-banner">
+                        <span class="tv-policy-pill">Zero Server Storage Architecture</span>
+                        <span class="tv-policy-pill">Military-Grade P2P Encryption</span>
+                        <span class="tv-policy-pill">Fire TV & Leanback Certified</span>
+                        <span class="tv-policy-pill">GDPR & CCPA Compliant</span>
+                    </div>
+
+                    <h3>1. Core Philosophy: Absolute Ephemerality</h3>
+                    <p>ZingTalk is engineered on an uncompromising principle: <strong>communication belongs exclusively to the participants</strong>. Unlike conventional messaging platforms, ZingTalk maintains <strong>ZERO persistent server storage</strong> for all communications. We do not store, index, sell, or analyze your personal conversations, video streams, audio recordings, or metadata.</p>
+
+                    <h3>2. Zero Server Storage (Text, Voice & Video)</h3>
+                    <ul>
+                        <li><strong>No Server Database for Chats:</strong> Messages are transmitted in real time and are never written to any database, disk, log file, or cloud backup.</li>
+                        <li><strong>Instant Memory Relay & Automatic Purge:</strong> If the recipient is temporarily offline, the encrypted payload is held temporarily in volatile server RAM solely until delivery. The millisecond the recipient receives the message, it is permanently and irreversibly purged from memory.</li>
+                        <li><strong>Direct Peer-to-Peer Media Streams:</strong> All audio and video calls operate via WebRTC DTLS-SRTP end-to-end encrypted pipelines. Camera feeds and microphone audio flow device-to-device and never pass through recording or media servers.</li>
+                        <li><strong>Client-Side Ownership:</strong> Chat history and contacts reside exclusively inside your device's local memory. Clearing your app cache permanently removes all records.</li>
+                    </ul>
+
+                    <h3>3. Anonymous 10-Digit Identity (No Phone or SIM Required)</h3>
+                    <p>ZingTalk replaces phone numbers, SIM card telemetry, and hardware IMEI identifiers with a randomized 10-digit numeric Unique Identifier (UID). You can connect and communicate freely without revealing personal phone numbers or identity.</p>
+
+                    <h3>4. Amazon Fire TV & Alexa Voice Privacy</h3>
+                    <ul>
+                        <li><strong>Intent Signals Only:</strong> Voice commands issued via Amazon Alexa physical TV remotes or Echo devices transmit high-level action intents (e.g. <em>"Call Rahul"</em>) via encrypted webhooks directly to your paired TV room.</li>
+                        <li><strong>No Voice Recording:</strong> ZingTalk never receives, processes, or archives raw microphone audio or spoken transcripts. Voice processing is handled exclusively on your local Alexa device.</li>
+                        <li><strong>Device Room Isolation:</strong> Each paired TV session is isolated to its unique 10-digit UID room, preventing cross-device interference.</li>
+                    </ul>
+
+                    <h3>5. Security & Cryptographic Standards</h3>
+                    <ul>
+                        <li><strong>WebRTC Encryption:</strong> All media sessions use DTLS (Datagram Transport Layer Security) and SRTP (Secure Real-time Transport Protocol).</li>
+                        <li><strong>Signaling Security:</strong> WebSockets communicate over secure TLS encrypted channels.</li>
+                        <li><strong>STUN / TURN Relay:</strong> Industry-standard Google STUN endpoints and secure Amazon AWS EC2 TURN fallbacks are utilized solely for initial NAT traversal. No call data is inspected or stored.</li>
+                    </ul>
+
+                    <h3>6. User Data Rights & Account Control</h3>
+                    <ul>
+                        <li><strong>Right to Erasure:</strong> You can completely erase your local session, contacts, and chat cache at any time via the Sign Out button or device Settings.</li>
+                        <li><strong>Zero Third-Party Tracking:</strong> ZingTalk contains zero advertising trackers, zero analytics telemetry SDKs, and zero third-party data broker integrations.</li>
+                        <li><strong>Contact:</strong> For enterprise inquiries or data requests, contact: <code>zingarenaoffi1@gmail.com</code></li>
+                    </ul>
+                </div>
+                <div class="tv-dialog-buttons" style="margin-top: 16px;">
+                    <button type="button" id="policy-ok-btn" class="tv-dialog-btn tv-focusable" tabindex="0">I Understand & Accept</button>
                 </div>
             </div>
         </div>

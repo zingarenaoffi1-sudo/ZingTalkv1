@@ -1,62 +1,82 @@
 # Privacy Policy for ZingTalk
 
-**Last Updated**: September 24, 2026  
+**Effective Date**: October 3, 2026  
 **Application Name**: ZingTalk (`com.zingtalk.com`)  
-**Developer Contact**: `zingarenaoffi1@gmail.com`
-
-Welcome to **ZingTalk**. Your privacy and data confidentiality are our core values. This Privacy Policy describes how ZingTalk collects, uses, and protects your information when using our Android mobile application and web services.
-
----
-
-## 1. Information We Collect
-
-### A. Account Information
-- **Google Account Authentication**: When logging in via Google, we receive your standard public profile details (Display Name and Email Address) provided by Google Firebase Authentication.
-- **Email & Password Authentication**: When creating an account with an email and password, we collect your email address and preferred display name.
-- **Guest Accounts**: If you choose to enter as a guest, we only record a transient nickname without requiring sensitive personal information.
-- **10-Digit Unique Identifier (UID)**: Each user is assigned a randomized 10-digit numeric ID to facilitate contact discovery without exposing phone numbers or private data.
-
-### B. Device & Permissions
-- **Camera & Microphone**: Used strictly in real-time when you initiate or receive an Audio or Video call. ZingTalk does NOT record, listen to, or store your camera feeds or microphone audio.
-- **Storage / Media Access**: Used only when you choose to share a photo, audio clip, or video with your contact.
+**Developer Contact**: `zingarenaoffi1@gmail.com`  
+**Platform**: Android TV, Amazon Fire TV & Fire TV Stick (Leanback OS)
 
 ---
 
-## 2. Zero Server Storage for Media & Messages (Privacy by Design)
+## 1. Introduction & Core Philosophy
+Welcome to **ZingTalk**. We believe that personal communication must be private, decentralized, and ephemeral. ZingTalk is built on a **Zero Server Retention** architecture: we do not store your private text chats, audio recordings, video streams, or media on any persistent server. 
 
-- **Peer-to-Peer & Client-Side Storage**: All chat messages, photos, voice notes, audio files, and video clips exchanged on ZingTalk are transmitted directly and stored **exclusively in your local device memory** (`localStorage` / local database).
-- **No Cloud or Firebase File Storage**: ZingTalk **DOES NOT store your chat messages, images, audio files, or videos on any central server or Firebase Cloud Storage**.
-- Once delivered, messages and media exist solely on the sender's and recipient's devices.
-
----
-
-## 3. Real-Time WebRTC Calling
-
-- Audio and Video calls utilize direct **WebRTC (Web Real-Time Communication)** peer-to-peer pipelines.
-- Standard Google STUN servers (`stun.l.google.com`) are utilized solely for initial network handshake (NAT traversal). Audio and video data flow directly between the two calling devices and do not pass through or get recorded by any server.
+Your conversations belong exclusively to you and the person you are communicating with.
 
 ---
 
-## 4. Third-Party Services & Authentication
+## 2. Zero Server Retention (Ephemeral Messaging & P2P Media)
 
-ZingTalk integrates trusted security services:
-- **Firebase Authentication**: Used securely to authenticate user credentials with zero persistent cloud chat logs.
+### A. Real-Time Chat & Text Messages
+- **No Central Server Database for Chat**: ZingTalk servers **DO NOT** write, store, or archive your text messages in any database (SQL, NoSQL, Firestore, or disk logs).
+- **Instant Memory Delivery & Automatic Purge**: Messages are relayed in real-time through active WebSockets. If the recipient is temporarily unreachable, the encrypted payload is held temporarily in volatile server RAM **only until the recipient connects**. The moment the message is delivered, it is **instantly and permanently purged** from server memory.
+- **Client-Side Storage**: Message history is stored **exclusively on your local device** (`localStorage` / local device storage). Clearing app storage deletes your history entirely.
 
----
-
-## 5. Data Retention & Account Deletion
-
-- Because your messages, media, and contacts are stored locally on your device, clearing your app data or uninstalling ZingTalk removes all local data permanently.
-- You can log out at any time from the app profile menu.
-
----
-
-## 6. Children's Privacy
-ZingTalk does not knowingly collect personal information from children under 13 without appropriate parental consent.
+### B. High-Definition Audio & Video Calls
+- **Direct WebRTC Peer-to-Peer Encryption**: All video and audio streams flow directly from device to device using WebRTC (Web Real-Time Communication) with DTLS-SRTP military-grade end-to-end encryption.
+- **Zero Media Recording**: No video or audio passes through any recording software, CDN, or cloud storage. Our backend server acts solely as a signaling coordinator to exchange network connection addresses (SDP/ICE), never touching the audio/video media itself.
 
 ---
 
-## 7. Contact Us
-If you have any questions or feedback regarding this Privacy Policy, please reach out to:
+## 3. Information We Collect & How It Is Used
+
+### A. Authentication & User Profile
+- **Randomized 10-Digit Unique Identifier (UID)**: Each user is allocated a unique 10-digit numeric ID (e.g. `2156774755`). This replaces phone numbers and physical SIM card identifiers, preserving user anonymity.
+- **Google Sign-In / Email Authentication**: We use Google Firebase Authentication strictly to verify identity and enable cloud contact synchronization across your devices. We only store your email, display name, and your 10-digit UID.
+- **Contacts Directory**: Your saved contacts (Name and 10-Digit UID) are stored so that you can quickly initiate calls or send messages. Contacts are private to your account.
+
+### B. Device Permissions
+- **Microphone**: Required exclusively during active audio and video calls. The microphone is active only while a call is in progress.
+- **Camera**: Required exclusively during active video calls. Camera video is transmitted directly peer-to-peer and is immediately terminated when the call ends.
+- **Network / Internet**: Required for WebSocket signaling, STUN NAT traversal, and peer connectivity.
+
+---
+
+## 4. Amazon Alexa Voice Integration Privacy
+
+ZingTalk integrates with Amazon Alexa skills to allow remote-free voice dialing on Smart TVs:
+- **Voice Intents Only**: Alexa interactions send high-level intent commands (e.g., `call Rahul` or `end call`) via a secure HTTPS webhook (`/api/alexa`).
+- **No Voice Audio Transferred**: Your spoken voice is processed by Amazon's Alexa hardware; ZingTalk never receives, records, or stores any raw audio recordings or voice transcripts.
+- **Device-Specific Pairing**: Alexa commands are routed strictly to your specific paired 10-digit UID using room isolation.
+
+---
+
+## 5. Security & Network Traversal (STUN / TURN)
+
+- **Primary STUN**: Industry-standard Google STUN endpoints (`stun.l.google.com:19302`) are queried initially to discover public IP addresses for direct peer routing.
+- **Failover Relay**: If both devices are behind symmetric firewalls or restricted NAT, encrypted fallback traversal via secure STUN/TURN (`18.234.224.25:3478`) is engaged. All relayed packets remain end-to-end encrypted.
+
+---
+
+## 6. User Rights & Complete Data Control
+
+- **Right to Clear Data**: You can wipe all local chat history and cached contacts instantly by clearing app data in your device Settings or signing out.
+- **Account Deletion**: You can request immediate removal of your account, email, and 10-digit UID mapping from Firebase by contacting `zingarenaoffi1@gmail.com`.
+- **No Third-Party Advertising / Data Selling**: ZingTalk does not sell, rent, monetize, or share your data with advertisers, third-party data brokers, or marketing networks.
+
+---
+
+## 7. Children's Privacy
+ZingTalk does not knowingly harvest personal information from children under the age of 13.
+
+---
+
+## 8. Updates to this Policy
+We may periodically update this Privacy Policy. Any modifications will be displayed directly within the application's Privacy Policy screen.
+
+---
+
+## 9. Contact Developer
+If you have any questions, suggestions, or privacy requests regarding ZingTalk, please contact:
 - **Email**: `zingarenaoffi1@gmail.com`
-- **Application**: ZingTalk (`com.zingtalk.com`)
+- **Application Package**: `com.zingtalk.com`
+- **Developer**: Aryan (ZingTalk Creator)

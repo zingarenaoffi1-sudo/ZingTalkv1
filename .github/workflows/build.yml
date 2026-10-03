@@ -130,7 +130,10 @@ jobs:
                   "<uses-feature android:name=\"android.hardware.camera.autofocus\" android:required=\"false\" />",
                   "<uses-feature android:name=\"android.hardware.microphone\" android:required=\"false\" />",
                   "<uses-feature android:name=\"android.software.leanback\" android:required=\"false\" />",
-                  "<uses-feature android:name=\"android.hardware.touchscreen\" android:required=\"false\" />"
+                  "<uses-feature android:name=\"android.hardware.touchscreen\" android:required=\"false\" />",
+                  "<uses-feature android:name=\"android.hardware.faketouch\" android:required=\"false\" />",
+                  "<uses-feature android:name=\"android.hardware.telephony\" android:required=\"false\" />",
+                  "<uses-feature android:name=\"android.hardware.wifi\" android:required=\"false\" />"
               ]
 
               to_inject = [e for e in elements_to_add if e not in content]
@@ -138,7 +141,7 @@ jobs:
                   block = "\n    " + "\n    ".join(to_inject) + "\n\n    "
                   content = content.replace("<application", block + "<application", 1)
 
-              # Ensure hardware acceleration, largeHeap, cleartextTraffic, and TV banner in <application>
+              # Ensure hardware acceleration, largeHeap, cleartextTraffic, and Fire TV Leanback banner
               if "<application" in content:
                   if "android:hardwareAccelerated" not in content:
                       content = content.replace("<application", "<application android:hardwareAccelerated=\"true\"", 1)
@@ -147,22 +150,25 @@ jobs:
                   if "android:usesCleartextTraffic" not in content:
                       content = content.replace("<application", "<application android:usesCleartextTraffic=\"true\"", 1)
                   if "android:banner" not in content:
-                      content = content.replace("<application", "<application android:banner=\"@mipmap/ic_launcher\"", 1)
+                      content = content.replace("<application", "<application android:banner=\"@drawable/banner\"", 1)
 
-              # Inject Leanback Launcher intent-filter so ZingTalk shows in Android TV & Fire TV Home Launcher menu
+              # Inject Leanback Launcher intent-filter so ZingTalk shows in Android TV & Fire TV Home Launcher menu (Prevents Ghost APK)
               if "android.intent.category.LEANBACK_LAUNCHER" not in content and "android.intent.category.LAUNCHER" in content:
                   content = content.replace(
                       "<category android:name=\"android.intent.category.LAUNCHER\" />",
                       "<category android:name=\"android.intent.category.LAUNCHER\" />\n                <category android:name=\"android.intent.category.LEANBACK_LAUNCHER\" />"
                   )
 
-              # Ensure keepScreenOn in <activity> so TV idle screensaver never kills long video calls (Bug 78)
-              if "<activity" in content and "android:keepScreenOn" not in content:
-                  content = content.replace("<activity", "<activity android:keepScreenOn=\"true\"", 1)
+              # Ensure TV landscape orientation and keepScreenOn in <activity>
+              if "<activity" in content:
+                  if "android:screenOrientation" not in content:
+                      content = content.replace("<activity", "<activity android:screenOrientation=\"landscape\"", 1)
+                  if "android:keepScreenOn" not in content:
+                      content = content.replace("<activity", "<activity android:keepScreenOn=\"true\"", 1)
 
               with open(manifest_path, "w", encoding="utf-8") as f:
                   f.write(content)
-              print("AndroidManifest.xml safely updated with permissions, Leanback TV launcher, features, and hardware acceleration.")
+              print("AndroidManifest.xml safely updated with Fire TV Leanback launcher, landscape orientation, and banner.")
           '
 
       - name: Inject ProGuard Keep Rules for WebRTC & Firebase
@@ -204,9 +210,12 @@ jobs:
           print("ProGuard keep rules successfully injected into android/app/proguard-rules.pro")
           '
 
-      - name: Inject ZingTalk App Icons into Android Resources
+      - name: Inject ZingTalk App Icons & Fire TV Banner into Android Resources
         run: |
-          node generate-icons.js
+          mkdir -p android/app/src/main/res/drawable
+          if [ -f "assets/icon.png" ]; then
+            cp assets/icon.png android/app/src/main/res/drawable/banner.png
+          fi
           for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
             res_dir="android/app/src/main/res/mipmap-${d}"
             mkdir -p "$res_dir"
@@ -216,7 +225,7 @@ jobs:
               cp "assets/mipmap-${d}/ic_launcher_foreground.png" "$res_dir/ic_launcher_foreground.png"
             fi
           done
-          echo "ZingTalk custom brand launcher icons injected into Android resources."
+          echo "ZingTalk custom brand launcher icons & Fire TV banner injected into Android resources."
 
       - name: Inject google-services.json & Release Keystore
         run: |
