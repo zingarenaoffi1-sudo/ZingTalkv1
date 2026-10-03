@@ -89,8 +89,6 @@ export function updateUidDisplays(uid) {
     if (label) label.innerText = "UID: " + my10DigitUid;
     const modalUid = document.getElementById("modal-uid");
     if (modalUid) modalUid.innerText = my10DigitUid;
-    const alexaText = document.getElementById("alexa-pair-text");
-    if (alexaText) alexaText.innerText = `Voice: "Alexa, pair UID ${my10DigitUid}"`;
 }
 
 // WebRTC STUN/TURN Configuration (Google Primary + User AWS EC2 Port 3478 + Twilio/Mozilla Fallback)
@@ -235,11 +233,6 @@ export function registerSocketListeners(s) {
     if (!s) return;
 
     s.on("connect", () => {
-        const alexaDot = document.querySelector(".tv-alexa-dot");
-        if (alexaDot) {
-            alexaDot.style.background = "#10b981";
-            alexaDot.style.boxShadow = "0 0 8px #10b981";
-        }
         if (currentUser) {
             s.emit("login_user", {
                 email: currentUser.email,
@@ -250,22 +243,18 @@ export function registerSocketListeners(s) {
             });
             s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
         }
+        if (pendingOutgoingMessages.length > 0) {
+            pendingOutgoingMessages.forEach(msg => s.emit("send_message", msg));
+            pendingOutgoingMessages = [];
+        }
     });
 
     s.on("disconnect", () => {
-        const alexaDot = document.querySelector(".tv-alexa-dot");
-        if (alexaDot) {
-            alexaDot.style.background = "#f59e0b";
-            alexaDot.style.boxShadow = "none";
-        }
+        // Silent background disconnect/reconnect handling
     });
 
     s.on("connect_error", () => {
-        const alexaDot = document.querySelector(".tv-alexa-dot");
-        if (alexaDot) {
-            alexaDot.style.background = "#ef4444";
-            alexaDot.style.boxShadow = "none";
-        }
+        // Silent background reconnect
     });
 
     s.on("user_data", (data) => {
@@ -395,14 +384,6 @@ export function registerSocketListeners(s) {
 
     s.on("alexa_paired", (data) => {
         showToast(`🎙️ Alexa Paired (UID: ${data.uid})`);
-        const badge = document.getElementById('alexa-pairing-badge');
-        if (badge) {
-            badge.classList.add('paired');
-            const dot = badge.querySelector('.tv-alexa-dot');
-            if (dot) dot.classList.add('active');
-            const text = document.getElementById('alexa-pair-text');
-            if (text) text.innerText = `🎙️ Alexa Linked (${data.uid})`;
-        }
     });
 
     s.on("contact_saved", (updatedContacts) => {
@@ -528,16 +509,12 @@ function closeChat() {
     autoFocusFirstElement();
 }
 
+let pendingOutgoingMessages = [];
+
 function sendMessageLogic() {
     const input = document.getElementById("message-input");
     const text = input?.value.trim();
     if (!text || !currentTargetUid) return;
-
-    if (!socket || !socket.connected) {
-        showToast("Connecting to call server... please wait 2 seconds.");
-        connectSocket();
-        return;
-    }
 
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const msgData = {
@@ -548,7 +525,6 @@ function sendMessageLogic() {
         timestamp: timeStr
     };
 
-    socket.emit("send_message", msgData);
     appendMessage(msgData, "msg-sent");
 
     if (!chatHistory[currentTargetUid]) chatHistory[currentTargetUid] = [];
@@ -558,6 +534,13 @@ function sendMessageLogic() {
     } catch (_) {}
 
     input.value = "";
+
+    if (socket && socket.connected) {
+        socket.emit("send_message", msgData);
+    } else {
+        pendingOutgoingMessages.push(msgData);
+        connectSocket();
+    }
 }
 
 function appendMessage(data, type) {

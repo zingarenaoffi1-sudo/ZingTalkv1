@@ -1058,10 +1058,24 @@ app.post('/api/alexa', async (req, res) => {
     }
 });
 
-// SPA fallback
+// SPA fallback & Server Status
 app.get('*', (req, res, next) => {
     if (req.path.startsWith('/socket.io')) return next();
-    res.sendFile(path.join(__dirname, 'index.html'));
+    const indexPath = path.join(__dirname, 'index.html');
+    const distIndexPath = path.join(__dirname, 'dist', 'index.html');
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else if (fs.existsSync(distIndexPath)) {
+        res.sendFile(distIndexPath);
+    } else {
+        res.json({
+            status: "online",
+            server: "ZingTalk Backend Signaling Server",
+            port: PORT,
+            connectedUsers: connectedUsers.size,
+            message: "ZingTalk server is 100% active and listening for Socket.IO connections."
+        });
+    }
 });
 
 const PORT = process.env.PORT || 3000;
