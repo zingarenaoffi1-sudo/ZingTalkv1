@@ -49,32 +49,25 @@ export let my10DigitUid = null;
 export let currentTargetUid = null;
 export let socket = null;
 
-// Infrastructure Configuration (Handled in background)
-const CLOUD_SIGNALING_URL = "https://ais-pre-sdj74fx3vlp4qwhzzwnb77-609564612220.asia-east1.run.app";
+// Infrastructure Configuration (Handled directly on user's AWS EC2 server)
 const AWS_SIGNALING_URL = "http://18.234.224.25:3000";
-const PRIMARY_STUN = "stun:stun.l.google.com:19302";
-const BACKUP_STUN = "stun:18.234.224.25:3478";
+const PRIMARY_STUN = "stun:18.234.224.25:3478";
+const BACKUP_STUN = "stun:stun.l.google.com:19302";
 let isStunFailoverActive = false;
 
-// Resolve backend signaling URL with mixed-content fallback
+// Resolve backend signaling URL: defaults directly to user's AWS server
 export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
     if (saved && saved.trim()) return saved.trim();
 
     if (typeof window !== "undefined" && window.location) {
         const origin = window.location.origin;
-        // When running on GitHub Pages (static CDN) or capacitor/file, route WebSocket signaling to cloud backend
-        if (origin.includes("github.io") || origin.startsWith("file:") || origin.includes("capacitor:")) {
-            return CLOUD_SIGNALING_URL;
-        }
-        if (origin.includes("run.app") || origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")) {
-            return origin;
-        }
-        if (window.location.protocol === "https:") {
+        // When accessed directly from user's server (e.g. http://18.234.224.25:3000 or http://localhost:3000)
+        if (origin && !origin.includes("github.io") && !origin.startsWith("file:") && !origin.includes("capacitor:")) {
             return origin;
         }
     }
-    return CLOUD_SIGNALING_URL;
+    return AWS_SIGNALING_URL;
 }
 
 // Compute deterministic 10-digit UID
