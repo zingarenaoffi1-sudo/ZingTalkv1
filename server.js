@@ -329,26 +329,110 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('send_message', (data) => {
+// Helper to verify if target 10-digit UID exists
+async function checkUserUidExists(targetUid) {
+    if (!targetUid || typeof targetUid !== 'string') return false;
+    const cleanUid = targetUid.replace(/\D/g, '');
+    if (cleanUid.length !== 10) return false;
+
+    // 1. Is user currently connected?
+    if (connectedUsers.has(cleanUid)) return true;
+
+    // 2. Is user in contacts registry or database?
+    if (userContactsRegistry.has(cleanUid)) return true;
+
+    try {
+        if (db && typeof db.collection === 'function') {
+            const doc = await db.collection('users').doc(cleanUid).get();
+            if (doc && (doc.exists || (typeof doc.data === 'function' && doc.data()))) {
+                return true;
+            }
+        }
+    } catch (_) {}
+
+    try {
+        const memDoc = await memoryDb.collection('users').doc(cleanUid).get();
+        if (memDoc && (memDoc.exists || (typeof memDoc.data === 'function' && memDoc.data()))) {
+            return true;
+        }
+    } catch (_) {}
+
+    return false;
+}
+
+    socket.on('check_uid', async (data) => {
+        const uidToCheck = data && data.uid ? String(data.uid).trim().replace(/\D/g, '') : '';
+        if (uidToCheck.length !== 10) {
+            socket.emit('uid_check_result', {
+                valid: false,
+                uid: uidToCheck,
+                message: `No user found with UID [${uidToCheck}]. Please check the 10-digit number.`
+            });
+            return;
+        }
+        const exists = await checkUserUidExists(uidToCheck);
+        if (exists) {
+            socket.emit('uid_check_result', { valid: true, uid: uidToCheck });
+        } else {
+            socket.emit('uid_check_result', {
+                valid: false,
+                uid: uidToCheck,
+                message: `No user found with UID [${uidToCheck}]. Please check the 10-digit number.`
+            });
+        }
+    });
+
+    socket.on('send_message', async (data) => {
         if (!data || !data.receiverUid) return;
 
+        const targetUid = String(data.receiverUid).trim().replace(/\D/g, '');
+        const senderUid = data.senderUid ? String(data.senderUid).trim().replace(/\D/g, '') : '';
+
+        // 1. Validate 10-digit UID format
+        if (targetUid.length !== 10) {
+            socket.emit('message_error', {
+                targetUid: targetUid,
+                message: `No user found with UID [${targetUid}]. Please check the 10-digit number.`
+            });
+            return;
+        }
+
+        // 2. Check if user is attempting to message their own UID
+        if (targetUid === senderUid) {
+            socket.emit('message_error', {
+                targetUid: targetUid,
+                message: `You cannot send a message to your own UID [${targetUid}].`
+            });
+            return;
+        }
+
+        // 3. Verify user existence on server (online or registered in database)
+        const exists = await checkUserUidExists(targetUid);
+        if (!exists) {
+            socket.emit('message_error', {
+                targetUid: targetUid,
+                message: `No user found with UID [${targetUid}]. Please check the 10-digit number.`
+            });
+            return;
+        }
+
         // Block check: If receiver has blocked sender, do not deliver
-        const receiverBlockedList = inMemoryBlocks.get(data.receiverUid);
-        if (receiverBlockedList && receiverBlockedList.has(data.senderUid)) {
+        const receiverBlockedList = inMemoryBlocks.get(targetUid);
+        if (receiverBlockedList && receiverBlockedList.has(senderUid)) {
             socket.emit('message_status', { msgId: data.id, delivered: false });
             return;
         }
 
-        const isOnline = connectedUsers.has(data.receiverUid);
+        const isOnline = connectedUsers.has(targetUid);
         if (isOnline) {
-            io.to(data.receiverUid).emit('receive_message', data);
+            io.to(targetUid).emit('receive_message', data);
             socket.emit('message_status', { msgId: data.id, delivered: true });
         } else {
             // Buffer transiently in volatile RAM until recipient connects
-            if (!ephemeralMessageQueue.has(data.receiverUid)) {
-                ephemeralMessageQueue.set(data.receiverUid, []);
+            if (!ephemeralMessageQueue.has(targetUid)) {
+                ephemeralMessageQueue.set(targetUid, []);
             }
-            const q = ephemeralMessageQueue.get(data.receiverUid);
+            const q = ephemeralMessageQueue.get(targetUid);
             if (q.length > 50) q.shift();
             q.push(data);
             socket.emit('message_status', { msgId: data.id, delivered: false, queued: true });
@@ -434,14 +518,43 @@ io.on('connection', (socket) => {
         socket.emit('report_ack', { status: 'success', message: 'Report submitted.' });
     });
 
-    socket.on('initiate_call', (data) => {
-        // Block check: If target has blocked caller, decline immediately
-        const targetBlockedList = inMemoryBlocks.get(data.targetUid);
-        if (targetBlockedList && targetBlockedList.has(data.callerUid)) {
-            socket.emit('call_response_received', { targetUid: data.targetUid, status: 'declined', reason: 'blocked' });
+    socket.on('initiate_call', async (data) => {
+        if (!data || !data.targetUid) return;
+        const targetUid = String(data.targetUid).trim().replace(/\D/g, '');
+        const callerUid = data.callerUid ? String(data.callerUid).trim().replace(/\D/g, '') : '';
+
+        if (targetUid.length !== 10) {
+            socket.emit('call_error', {
+                targetUid: targetUid,
+                message: `No user found with UID [${targetUid}]. Please check the 10-digit number.`
+            });
             return;
         }
-        io.to(data.targetUid).emit('incoming_call', data);
+
+        if (targetUid === callerUid) {
+            socket.emit('call_error', {
+                targetUid: targetUid,
+                message: `You cannot call your own UID [${targetUid}].`
+            });
+            return;
+        }
+
+        const exists = await checkUserUidExists(targetUid);
+        if (!exists) {
+            socket.emit('call_error', {
+                targetUid: targetUid,
+                message: `No user found with UID [${targetUid}]. Please check the 10-digit number.`
+            });
+            return;
+        }
+
+        // Block check: If target has blocked caller, decline immediately
+        const targetBlockedList = inMemoryBlocks.get(targetUid);
+        if (targetBlockedList && targetBlockedList.has(callerUid)) {
+            socket.emit('call_response_received', { targetUid: targetUid, status: 'declined', reason: 'blocked' });
+            return;
+        }
+        io.to(targetUid).emit('incoming_call', data);
     });
 
     socket.on('cancel_call', (data) => {

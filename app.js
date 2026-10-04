@@ -36,7 +36,31 @@ export function showToast(message) {
     toast.style.opacity = "1";
     setTimeout(() => {
         toast.style.opacity = "0";
-    }, 2800);
+    }, 3200);
+}
+
+// Web Audio API Pleasant 2-Tone Notification Sound (Zero External Dependency)
+export function playIncomingChime() {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        if (ctx.state === "suspended") {
+            ctx.resume();
+        }
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        const now = ctx.currentTime;
+        osc.frequency.setValueAtTime(587.33, now); // D5 Note
+        osc.frequency.setValueAtTime(880.00, now + 0.09); // A5 Note
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+    } catch (_) {}
 }
 
 window.addEventListener("submit", (e) => e.preventDefault());
@@ -291,15 +315,67 @@ export function registerSocketListeners(s) {
     });
 
     s.on("receive_message", (data) => {
-        const sender = data.senderUid;
+        const sender = data && data.senderUid ? String(data.senderUid).trim() : null;
+        if (!sender) return;
+        const senderName = data.senderName || ("User " + sender);
+
+        // 1. WhatsApp Auto-Contact Logic:
+        // If sender is NOT in myContacts, automatically add them to recent contacts!
+        let knownContact = myContacts.find(c => c.uid === sender);
+        if (!knownContact) {
+            knownContact = { uid: sender, name: senderName };
+            myContacts.unshift(knownContact);
+            try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
+            renderContacts(myContacts);
+            s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+            s.emit("save_contact", { myUid: my10DigitUid, targetUid: sender, customName: senderName });
+        }
+
+        // 2. Save in chat history
         if (!chatHistory[sender]) chatHistory[sender] = [];
         chatHistory[sender].push({ ...data, type: "msg-received" });
-        localStorage.setItem("zingTalkHistory", JSON.stringify(chatHistory));
+        try { localStorage.setItem("zingTalkHistory", JSON.stringify(chatHistory)); } catch (_) {}
 
-        if (currentTargetUid === sender) {
+        // 3. Play incoming sound chime
+        playIncomingChime();
+
+        // 4. WhatsApp / TV Seamless Screen Display:
+        // If no chat is currently open (user is on tv-empty-stage with ZingTalk logo),
+        // OR if the open chat is already this sender:
+        // Automatically open the chat and display the message right away!
+        if (!currentTargetUid || currentTargetUid === sender) {
+            openChat(knownContact);
             appendMessage(data, "msg-received");
+        } else {
+            // User is currently chatting with someone else; show prominent notification toast
+            showToast(`💬 New message from ${knownContact.name}: "${data.text ? data.text.slice(0, 30) : ''}"`);
         }
+
         s.emit("message_seen", { receiverUid: my10DigitUid, msgId: data.id });
+    });
+
+    s.on("message_error", (data) => {
+        const msg = data && data.message ? data.message : "Message delivery failed.";
+        showToast("❌ " + msg);
+        const messagesArea = document.getElementById("messages-area");
+        if (messagesArea && currentTargetUid) {
+            const errDiv = document.createElement("div");
+            errDiv.style.cssText = "text-align: center; color: #ff5252; font-size: 13px; font-weight: 600; padding: 8px 14px; margin: 10px auto; background: rgba(255, 82, 82, 0.15); border: 1px solid rgba(255, 82, 82, 0.35); border-radius: 8px; max-width: 85%;";
+            errDiv.innerText = "⚠️ " + msg;
+            messagesArea.appendChild(errDiv);
+            messagesArea.scrollTop = messagesArea.scrollHeight;
+        }
+    });
+
+    s.on("call_error", (data) => {
+        const msg = data && data.message ? data.message : "Call failed.";
+        showToast("❌ " + msg);
+    });
+
+    s.on("uid_check_result", (data) => {
+        if (!data.valid) {
+            showToast("❌ " + (data.message || "UID not found."));
+        }
     });
 
     s.on("incoming_call", (data) => {
@@ -477,25 +553,31 @@ function renderContacts(contacts) {
 }
 
 function openChat(contact) {
-    currentTargetUid = contact.uid;
+    if (!contact) return;
+    const uid = typeof contact === "object" ? contact.uid : contact;
+    const name = (typeof contact === "object" && contact.name)
+        ? contact.name
+        : (myContacts.find(c => c.uid === uid)?.name || ("User " + uid));
+
+    currentTargetUid = uid;
     document.getElementById("tv-empty-stage")?.classList.add("hidden");
     document.getElementById("tv-active-chat")?.classList.remove("hidden");
 
     if (document.getElementById("chat-contact-name")) {
-        document.getElementById("chat-contact-name").innerText = contact.name;
+        document.getElementById("chat-contact-name").innerText = name;
     }
     if (document.getElementById("chat-contact-uid")) {
-        document.getElementById("chat-contact-uid").innerText = "UID: " + contact.uid;
+        document.getElementById("chat-contact-uid").innerText = "UID: " + uid;
     }
     if (document.getElementById("chat-avatar")) {
-        document.getElementById("chat-avatar").innerText = (contact.name || "U").charAt(0).toUpperCase();
+        document.getElementById("chat-avatar").innerText = (name || "U").charAt(0).toUpperCase();
     }
 
     const messagesArea = document.getElementById("messages-area");
     if (messagesArea) {
         messagesArea.innerHTML = "";
-        if (chatHistory[contact.uid]) {
-            chatHistory[contact.uid].forEach(msg => appendMessage(msg, msg.type));
+        if (chatHistory[uid]) {
+            chatHistory[uid].forEach(msg => appendMessage(msg, msg.type));
         }
     }
     document.getElementById("message-input")?.focus();
@@ -515,10 +597,22 @@ function sendMessageLogic() {
     const text = input?.value.trim();
     if (!text || !currentTargetUid) return;
 
+    if (!/^\d{10}$/.test(currentTargetUid)) {
+        showToast(`❌ No user found with UID [${currentTargetUid}]. Please check the 10-digit number.`);
+        return;
+    }
+
+    if (currentTargetUid === my10DigitUid) {
+        showToast(`❌ You cannot send a message to your own UID [${currentTargetUid}].`);
+        return;
+    }
+
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const myName = currentUser?.displayName || currentUser?.name || ("User " + my10DigitUid);
     const msgData = {
         id: "msg_" + Date.now(),
         senderUid: my10DigitUid,
+        senderName: myName,
         receiverUid: currentTargetUid,
         text: text,
         timestamp: timeStr
@@ -1418,11 +1512,31 @@ document.addEventListener("click", async (e) => {
         return;
     }
 
-    // Direct Dial Quick Audio / Video Call
-    if (e.target.id === "quick-audio-call-btn" || e.target.closest("#quick-audio-call-btn")) {
-        const uid = document.getElementById("dial-uid-input")?.value.trim();
+    // Direct Dial Quick Connect (Chat / Audio / Video)
+    if (e.target.id === "quick-chat-btn" || e.target.closest("#quick-chat-btn")) {
+        const uid = document.getElementById("dial-uid-input")?.value.trim().replace(/\D/g, '');
         if (!uid || uid.length !== 10) {
-            showToast("Please enter a valid 10-digit UID");
+            showToast("❌ Please enter a valid 10-digit UID");
+            return;
+        }
+        if (uid === my10DigitUid) {
+            showToast(`❌ You cannot chat with your own UID [${uid}].`);
+            return;
+        }
+        const known = myContacts.find(c => c.uid === uid);
+        const contactObj = known || { uid: uid, name: "User " + uid };
+        openChat(contactObj);
+        return;
+    }
+
+    if (e.target.id === "quick-audio-call-btn" || e.target.closest("#quick-audio-call-btn")) {
+        const uid = document.getElementById("dial-uid-input")?.value.trim().replace(/\D/g, '');
+        if (!uid || uid.length !== 10) {
+            showToast("❌ Please enter a valid 10-digit UID");
+            return;
+        }
+        if (uid === my10DigitUid) {
+            showToast(`❌ You cannot call your own UID [${uid}].`);
             return;
         }
         initiateDirectCall(uid, "audio");
@@ -1430,9 +1544,13 @@ document.addEventListener("click", async (e) => {
     }
 
     if (e.target.id === "quick-video-call-btn" || e.target.closest("#quick-video-call-btn")) {
-        const uid = document.getElementById("dial-uid-input")?.value.trim();
+        const uid = document.getElementById("dial-uid-input")?.value.trim().replace(/\D/g, '');
         if (!uid || uid.length !== 10) {
-            showToast("Please enter a valid 10-digit UID");
+            showToast("❌ Please enter a valid 10-digit UID");
+            return;
+        }
+        if (uid === my10DigitUid) {
+            showToast(`❌ You cannot call your own UID [${uid}].`);
             return;
         }
         initiateDirectCall(uid, "video");
@@ -1441,28 +1559,29 @@ document.addEventListener("click", async (e) => {
 
     // Save Contact
     if (e.target.id === "save-contact-btn" || e.target.closest("#save-contact-btn")) {
-        const uid = document.getElementById("contact-uid-input")?.value.trim();
+        const uid = document.getElementById("contact-uid-input")?.value.trim().replace(/\D/g, '');
         const name = document.getElementById("contact-name-input")?.value.trim();
 
         if (!uid || uid.length !== 10) {
-            showToast("Please enter a valid 10-digit UID");
+            showToast("❌ Please enter a valid 10-digit UID");
             return;
         }
         if (!name) {
-            showToast("Please enter a contact name");
+            showToast("❌ Please enter a contact name");
             return;
         }
         if (uid === my10DigitUid) {
-            showToast("You cannot save your own UID");
+            showToast("❌ You cannot save your own UID");
             return;
         }
 
+        const newContact = { uid, name };
         const updated = myContacts.filter(c => c.uid !== uid);
-        updated.push({ uid, name });
+        updated.push(newContact);
         myContacts = updated;
         localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
         renderContacts(myContacts);
-        showToast(`Saved contact: ${name}`);
+        showToast(`✅ Saved contact: ${name}`);
 
         if (socket && socket.connected) {
             socket.emit("save_contact", { myUid: my10DigitUid, targetUid: uid, customName: name });
@@ -1470,6 +1589,9 @@ document.addEventListener("click", async (e) => {
 
         if (document.getElementById("contact-uid-input")) document.getElementById("contact-uid-input").value = "";
         if (document.getElementById("contact-name-input")) document.getElementById("contact-name-input").value = "";
+
+        // Automatically open the chat with this new contact right away!
+        openChat(newContact);
         return;
     }
 
