@@ -598,6 +598,20 @@ textarea.tv-focusable {
     background: var(--tv-card-hover);
 }
 
+.tv-unread-pill {
+    background: #00d29d;
+    color: #071018;
+    font-size: 11px;
+    font-weight: 800;
+    border-radius: 12px;
+    padding: 2px 7px;
+    min-width: 18px;
+    text-align: center;
+    box-shadow: 0 0 10px rgba(0, 210, 157, 0.45);
+    display: inline-block;
+    line-height: 1.4;
+}
+
 .tv-contact-info-block {
     display: flex;
     align-items: center;

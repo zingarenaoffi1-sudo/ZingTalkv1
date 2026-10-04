@@ -9,6 +9,12 @@ import {
     updateProfile,
     signOut
 } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js";
+import {
+    getFirestore,
+    doc,
+    setDoc,
+    getDoc
+} from "https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js";
 
 // Client Firebase configuration
 const firebaseConfig = {
@@ -21,12 +27,46 @@ const firebaseConfig = {
     measurementId: "G-W87FM4ZNJ7"
 };
 
-let app, auth;
+let app, auth, firestoreDb;
 try {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
+    firestoreDb = getFirestore(app);
 } catch (e) {
     // Initialized in offline fallback mode
+}
+
+// Zero-Knowledge Storage: Save ONLY Contact UID & Name to Firebase Firestore (Never chats, messages, or media)
+export async function saveContactToFirebase(contactUid, contactName) {
+    if (!contactUid || !contactName) return;
+    const cleanUid = String(contactUid).trim().replace(/\D/g, '');
+    const cleanName = String(contactName).trim();
+
+    const updated = myContacts.filter(c => c.uid !== cleanUid);
+    const newContact = { uid: cleanUid, name: cleanName };
+    updated.unshift(newContact);
+    myContacts = updated;
+    try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
+    renderContacts(myContacts);
+
+    // Save strictly { uid, contacts: [{ uid, name }] } to Firebase Firestore
+    if (firestoreDb && my10DigitUid) {
+        try {
+            const userDocRef = doc(firestoreDb, "users", my10DigitUid);
+            await setDoc(userDocRef, {
+                uid: my10DigitUid,
+                contacts: myContacts.map(c => ({ uid: c.uid, name: c.name }))
+            }, { merge: true });
+            console.log("[Firebase Firestore] Contact saved successfully in users/" + my10DigitUid);
+        } catch (fsErr) {
+            console.warn("[Firebase Firestore] Notice:", fsErr.message);
+        }
+    }
+
+    // Also sync to server so EC2 / local signaling instance knows the contact
+    if (socket && socket.connected && my10DigitUid) {
+        socket.emit("save_contact", { myUid: my10DigitUid, targetUid: cleanUid, customName: cleanName });
+    }
 }
 
 export function showToast(message) {
@@ -138,6 +178,11 @@ try {
 } catch (_) {}
 
 let chatHistory = JSON.parse(localStorage.getItem("zingTalkHistory")) || {};
+let unreadCounts = {};
+try {
+    const savedUnread = localStorage.getItem("zingTalkUnread");
+    if (savedUnread) unreadCounts = JSON.parse(savedUnread);
+} catch (_) {}
 let localStream = null;
 let peerConnection = null;
 let activeCallTarget = null;
@@ -319,19 +364,22 @@ export function registerSocketListeners(s) {
         if (!sender) return;
         const senderName = data.senderName || ("User " + sender);
 
-        // 1. WhatsApp Auto-Contact Logic:
-        // If sender is NOT in myContacts, automatically add them to recent contacts!
+        // 1. WhatsApp Contact Logic:
+        // If sender is NOT in myContacts, automatically add them to recent contacts list!
         let knownContact = myContacts.find(c => c.uid === sender);
         if (!knownContact) {
             knownContact = { uid: sender, name: senderName };
             myContacts.unshift(knownContact);
             try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
-            renderContacts(myContacts);
             s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
-            s.emit("save_contact", { myUid: my10DigitUid, targetUid: sender, customName: senderName });
+            saveContactToFirebase(sender, senderName);
+        } else {
+            // Move conversation to the top of the contact list
+            myContacts = [knownContact, ...myContacts.filter(c => c.uid !== sender)];
+            try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
         }
 
-        // 2. Save in chat history
+        // 2. Save strictly locally in device (zero retention on server or Firebase)
         if (!chatHistory[sender]) chatHistory[sender] = [];
         chatHistory[sender].push({ ...data, type: "msg-received" });
         try { localStorage.setItem("zingTalkHistory", JSON.stringify(chatHistory)); } catch (_) {}
@@ -339,17 +387,24 @@ export function registerSocketListeners(s) {
         // 3. Play incoming sound chime
         playIncomingChime();
 
-        // 4. WhatsApp / TV Seamless Screen Display:
-        // If no chat is currently open (user is on tv-empty-stage with ZingTalk logo),
-        // OR if the open chat is already this sender:
-        // Automatically open the chat and display the message right away!
-        if (!currentTargetUid || currentTargetUid === sender) {
-            openChat(knownContact);
+        // 4. WhatsApp / TV Non-Intrusive Display Logic:
+        // Do NOT automatically force open the chat window!
+        if (currentTargetUid === sender) {
+            // ONLY if user currently has this exact conversation open on screen, append message!
             appendMessage(data, "msg-received");
+            unreadCounts[sender] = 0;
+            try { localStorage.setItem("zingTalkUnread", JSON.stringify(unreadCounts)); } catch (_) {}
         } else {
-            // User is currently chatting with someone else; show prominent notification toast
-            showToast(`💬 New message from ${knownContact.name}: "${data.text ? data.text.slice(0, 30) : ''}"`);
+            // Increment unread count for this sender so the unread counter badge (1, 2, ...) appears on their contact card!
+            unreadCounts[sender] = (unreadCounts[sender] || 0) + 1;
+            try { localStorage.setItem("zingTalkUnread", JSON.stringify(unreadCounts)); } catch (_) {}
+            
+            // Show toast preview notification
+            showToast(`💬 ${knownContact.name} (${sender}): "${data.text ? data.text.slice(0, 30) : ''}"`);
         }
+
+        // Re-render contacts list immediately so the badge count, last message snippet, and updated order reflect!
+        renderContacts(myContacts);
 
         s.emit("message_seen", { receiverUid: my10DigitUid, msgId: data.id });
     });
@@ -517,12 +572,32 @@ function renderContacts(contacts) {
         const card = document.createElement("div");
         card.className = "tv-contact-card tv-focusable";
         card.tabIndex = 0;
+        card.dataset.uid = contact.uid;
+
+        // WhatsApp Unread Counter for this contact
+        const unread = unreadCounts[contact.uid] || 0;
+        
+        // Latest message snippet from device local history
+        const history = chatHistory[contact.uid] || [];
+        const lastMsg = history.length > 0 ? history[history.length - 1] : null;
+        const lastText = lastMsg ? (lastMsg.text || "") : "";
+        const lastTime = lastMsg ? (lastMsg.timestamp || "") : "";
+
         card.innerHTML = `
-            <div class="tv-contact-info-block">
-                <div class="tv-avatar-circle">${(contact.name || "U").charAt(0).toUpperCase()}</div>
-                <div>
-                    <div class="tv-contact-name-txt">${escapeHtml(contact.name)}</div>
-                    <div class="tv-contact-uid-txt">UID: ${contact.uid}</div>
+            <div class="tv-contact-info-block" style="flex: 1; min-width: 0;">
+                <div class="tv-avatar-circle" style="position: relative;">
+                    ${(contact.name || "U").charAt(0).toUpperCase()}
+                </div>
+                <div style="flex: 1; min-width: 0; padding-right: 6px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+                        <span class="tv-contact-name-txt" style="font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(contact.name)}</span>
+                        ${unread > 0 ? `<span class="tv-unread-pill" style="background: #00d29d; color: #081018; font-size: 11px; font-weight: 800; border-radius: 12px; padding: 2px 7px; min-width: 18px; text-align: center; box-shadow: 0 0 8px rgba(0,210,157,0.5);">${unread}</span>` : ''}
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-top: 2px;">
+                        <span class="tv-contact-uid-txt" style="font-size: 12px; opacity: 0.75;">UID: ${contact.uid}</span>
+                        ${lastTime ? `<span style="font-size: 10px; color: ${unread > 0 ? '#00d29d' : 'rgba(255,255,255,0.45)'};">${escapeHtml(lastTime)}</span>` : ''}
+                    </div>
+                    ${lastText ? `<div class="tv-contact-last-msg" style="font-size: 12px; color: ${unread > 0 ? '#00e5aa' : 'rgba(255,255,255,0.6)'}; font-weight: ${unread > 0 ? '600' : '400'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px;">${unread > 0 ? '💬 ' : ''}${escapeHtml(lastText.slice(0, 32))}</div>` : ''}
                 </div>
             </div>
             <div class="tv-contact-quick-actions">
@@ -560,6 +635,14 @@ function openChat(contact) {
         : (myContacts.find(c => c.uid === uid)?.name || ("User " + uid));
 
     currentTargetUid = uid;
+
+    // Clear unread counter for this contact when opened (WhatsApp standard)
+    if (unreadCounts[uid]) {
+        delete unreadCounts[uid];
+        try { localStorage.setItem("zingTalkUnread", JSON.stringify(unreadCounts)); } catch (_) {}
+        renderContacts(myContacts);
+    }
+
     document.getElementById("tv-empty-stage")?.classList.add("hidden");
     document.getElementById("tv-active-chat")?.classList.remove("hidden");
 
