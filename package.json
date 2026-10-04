@@ -17,6 +17,7 @@
     "socket.io": "^4.7.2"
   },
   "devDependencies": {
+    "js-yaml": "^5.4.2",
     "socket.io-client": "^4.8.4"
   }
 }
