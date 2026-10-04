@@ -256,8 +256,11 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug --stacktrace
-          # Copy APK to ZingTalk.apk in root
-          APK_FILE=$(find app/build/outputs/apk -name "*.apk" -type f | head -n 1)
+          # Copy official signed release APK to ZingTalk.apk in root
+          APK_FILE=$(find app/build/outputs/apk/release -name "*release*.apk" ! -name "*-unsigned.apk" -type f 2>/dev/null | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find app/build/outputs/apk -name "*.apk" -type f | head -n 1)
+          fi
           if [ -n "$APK_FILE" ]; then
             cp "$APK_FILE" ../ZingTalk.apk
             echo "Found APK: $APK_FILE -> copied to ZingTalk.apk"
