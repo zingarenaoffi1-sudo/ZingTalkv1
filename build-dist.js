@@ -31,6 +31,20 @@ if (fs.existsSync(capCorePath)) {
     console.log('[build-dist] Copied capacitor.js -> dist/capacitor.js & root');
 }
 
+// Copy Socket.IO client runtime bundle (offline native guarantee)
+const socketIoPaths = [
+    path.join(__dirname, 'node_modules/socket.io/client-dist/socket.io.min.js'),
+    path.join(__dirname, 'node_modules/socket.io-client/dist/socket.io.min.js')
+];
+for (const sPath of socketIoPaths) {
+    if (fs.existsSync(sPath)) {
+        fs.copyFileSync(sPath, path.join(distDir, 'socket.io.min.js'));
+        fs.copyFileSync(sPath, path.join(__dirname, 'socket.io.min.js'));
+        console.log('[build-dist] Copied socket.io.min.js -> dist/socket.io.min.js & root');
+        break;
+    }
+}
+
 // Copy assets folder (icons, logos)
 function copyDirSync(src, dest) {
     if (!fs.existsSync(src)) return;

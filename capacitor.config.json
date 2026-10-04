@@ -2,5 +2,17 @@
   "appId": "com.zingtalk.com",
   "appName": "ZingTalk",
   "webDir": "dist",
-  "bundledWebRuntime": false
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true,
+    "allowNavigation": [
+      "18.234.224.25:3000",
+      "18.234.224.25:*",
+      "*.google.com",
+      "*.firebaseapp.com",
+      "*.googleapis.com"
+    ]
+  }
 }
+

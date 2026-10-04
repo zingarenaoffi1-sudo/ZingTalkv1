@@ -46,6 +46,44 @@ jobs:
           fi
           npx cap sync android
 
+      - name: Configure MainActivity & WebView Settings for Direct AWS HTTP Access
+        run: |
+          python3 -c '
+          import os
+
+          main_activity_path = "android/app/src/main/java/com/zingtalk/com/MainActivity.java"
+          if os.path.exists(main_activity_path):
+              custom_content = """package com.zingtalk.com;
+
+          import android.os.Bundle;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  try {
+                      WebView webView = this.getBridge().getWebView();
+                      if (webView != null) {
+                          WebSettings settings = webView.getSettings();
+                          settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                          settings.setDomStorageEnabled(true);
+                          settings.setJavaScriptEnabled(true);
+                          settings.setAllowFileAccess(true);
+                          settings.setAllowContentAccess(true);
+                          settings.setDatabaseEnabled(true);
+                      }
+                  } catch (Exception ignored) {}
+              }
+          }
+          """
+              with open(main_activity_path, "w", encoding="utf-8") as f:
+                  f.write(custom_content)
+              print("MainActivity.java successfully configured with MIXED_CONTENT_ALWAYS_ALLOW for AWS signaling.")
+          '
+
       - name: Apply Google Services Gradle Plugin for Native Firebase
         run: |
           python3 -c '
@@ -115,6 +153,25 @@ jobs:
                   block = "\n    " + "\n    ".join(to_inject) + "\n\n    "
                   content = content.replace("<application", block + "<application", 1)
 
+              # Create network_security_config.xml for Android HTTP and cleartext permissions
+              res_xml_dir = "android/app/src/main/res/xml"
+              os.makedirs(res_xml_dir, exist_ok=True)
+              with open(os.path.join(res_xml_dir, "network_security_config.xml"), "w", encoding="utf-8") as f:
+                  f.write('''<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">18.234.224.25</domain>
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>''')
+
               # Ensure hardware acceleration, largeHeap, cleartextTraffic, and Fire TV Leanback banner
               if "<application" in content:
                   if "android:hardwareAccelerated" not in content:
@@ -123,6 +180,8 @@ jobs:
                       content = content.replace("<application", "<application android:largeHeap=\"true\"", 1)
                   if "android:usesCleartextTraffic" not in content:
                       content = content.replace("<application", "<application android:usesCleartextTraffic=\"true\"", 1)
+                  if "android:networkSecurityConfig" not in content:
+                      content = content.replace("<application", "<application android:networkSecurityConfig=\"@xml/network_security_config\"", 1)
                   if "android:banner" not in content:
                       content = content.replace("<application", "<application android:banner=\"@drawable/banner\"", 1)
 

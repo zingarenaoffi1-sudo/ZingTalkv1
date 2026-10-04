@@ -156,11 +156,16 @@ export function computeDeterministic10DigitUid(idStr) {
 }
 
 export function updateUidDisplays(uid) {
-    if (!uid) return;
-    my10DigitUid = String(uid);
     const label = document.getElementById("my-uid-label");
-    if (label) label.innerText = "UID: " + my10DigitUid;
     const modalUid = document.getElementById("modal-uid");
+    if (!uid) {
+        my10DigitUid = null;
+        if (label) label.innerText = "UID: Connecting...";
+        if (modalUid) modalUid.innerText = "Connecting to Server...";
+        return;
+    }
+    my10DigitUid = String(uid);
+    if (label) label.innerText = "UID: " + my10DigitUid;
     if (modalUid) modalUid.innerText = my10DigitUid;
 }
 
@@ -251,14 +256,10 @@ function loginUserSession(user) {
     if (document.getElementById("my-name")) document.getElementById("my-name").innerText = displayName;
     if (document.getElementById("my-avatar")) document.getElementById("my-avatar").innerText = displayName.charAt(0).toUpperCase();
 
-    const cacheKey = "zingTalkUid_" + (user.email || user.uid || displayName);
-    const cachedUid = localStorage.getItem(cacheKey);
-    if (cachedUid) {
-        updateUidDisplays(cachedUid);
-    } else if (!my10DigitUid) {
-        const instantUid = computeDeterministic10DigitUid(user.uid || user.email || displayName);
-        updateUidDisplays(instantUid);
-        localStorage.setItem(cacheKey, instantUid);
+    // Server-Authoritative UID: Do NOT generate fake local math UID.
+    // Wait strictly for server response.
+    if (!my10DigitUid) {
+        updateUidDisplays(null); // Displays "UID: Connecting..."
     }
 
     if (socket && socket.connected) {
@@ -269,7 +270,11 @@ function loginUserSession(user) {
             uid: my10DigitUid,
             contacts: myContacts
         });
-        socket.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+        if (my10DigitUid) {
+            socket.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+        }
+    } else {
+        connectSocket();
     }
 
     renderContacts(myContacts);
@@ -722,6 +727,17 @@ function sendMessageLogic() {
     const input = document.getElementById("message-input");
     const text = input?.value.trim();
     if (!text || !currentTargetUid) return;
+
+    if (!socket || !socket.connected) {
+        showToast("❌ Server not connected. Waiting for AWS Cloud connection...");
+        connectSocket();
+        return;
+    }
+
+    if (!my10DigitUid) {
+        showToast("❌ Waiting for official server UID assignment...");
+        return;
+    }
 
     if (!/^\d{10}$/.test(currentTargetUid)) {
         showToast(`❌ No user found with UID [${currentTargetUid}]. Please check the 10-digit number.`);
@@ -1626,11 +1642,11 @@ document.addEventListener("click", async (e) => {
                 showToast(msg);
             }
         } else {
-            const instantUid = computeDeterministic10DigitUid(Date.now().toString());
+            const guestId = "guest_" + Date.now();
             const user = {
                 displayName: name,
                 email: null,
-                uid: "guest_" + instantUid,
+                uid: guestId,
                 isAnonymous: true
             };
             localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
