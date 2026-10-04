@@ -1,0 +1,1305 @@
+/*
+   ZingTalk - Smart TV HD Calling & Real-Time Chat
+   Original ZingTalk Structure with Fire TV 10-Foot UI & Alexa Voice AI
+*/
+
+:root {
+    --tv-bg: #090d16;
+    --tv-surface: #111726;
+    --tv-card: #172033;
+    --tv-card-hover: #1f2b45;
+    --tv-border: #232f4a;
+    --tv-cyan-glow: #00d29d;
+    --tv-cyan-light: #00f2fe;
+    --tv-alexa-blue: #00a8e8;
+    --tv-text-primary: #f1f5f9;
+    --tv-text-secondary: #94a3b8;
+    --tv-danger: #ef4444;
+    --tv-danger-hover: #dc2626;
+    --tv-accent: #0284c7;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+}
+
+body.tv-body {
+    width: 100vw;
+    height: 100vh;
+    padding: env(safe-area-inset-top, 12px) env(safe-area-inset-right, 20px) env(safe-area-inset-bottom, 12px) env(safe-area-inset-left, 20px);
+    overflow: hidden;
+    background-color: var(--tv-bg);
+    color: var(--tv-text-primary);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#app-root {
+    width: 100vw;
+    height: 100vh;
+    position: relative;
+    background-color: var(--tv-bg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* ==========================================================================
+   FIRE TV D-PAD FOCUS INDICATORS (Cyan Glowing Ring #00d29d)
+   ========================================================================== */
+.tv-focusable {
+    outline: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    cursor: pointer;
+    transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), 
+                box-shadow 0.16s cubic-bezier(0.16, 1, 0.3, 1), 
+                border-color 0.16s ease,
+                background-color 0.16s ease;
+}
+
+/* Mobile Touch Support: allow touch cursor placement and keyboard input */
+input.tv-focusable, 
+textarea.tv-focusable {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    cursor: text !important;
+    touch-action: auto !important;
+}
+
+/* Mobile Touch Support: smooth touch inertia scrolling */
+.tv-contacts-list,
+.tv-messages,
+.tv-policy-scroll {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+}
+
+.tv-focusable:active {
+    transform: scale(0.96) !important;
+    opacity: 0.92;
+}
+
+.tv-focusable:focus,
+.tv-focusable:focus-visible,
+.tv-focused {
+    outline: 3.5px solid var(--tv-cyan-glow) !important;
+    outline-offset: 4px !important;
+    box-shadow: 0 0 28px rgba(0, 210, 157, 0.75) !important;
+    transform: scale(1.04) !important;
+    z-index: 100 !important;
+}
+
+/* ==========================================================================
+   TOP PERSISTENT NAVIGATION BAR
+   ========================================================================== */
+.tv-header {
+    width: 100%;
+    height: 76px;
+    background: var(--tv-surface);
+    border-bottom: 1px solid var(--tv-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 36px;
+    z-index: 100;
+    flex-shrink: 0;
+}
+
+.tv-header-brand {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.tv-brand-logo {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0, 210, 157, 0.35);
+}
+
+.tv-brand-name {
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--tv-text-primary);
+    letter-spacing: -0.3px;
+}
+
+.tv-header-user {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.tv-alexa-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #38bdf8;
+    letter-spacing: 0.2px;
+}
+
+.tv-alexa-badge.paired {
+    background: rgba(6, 78, 59, 0.5);
+    border-color: rgba(52, 211, 153, 0.4);
+    color: #34d399;
+}
+
+.tv-alexa-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #38bdf8;
+    box-shadow: 0 0 8px #38bdf8;
+}
+
+.tv-alexa-dot.active {
+    background: #10b981;
+    box-shadow: 0 0 10px #10b981;
+    animation: tvPulseDot 1.6s infinite ease-in-out;
+}
+
+@keyframes tvPulseDot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.3); }
+}
+
+.tv-user-chip {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--tv-card);
+    border: 1px solid var(--tv-border);
+    padding: 6px 16px 6px 8px;
+    border-radius: 28px;
+    cursor: pointer;
+}
+
+.tv-user-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #0284c7, #00d29d);
+    color: white;
+    font-weight: 800;
+    font-size: 17px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tv-user-meta {
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+}
+
+.tv-user-name {
+    font-size: 14.5px;
+    font-weight: 700;
+    color: var(--tv-text-primary);
+}
+
+.tv-user-uid {
+    font-size: 12px;
+    color: var(--tv-cyan-glow);
+    font-family: monospace;
+}
+
+.tv-icon-btn {
+    background: var(--tv-card);
+    border: 1px solid var(--tv-border);
+    color: var(--tv-text-secondary);
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.tv-icon-btn:hover {
+    color: var(--tv-text-primary);
+    border-color: var(--tv-cyan-glow);
+}
+
+/* ==========================================================================
+   AUTHENTICATION SCREEN (Original Tabs - Scaled for Fire TV 10-Foot UI)
+   ========================================================================== */
+.tv-screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+}
+
+.tv-login-screen {
+    background: radial-gradient(circle at center, #111726 0%, #090d16 100%);
+    justify-content: center;
+    align-items: center;
+    padding: 32px;
+    overflow-y: auto;
+}
+
+.tv-auth-card {
+    width: 100%;
+    max-width: 520px;
+    background: var(--tv-surface);
+    border: 1px solid var(--tv-border);
+    border-radius: 32px;
+    padding: 44px 40px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+}
+
+.tv-auth-brand {
+    margin-bottom: 24px;
+}
+
+.tv-auth-logo {
+    width: 84px;
+    height: 84px;
+    border-radius: 24px;
+    box-shadow: 0 10px 32px rgba(0, 210, 157, 0.4);
+    margin-bottom: 16px;
+}
+
+.tv-auth-title {
+    font-size: 30px;
+    font-weight: 800;
+    color: var(--tv-text-primary);
+    margin-bottom: 6px;
+}
+
+.tv-auth-subtitle {
+    font-size: 15.5px;
+    color: var(--tv-text-secondary);
+    max-width: 420px;
+    line-height: 1.4;
+}
+
+/* Original 3 Login Segmented Tabs */
+.tv-login-tabs {
+    width: 100%;
+    display: flex;
+    background: var(--tv-card);
+    border: 1px solid var(--tv-border);
+    border-radius: 18px;
+    padding: 6px;
+    margin: 24px 0;
+    gap: 6px;
+}
+
+.tv-login-tab {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--tv-text-secondary);
+    font-size: 15px;
+    font-weight: 700;
+    padding: 12px 14px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.tv-login-tab.active {
+    background: linear-gradient(135deg, #0284c7, #00d29d);
+    color: white;
+    box-shadow: 0 4px 14px rgba(0, 210, 157, 0.35);
+}
+
+.tv-tab-pane {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+
+.tv-tab-note {
+    font-size: 14px;
+    color: var(--tv-text-secondary);
+    margin-bottom: 8px;
+}
+
+.tv-google-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: #ffffff !important;
+    color: #1f2937 !important;
+    border: 1px solid #e5e7eb !important;
+    font-size: 17px !important;
+    font-weight: 800 !important;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3) !important;
+}
+
+.tv-auth-form {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.tv-input-group {
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+    gap: 6px;
+}
+
+.tv-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.tv-forgot-link {
+    background: none;
+    border: none;
+    color: var(--tv-cyan-glow);
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+    opacity: 0.9;
+    padding: 2px 4px;
+    border-radius: 6px;
+}
+
+.tv-forgot-link:hover,
+.tv-forgot-link:focus {
+    opacity: 1;
+    color: #38bdf8;
+}
+
+.tv-input-label {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--tv-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.tv-input {
+    width: 100%;
+    background: var(--tv-card);
+    border: 1px solid var(--tv-border);
+    color: var(--tv-text-primary);
+    padding: 16px 20px;
+    border-radius: 16px;
+    font-size: 16.5px;
+    outline: none;
+}
+
+.tv-input:focus {
+    border-color: var(--tv-cyan-glow);
+}
+
+.tv-primary-btn {
+    width: 100%;
+    background: linear-gradient(135deg, #0284c7 0%, #00d29d 100%);
+    border: none;
+    color: white;
+    font-size: 17px;
+    font-weight: 800;
+    padding: 18px;
+    border-radius: 16px;
+    cursor: pointer;
+    box-shadow: 0 6px 22px rgba(0, 210, 157, 0.4);
+    margin-top: 6px;
+}
+
+.tv-error-text {
+    font-size: 14px;
+    color: var(--tv-danger);
+    text-align: center;
+    margin-top: 8px;
+}
+
+.tv-auth-footer {
+    margin-top: 28px;
+}
+
+.tv-link-btn {
+    background: none;
+    border: none;
+    color: var(--tv-text-secondary);
+    font-size: 14.5px;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.tv-link-btn:hover {
+    color: var(--tv-cyan-glow);
+}
+
+/* ==========================================================================
+   MAIN TV DASHBOARD (10-Foot UI Grid)
+   ========================================================================== */
+.tv-main-screen {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.tv-layout-grid {
+    flex: 1;
+    display: flex;
+    height: calc(100vh - 76px);
+    overflow: hidden;
+}
+
+/* Left Sidebar */
+.tv-sidebar {
+    width: 480px;
+    min-width: 420px;
+    max-width: 520px;
+    background: var(--tv-surface);
+    border-right: 1px solid var(--tv-border);
+    display: flex;
+    flex-direction: column;
+    padding: 26px;
+    gap: 20px;
+    overflow-y: auto;
+}
+
+.tv-card {
+    background: var(--tv-card);
+    border: 1px solid var(--tv-border);
+    border-radius: 22px;
+    padding: 20px 22px;
+}
+
+.tv-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+}
+
+.tv-card-title {
+    font-size: 15px;
+    font-weight: 800;
+    color: var(--tv-text-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.tv-card-hint {
+    font-size: 12.5px;
+    color: var(--tv-text-secondary);
+}
+
+.tv-direct-dial-row {
+    width: 100%;
+    margin-bottom: 14px;
+}
+
+.tv-direct-dial-actions {
+    display: flex;
+    gap: 12px;
+}
+
+.tv-action-btn {
+    flex: 1;
+    background: var(--tv-card-hover);
+    border: 1px solid var(--tv-border);
+    color: var(--tv-text-primary);
+    padding: 14px;
+    border-radius: 14px;
+    font-size: 15.5px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.tv-action-primary {
+    background: linear-gradient(135deg, #0284c7, #00d29d);
+    color: white;
+    border: none;
+}
+
+.tv-secondary-btn {
+    width: 100%;
+    background: var(--tv-card-hover);
+    border: 1px solid var(--tv-border);
+    color: var(--tv-cyan-glow);
+    padding: 14px;
+    border-radius: 14px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.tv-contacts-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.tv-section-title {
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--tv-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 12px;
+}
+
+.tv-contacts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.tv-contact-card {
+    background: var(--tv-card);
+    border: 1px solid var(--tv-border);
+    border-radius: 18px;
+    padding: 16px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.tv-contact-card:hover {
+    background: var(--tv-card-hover);
+}
+
+.tv-unread-pill {
+    background: #00d29d;
+    color: #071018;
+    font-size: 11px;
+    font-weight: 800;
+    border-radius: 12px;
+    padding: 2px 7px;
+    min-width: 18px;
+    text-align: center;
+    box-shadow: 0 0 10px rgba(0, 210, 157, 0.45);
+    display: inline-block;
+    line-height: 1.4;
+}
+
+.tv-contact-info-block {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.tv-avatar-circle {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #0284c7, #00d29d);
+    color: white;
+    font-size: 20px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tv-contact-name-txt {
+    font-size: 17.5px;
+    font-weight: 700;
+    color: var(--tv-text-primary);
+}
+
+.tv-contact-uid-txt {
+    font-size: 13px;
+    color: var(--tv-text-secondary);
+    font-family: monospace;
+}
+
+.tv-contact-quick-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.tv-mini-call-btn {
+    background: var(--tv-card-hover);
+    border: 1px solid var(--tv-border);
+    color: var(--tv-text-primary);
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px;
+    cursor: pointer;
+}
+
+/* Right Stage */
+.tv-stage {
+    flex: 1;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--tv-bg);
+    overflow: hidden;
+    position: relative;
+}
+
+/* Standby View */
+.tv-standby-view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 44px;
+}
+
+.tv-standby-icon {
+    font-size: 72px;
+    margin-bottom: 20px;
+    filter: drop-shadow(0 0 32px rgba(0, 210, 157, 0.35));
+}
+
+.tv-standby-title {
+    font-size: 34px;
+    font-weight: 800;
+    color: var(--tv-text-primary);
+    margin-bottom: 0;
+}
+
+/* Active Conversation Stage */
+.tv-chat-view {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.tv-chat-header {
+    height: 76px;
+    background: var(--tv-surface);
+    border-bottom: 1px solid var(--tv-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 32px;
+    flex-shrink: 0;
+}
+
+.tv-back-btn {
+    background: var(--tv-card);
+    border: 1px solid var(--tv-border);
+    color: var(--tv-text-secondary);
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    margin-right: 16px;
+}
+
+.tv-chat-target-meta {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex: 1;
+}
+
+.tv-chat-name {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--tv-text-primary);
+}
+
+.tv-chat-uid {
+    font-size: 13.5px;
+    color: var(--tv-text-secondary);
+    font-family: monospace;
+}
+
+.tv-chat-actions {
+    display: flex;
+    gap: 14px;
+}
+
+.tv-call-pill {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--tv-card);
+    border: 1px solid var(--tv-border);
+    color: var(--tv-text-primary);
+    padding: 12px 20px;
+    border-radius: 22px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.tv-call-pill-video {
+    background: linear-gradient(135deg, #0284c7, #00d29d);
+    color: white;
+    border: none;
+    box-shadow: 0 4px 18px rgba(0, 210, 157, 0.4);
+}
+
+.tv-messages-scroll {
+    flex: 1;
+    padding: 32px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.tv-msg {
+    max-width: 65%;
+    padding: 14px 20px;
+    border-radius: 18px;
+    font-size: 17px;
+    line-height: 1.45;
+    word-break: break-word;
+}
+
+.tv-msg-sent {
+    background: #0284c7;
+    color: white;
+    align-self: flex-end;
+    border-bottom-right-radius: 4px;
+}
+
+.tv-msg-received {
+    background: var(--tv-card);
+    color: var(--tv-text-primary);
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+    border: 1px solid var(--tv-border);
+}
+
+.tv-msg-meta {
+    font-size: 12px;
+    opacity: 0.75;
+    margin-top: 5px;
+    text-align: right;
+}
+
+.tv-chat-input-bar {
+    padding: 18px 32px;
+    background: var(--tv-surface);
+    border-top: 1px solid var(--tv-border);
+    display: flex;
+    gap: 16px;
+    align-items: center;
+}
+
+.tv-voice-input-btn {
+    width: 54px;
+    height: 54px;
+    background: var(--tv-card);
+    border: 1px solid var(--tv-border);
+    border-radius: 16px;
+    color: var(--tv-cyan-glow);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.tv-chat-text-input {
+    flex: 1;
+    font-size: 17px;
+    padding: 16px 22px;
+}
+
+.tv-send-action-btn {
+    width: 56px;
+    height: 56px;
+    background: var(--tv-cyan-glow);
+    border: none;
+    border-radius: 16px;
+    color: #090d16;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+/* ==========================================================================
+   FULLSCREEN HD CALL VIEWPORT (16:9 Cinema Stage)
+   ========================================================================== */
+.tv-call-viewport {
+    width: 100vw;
+    height: 100vh;
+    background: #000;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.tv-fullscreen-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.tv-pip-video {
+    position: absolute;
+    top: 36px;
+    right: 40px;
+    width: 260px;
+    height: 150px;
+    border-radius: 20px;
+    border: 3px solid rgba(255, 255, 255, 0.4);
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.7);
+    object-fit: cover;
+    z-index: 20;
+}
+
+.tv-call-status-bar {
+    position: absolute;
+    top: 36px;
+    left: 40px;
+    z-index: 20;
+}
+
+.tv-call-timer {
+    background: rgba(17, 23, 38, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: white;
+    padding: 10px 24px;
+    border-radius: 24px;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.tv-call-controls-dock {
+    position: absolute;
+    bottom: max(44px, env(safe-area-inset-bottom, 48px));
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(17, 23, 38, 0.92);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    padding: 16px 36px;
+    border-radius: 44px;
+    display: flex;
+    gap: 26px;
+    z-index: 30;
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.75);
+}
+
+.tv-dock-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: white;
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.tv-dock-alexa-btn {
+    background: rgba(0, 168, 232, 0.25) !important;
+    border-color: var(--tv-cyan-glow) !important;
+    color: var(--tv-cyan-glow) !important;
+}
+
+.tv-hangup-dock-btn {
+    background: var(--tv-danger) !important;
+    border: none !important;
+    box-shadow: 0 4px 22px rgba(239, 68, 68, 0.55);
+}
+
+.tv-audio-visualizer-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    z-index: 10;
+}
+
+.tv-radar-avatar {
+    width: 130px;
+    height: 130px;
+    border-radius: 50%;
+    background: #0284c7;
+    color: white;
+    font-size: 58px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 65px rgba(0, 210, 157, 0.55);
+    margin-bottom: 26px;
+    animation: tvPulse 2s infinite ease-in-out;
+}
+
+@keyframes tvPulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 45px rgba(0, 210, 157, 0.45); }
+    50% { transform: scale(1.08); box-shadow: 0 0 85px rgba(0, 210, 157, 0.85); }
+}
+
+.tv-call-peer-title {
+    font-size: 34px;
+    font-weight: 800;
+    color: white;
+    margin-bottom: 8px;
+}
+
+.tv-call-peer-subtitle {
+    font-size: 17px;
+    color: var(--tv-cyan-glow);
+    font-weight: 600;
+}
+
+/* ==========================================================================
+   CALL DIALOGS & MODALS
+   ========================================================================== */
+.tv-modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(16px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.tv-call-prompt-card {
+    background: var(--tv-surface);
+    border: 1px solid var(--tv-border);
+    border-radius: 36px;
+    padding: 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    max-width: 460px;
+    width: 90%;
+    box-shadow: 0 20px 65px rgba(0, 0, 0, 0.85);
+}
+
+.tv-prompt-avatar {
+    font-size: 70px;
+    margin-bottom: 18px;
+}
+
+.tv-prompt-name {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--tv-text-primary);
+    margin-bottom: 6px;
+}
+
+.tv-prompt-sub {
+    font-size: 16px;
+    color: var(--tv-cyan-glow);
+    margin-bottom: 30px;
+}
+
+.tv-prompt-actions {
+    display: flex;
+    gap: 36px;
+}
+
+.tv-round-action-btn {
+    width: 76px;
+    height: 76px;
+    border-radius: 50%;
+    border: none;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.tv-reject-btn {
+    background: var(--tv-danger);
+    box-shadow: 0 6px 22px rgba(239, 68, 68, 0.45);
+}
+
+.tv-accept-btn {
+    background: #10b981;
+    box-shadow: 0 6px 22px rgba(16, 185, 129, 0.45);
+}
+
+/* User Profile Dialog */
+.tv-dialog-card {
+    background: var(--tv-surface);
+    border: 1px solid var(--tv-border);
+    border-radius: 30px;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    max-width: 440px;
+    width: 90%;
+    box-shadow: 0 20px 65px rgba(0, 0, 0, 0.85);
+}
+
+.tv-dialog-avatar {
+    width: 76px;
+    height: 76px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #0284c7, #00d29d);
+    color: white;
+    font-size: 30px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
+}
+
+.tv-dialog-title {
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--tv-text-primary);
+    margin-bottom: 4px;
+}
+
+.tv-dialog-sub {
+    font-size: 14px;
+    color: var(--tv-text-secondary);
+    margin-bottom: 22px;
+}
+
+.tv-uid-box {
+    width: 100%;
+    background: var(--tv-card);
+    border: 1px solid var(--tv-border);
+    border-radius: 18px;
+    padding: 18px;
+    margin-bottom: 22px;
+}
+
+.tv-uid-label {
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--tv-text-secondary);
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.tv-uid-number {
+    font-family: monospace;
+    font-size: 24px;
+    font-weight: 800;
+    color: var(--tv-cyan-glow);
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+}
+
+.tv-copy-btn {
+    background: var(--tv-card-hover);
+    border: 1px solid var(--tv-border);
+    color: var(--tv-text-primary);
+    padding: 8px 16px;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.tv-dialog-buttons {
+    display: flex;
+    gap: 14px;
+    width: 100%;
+}
+
+.tv-dialog-btn {
+    flex: 1;
+    background: var(--tv-card);
+    border: 1px solid var(--tv-border);
+    color: var(--tv-text-primary);
+    padding: 14px;
+    border-radius: 14px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.tv-danger-btn {
+    background: var(--tv-danger);
+    border-color: var(--tv-danger);
+    color: white;
+}
+
+/* Enterprise Policy Dialog (Fire TV 10-Foot Leanback UI) */
+.tv-policy-dialog {
+    max-width: 820px;
+    width: 85%;
+    text-align: left;
+    background: #0f172a;
+    border: 1px solid rgba(0, 210, 157, 0.4);
+    box-shadow: 0 25px 75px rgba(0, 0, 0, 0.9), 0 0 30px rgba(0, 210, 157, 0.15);
+}
+
+.tv-dialog-header {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--tv-border);
+    padding-bottom: 14px;
+}
+
+.tv-policy-banner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 18px;
+}
+
+.tv-policy-pill {
+    background: rgba(0, 210, 157, 0.12);
+    border: 1px solid rgba(0, 210, 157, 0.4);
+    color: var(--tv-cyan-glow);
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+}
+
+.tv-policy-scroll {
+    max-height: 440px;
+    overflow-y: auto;
+    font-size: 14px;
+    line-height: 1.7;
+    color: #cbd5e1;
+    padding-right: 14px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--tv-cyan-glow) rgba(15, 23, 42, 0.6);
+}
+
+.tv-policy-scroll::-webkit-scrollbar {
+    width: 8px;
+}
+
+.tv-policy-scroll::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.6);
+    border-radius: 4px;
+}
+
+.tv-policy-scroll::-webkit-scrollbar-thumb {
+    background: var(--tv-cyan-glow);
+    border-radius: 4px;
+}
+
+.tv-policy-scroll h3 {
+    color: #f8fafc;
+    font-size: 18px;
+    font-weight: 800;
+    margin: 20px 0 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 6px;
+}
+
+.tv-policy-scroll h4 {
+    color: var(--tv-cyan-glow);
+    font-size: 15px;
+    font-weight: 700;
+    margin: 14px 0 6px;
+}
+
+.tv-policy-scroll p, .tv-policy-scroll ul {
+    margin-bottom: 12px;
+}
+
+.tv-policy-scroll ul {
+    padding-left: 20px;
+}
+
+.tv-policy-scroll li {
+    margin-bottom: 6px;
+}
+
+.tv-subtle-link {
+    background: transparent;
+    border: none;
+    color: var(--tv-text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 8px;
+    text-decoration: underline;
+    opacity: 0.8;
+}
+
+.tv-subtle-link:hover {
+    color: var(--tv-cyan-glow);
+    opacity: 1;
+}
+
+.tv-sidebar-footer {
+    padding: 16px 20px;
+    text-align: center;
+    border-top: 1px solid var(--tv-border);
+}
+
+/* Toast Notification */
+.tv-toast {
+    position: fixed;
+    bottom: 38px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--tv-surface);
+    border: 1px solid var(--tv-cyan-glow);
+    color: var(--tv-text-primary);
+    padding: 14px 32px;
+    border-radius: 26px;
+    font-size: 16px;
+    font-weight: 600;
+    box-shadow: 0 10px 32px rgba(0, 210, 157, 0.4);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 10000;
+}

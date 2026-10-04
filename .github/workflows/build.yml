@@ -36,7 +36,9 @@ jobs:
           if [ ! -f "capacitor.config.json" ]; then
             npx cap init ZingTalk com.zingtalk.com --web-dir dist
           fi
-          if [ ! -d "android" ]; then
+          if [ ! -f "android/build.gradle" ]; then
+            echo "Android platform not initialized or incomplete. Running fresh cap add android..."
+            rm -rf android
             npx cap add android
           fi
           mkdir -p android/app
@@ -45,9 +47,6 @@ jobs:
             echo "google-services.json copied to android/app/ before sync"
           fi
           npx cap sync android
-
-      - name: Configure Android Project, Manifest, WebView & ProGuard
-        run: node scripts/prepare-android.js
 
       - name: Inject ZingTalk App Icons & Fire TV Banner into Android Resources
         run: |
@@ -85,36 +84,8 @@ jobs:
             echo "70-year release keystore generated successfully."
           fi
 
-      - name: Configure Signing in build.gradle
-        working-directory: android/app
-        run: |
-          python3 -c '
-          import re
-
-          with open("build.gradle", "r") as f:
-              content = f.read()
-
-          signing_block = """
-              signingConfigs {
-                  release {
-                      storeFile file("zingtalk-release.keystore")
-                      storePassword "zingtalk123456"
-                      keyAlias "zingtalk"
-                      keyPassword "zingtalk123456"
-                  }
-              }
-          """
-          if "signingConfigs {" not in content:
-              content = content.replace("android {", "android {" + signing_block, 1)
-
-          if "signingConfig signingConfigs.release" not in content:
-              # Safely inject signingConfig inside existing release block
-              content = re.sub(r"(buildTypes\s*\{\s*release\s*\{)", r"\1\n            signingConfig signingConfigs.release", content)
-
-          with open("build.gradle", "w") as f:
-              f.write(content)
-          '
-          echo "build.gradle successfully updated with release signingConfig"
+      - name: Configure Android Project, Manifest, WebView, ProGuard & Release Signing
+        run: node scripts/prepare-android.js
 
       - name: Build Official Signed Android APK
         working-directory: android

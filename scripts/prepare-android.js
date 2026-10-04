@@ -187,4 +187,28 @@ if (fs.existsSync(proguardPath)) {
     console.log('[prepare-android] ✅ ProGuard rules injected');
 }
 
+// 7. Configure Release Signing in android/app/build.gradle
+const appGradlePath = path.join('android', 'app', 'build.gradle');
+if (fs.existsSync(appGradlePath)) {
+    let content = fs.readFileSync(appGradlePath, 'utf8');
+    const signingBlock = `
+    signingConfigs {
+        release {
+            storeFile file("zingtalk-release.keystore")
+            storePassword "zingtalk123456"
+            keyAlias "zingtalk"
+            keyPassword "zingtalk123456"
+        }
+    }
+`;
+    if (!content.includes('signingConfigs {')) {
+        content = content.replace('android {', 'android {' + signingBlock);
+    }
+    if (!content.includes('signingConfig signingConfigs.release')) {
+        content = content.replace(/(buildTypes\s*\{\s*release\s*\{)/, '$1\n            signingConfig signingConfigs.release');
+    }
+    fs.writeFileSync(appGradlePath, content, 'utf8');
+    console.log('[prepare-android] ✅ Release signingConfig configured in android/app/build.gradle');
+}
+
 console.log('[prepare-android] Finished Android project configuration successfully!');
