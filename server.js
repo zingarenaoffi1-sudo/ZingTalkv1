@@ -388,7 +388,7 @@ async function checkUserUidExists(targetUid) {
         const targetUid = String(data.receiverUid).trim().replace(/\D/g, '');
         const senderUid = data.senderUid ? String(data.senderUid).trim().replace(/\D/g, '') : '';
 
-        // 1. Validate 10-digit UID format
+        // 1. Strict 10-digit UID format validation
         if (targetUid.length !== 10) {
             socket.emit('message_error', {
                 targetUid: targetUid,
@@ -397,7 +397,7 @@ async function checkUserUidExists(targetUid) {
             return;
         }
 
-        // 2. Check if user is attempting to message their own UID
+        // 2. Prevent self-messaging
         if (targetUid === senderUid) {
             socket.emit('message_error', {
                 targetUid: targetUid,
@@ -406,17 +406,7 @@ async function checkUserUidExists(targetUid) {
             return;
         }
 
-        // 3. Verify user existence on server (online or registered in database)
-        const exists = await checkUserUidExists(targetUid);
-        if (!exists) {
-            socket.emit('message_error', {
-                targetUid: targetUid,
-                message: `No user found with UID [${targetUid}]. Please check the 10-digit number.`
-            });
-            return;
-        }
-
-        // Block check: If receiver has blocked sender, do not deliver
+        // 3. Block check: If receiver has blocked sender, do not deliver
         const receiverBlockedList = inMemoryBlocks.get(targetUid);
         if (receiverBlockedList && receiverBlockedList.has(senderUid)) {
             socket.emit('message_status', { msgId: data.id, delivered: false });
@@ -428,7 +418,7 @@ async function checkUserUidExists(targetUid) {
             io.to(targetUid).emit('receive_message', data);
             socket.emit('message_status', { msgId: data.id, delivered: true });
         } else {
-            // Buffer transiently in volatile RAM until recipient connects
+            // Buffer transiently in volatile RAM until recipient connects (WhatsApp single-tick offline queue)
             if (!ephemeralMessageQueue.has(targetUid)) {
                 ephemeralMessageQueue.set(targetUid, []);
             }
@@ -539,11 +529,10 @@ async function checkUserUidExists(targetUid) {
             return;
         }
 
-        const exists = await checkUserUidExists(targetUid);
-        if (!exists) {
+        if (!connectedUsers.has(targetUid)) {
             socket.emit('call_error', {
                 targetUid: targetUid,
-                message: `No user found with UID [${targetUid}]. Please check the 10-digit number.`
+                message: `User [${targetUid}] is currently offline. Please try again when they are online.`
             });
             return;
         }

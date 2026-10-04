@@ -122,13 +122,24 @@ export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
     if (saved && saved.trim()) return saved.trim();
 
-    if (typeof window !== "undefined" && window.location) {
-        const origin = window.location.origin;
-        // When accessed directly from user's server (e.g. http://18.234.224.25:3000 or http://localhost:3000)
-        if (origin && !origin.includes("github.io") && !origin.startsWith("file:") && !origin.includes("capacitor:")) {
+    if (typeof window !== "undefined") {
+        const origin = window.location.origin || "";
+        const hostname = window.location.hostname || "";
+        const port = window.location.port || "";
+
+        // If explicitly running in local Node development on a PC on port 3000 (NOT inside Android / Capacitor)
+        if (hostname === "localhost" && port === "3000" && !window.Capacitor?.isNativePlatform?.()) {
             return origin;
         }
+
+        // If user accessed their EC2 IP directly in browser
+        if (hostname === "18.234.224.25") {
+            return AWS_SIGNALING_URL;
+        }
     }
+
+    // FOR ALL ANDROID APKS, APPETIZE.IO, EMULATORS, AND CLOUD CLIENTS:
+    // ALWAYS CONNECT TO THE GLOBAL AWS EC2 SIGNALING SERVER!
     return AWS_SIGNALING_URL;
 }
 
@@ -295,60 +306,72 @@ if (auth) {
     });
 }
 
+export function updateServerStatusBadge(connected, text) {
+    const badges = document.querySelectorAll(".server-status-pill");
+    badges.forEach(b => {
+        const dot = b.querySelector(".server-status-dot");
+        const txt = b.querySelector(".server-status-text");
+        if (connected) {
+            if (dot) {
+                dot.style.background = "#00d29d";
+                dot.style.boxShadow = "0 0 8px #00d29d";
+            }
+            if (txt) {
+                txt.style.color = "#00d29d";
+                txt.innerText = text || "AWS Cloud Online";
+            }
+            b.style.borderColor = "rgba(0, 210, 157, 0.4)";
+        } else {
+            if (dot) {
+                dot.style.background = "#ff4444";
+                dot.style.boxShadow = "0 0 8px #ff4444";
+            }
+            if (txt) {
+                txt.style.color = "#ff8888";
+                txt.innerText = text || "Connecting...";
+            }
+            b.style.borderColor = "rgba(255, 68, 68, 0.4)";
+        }
+    });
+}
+
 // ----------------- Socket Signaling & Alexa Webhook Commands -----------------
 export function registerSocketListeners(s) {
     if (!s) return;
 
     s.on("connect", () => {
-        if (currentUser) {
-            s.emit("login_user", {
-                email: currentUser.email,
-                name: currentUser.displayName || "TV User",
-                authUid: currentUser.uid,
-                uid: my10DigitUid,
-                contacts: myContacts
-            });
+        console.log("[ZingTalk Socket] Connected to:", s.io.uri);
+        updateServerStatusBadge(true, "AWS Cloud Online");
+
+        const displayName = currentUser?.displayName || currentUser?.name || "TV User";
+        const email = currentUser?.email || null;
+        const authUid = currentUser?.uid || null;
+
+        s.emit("login_user", {
+            email: email,
+            name: displayName,
+            authUid: authUid,
+            uid: my10DigitUid,
+            contacts: myContacts
+        });
+        if (my10DigitUid) {
             s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
         }
+
         if (pendingOutgoingMessages.length > 0) {
             pendingOutgoingMessages.forEach(msg => s.emit("send_message", msg));
             pendingOutgoingMessages = [];
         }
     });
 
-    s.on("disconnect", () => {
-        // Silent background disconnect/reconnect handling
+    s.on("disconnect", (reason) => {
+        console.warn("[ZingTalk Socket] Disconnected:", reason);
+        updateServerStatusBadge(false, "Reconnecting...");
     });
 
-    s.on("connect_error", () => {
-        // Silent background reconnect
-    });
-
-    s.on("user_data", (data) => {
-        if (data && data.uid) {
-            updateUidDisplays(data.uid);
-            if (currentUser) {
-                localStorage.setItem("zingTalkUid_" + (currentUser.email || currentUser.uid), my10DigitUid);
-            }
-        }
-        if (data && data.contacts && data.contacts.length > 0) {
-            myContacts = data.contacts;
-            localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
-            renderContacts(myContacts);
-            s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
-        }
-    });
-
-    s.on("contact_saved", (contacts) => {
-        myContacts = contacts;
-        localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
-        renderContacts(myContacts);
-        s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
-        showToast("Contact saved successfully");
-    });
-
-    s.on("contact_error", (msg) => {
-        showToast(msg);
+    s.on("connect_error", (err) => {
+        console.warn("[ZingTalk Socket] Connect error:", err.message);
+        updateServerStatusBadge(false, "Connecting to AWS...");
     });
 
     s.on("user_data", (data) => {
@@ -357,6 +380,26 @@ export function registerSocketListeners(s) {
             const cacheKey = "zingTalkUid_" + (currentUser?.email || currentUser?.uid || data.uid);
             try { localStorage.setItem(cacheKey, data.uid); } catch (_) {}
         }
+        if (data && data.contacts && Array.isArray(data.contacts) && data.contacts.length > 0) {
+            myContacts = data.contacts;
+            try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
+            renderContacts(myContacts);
+            s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+        }
+    });
+
+    s.on("contact_saved", (contacts) => {
+        if (Array.isArray(contacts)) {
+            myContacts = contacts;
+            try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
+            renderContacts(myContacts);
+            s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+            showToast("Contact saved successfully");
+        }
+    });
+
+    s.on("contact_error", (msg) => {
+        showToast(msg);
     });
 
     s.on("receive_message", (data) => {
@@ -714,6 +757,7 @@ function sendMessageLogic() {
     if (socket && socket.connected) {
         socket.emit("send_message", msgData);
     } else {
+        showToast("⚠️ Connecting to AWS Cloud... Message will be delivered upon connection.");
         pendingOutgoingMessages.push(msgData);
         connectSocket();
     }
