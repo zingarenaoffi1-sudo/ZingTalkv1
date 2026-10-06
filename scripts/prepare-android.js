@@ -13,8 +13,6 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.webkit.PermissionRequest;
-import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
@@ -39,15 +37,6 @@ public class MainActivity extends BridgeActivity {
                 settings.setAllowContentAccess(true);
                 settings.setDatabaseEnabled(true);
                 settings.setMediaPlaybackRequiresUserGesture(false);
-
-                webView.setWebChromeClient(new WebChromeClient() {
-                    @Override
-                    public void onPermissionRequest(final PermissionRequest request) {
-                        runOnUiThread(() -> {
-                            request.grant(request.getResources());
-                        });
-                    }
-                });
             }
         } catch (Exception ignored) {}
     }
@@ -75,6 +64,18 @@ public class MainActivity extends BridgeActivity {
 `;
     fs.writeFileSync(mainActivityPath, customMainActivity, 'utf8');
     console.log('[prepare-android] ✅ MainActivity.java configured with MIXED_CONTENT_ALWAYS_ALLOW and WebRTC Camera/Mic permissions');
+}
+
+// 1.1 Ensure Leanback Banner Drawable Exists
+const drawableDir = path.join('android', 'app', 'src', 'main', 'res', 'drawable');
+if (!fs.existsSync(drawableDir)) {
+    fs.mkdirSync(drawableDir, { recursive: true });
+}
+const bannerDest = path.join(drawableDir, 'banner.png');
+const bannerSrc = path.join('assets', 'icon.png');
+if (!fs.existsSync(bannerDest) && fs.existsSync(bannerSrc)) {
+    fs.copyFileSync(bannerSrc, bannerDest);
+    console.log('[prepare-android] ✅ Copied assets/icon.png -> drawable/banner.png');
 }
 
 // 2. Configure network_security_config.xml for AWS EC2 Cleartext HTTP

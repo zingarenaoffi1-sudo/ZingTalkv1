@@ -4,8 +4,6 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.webkit.PermissionRequest;
-import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
@@ -30,15 +28,6 @@ public class MainActivity extends BridgeActivity {
                 settings.setAllowContentAccess(true);
                 settings.setDatabaseEnabled(true);
                 settings.setMediaPlaybackRequiresUserGesture(false);
-
-                webView.setWebChromeClient(new WebChromeClient() {
-                    @Override
-                    public void onPermissionRequest(final PermissionRequest request) {
-                        runOnUiThread(() -> {
-                            request.grant(request.getResources());
-                        });
-                    }
-                });
             }
         } catch (Exception ignored) {}
     }

@@ -191,7 +191,39 @@ const ephemeralMessageQueue = new Map();
 // Persistent Alexa Device to ZingTalk User UID Registry (amazonUserId -> 10-digit UID)
 const alexaDevicePairings = new Map();
 
+// Helper to check if a user is currently connected with a healthy live socket
+function isUserOnline(uid) {
+    if (!uid) return false;
+    const clean = String(uid).trim().replace(/\D/g, '');
+    if (!clean || clean.length !== 10) return false;
+    const socketId = connectedUsers.get(clean);
+    if (!socketId) return false;
+    const targetSocket = io.sockets.sockets.get(socketId);
+    if (!targetSocket || !targetSocket.connected) {
+        connectedUsers.delete(clean);
+        return false;
+    }
+    return true;
+}
+
 io.on('connection', (socket) => {
+    // Universal signaling delivery helper (Room primary, socket direct fallback, exactly-once)
+    const sendSignalingEvent = (targetId, eventName, payload) => {
+        if (!targetId) return;
+        const clean = String(targetId).trim().replace(/\D/g, '');
+        if (!clean) return;
+
+        const room = io.sockets.adapter.rooms.get(clean);
+        if (room && room.size > 0) {
+            io.to(clean).emit(eventName, payload);
+        } else {
+            const directSocketId = connectedUsers.get(clean);
+            if (directSocketId) {
+                io.to(directSocketId).emit(eventName, payload);
+            }
+        }
+    };
+
     socket.on('login_user', async (data) => {
         try {
             if (!data) data = {};
@@ -203,7 +235,7 @@ io.on('connection', (socket) => {
             try {
                 if (data.email) {
                     snapshot = await usersRef.where('email', '==', data.email).get();
-                } else if (data.authUid) {
+                } else if (data.authUid && !data.isAnonymous && !data.isGuest) {
                     snapshot = await usersRef.where('authUid', '==', data.authUid).get();
                 }
             } catch (fsErr) {
@@ -218,9 +250,10 @@ io.on('connection', (socket) => {
             if (existingUid && existingUid.length === 10) {
                 uid = existingUid;
             } else if (data.uid && String(data.uid).replace(/\D/g, '').length === 10) {
+                // Preserve valid 10-digit session UID on page refresh / socket reconnect
                 uid = String(data.uid).replace(/\D/g, '');
             } else {
-                // Server generates unique 10-digit UID
+                // Server generates brand new unique 10-digit UID
                 uid = generate10DigitUid();
             }
 
@@ -336,7 +369,7 @@ async function checkUserUidExists(targetUid) {
     if (cleanUid.length !== 10) return false;
 
     // 1. Is user currently connected?
-    if (connectedUsers.has(cleanUid)) return true;
+    if (isUserOnline(cleanUid)) return true;
 
     // 2. Is user in contacts registry or database?
     if (userContactsRegistry.has(cleanUid)) return true;
@@ -413,9 +446,9 @@ async function checkUserUidExists(targetUid) {
             return;
         }
 
-        const isOnline = connectedUsers.has(targetUid);
+        const isOnline = isUserOnline(targetUid);
         if (isOnline) {
-            io.to(targetUid).emit('receive_message', data);
+            sendSignalingEvent(targetUid, 'receive_message', data);
             socket.emit('message_status', { msgId: data.id, delivered: true });
         } else {
             // Buffer transiently in volatile RAM until recipient connects (WhatsApp single-tick offline queue)
@@ -482,7 +515,7 @@ async function checkUserUidExists(targetUid) {
             if (targetBlockedList && targetBlockedList.has(data.senderUid)) {
                 return;
             }
-            io.to(data.targetId).emit('user_typing', data);
+            sendSignalingEvent(data.targetId, 'user_typing', data);
         }
     });
 
@@ -490,7 +523,7 @@ async function checkUserUidExists(targetUid) {
         if (data.isGroup) {
             socket.to(data.targetId).emit('user_stop_typing', data);
         } else {
-            io.to(data.targetId).emit('user_stop_typing', data);
+            sendSignalingEvent(data.targetId, 'user_stop_typing', data);
         }
     });
 
@@ -499,7 +532,7 @@ async function checkUserUidExists(targetUid) {
         if (data.isGroup) {
             io.to(data.targetId).emit('receive_reaction', data);
         } else {
-            io.to(data.targetId).emit('receive_reaction', data);
+            sendSignalingEvent(data.targetId, 'receive_reaction', data);
         }
     });
 
@@ -529,7 +562,7 @@ async function checkUserUidExists(targetUid) {
             return;
         }
 
-        if (!connectedUsers.has(targetUid)) {
+        if (!isUserOnline(targetUid)) {
             socket.emit('call_error', {
                 targetUid: targetUid,
                 message: `User [${targetUid}] is currently offline. Please try again when they are online.`
@@ -543,31 +576,38 @@ async function checkUserUidExists(targetUid) {
             socket.emit('call_response_received', { targetUid: targetUid, status: 'declined', reason: 'blocked' });
             return;
         }
-        io.to(targetUid).emit('incoming_call', data);
+
+        sendSignalingEvent(targetUid, 'incoming_call', data);
     });
 
     socket.on('cancel_call', (data) => {
-        io.to(data.targetUid).emit('call_cancelled');
+        if (!data || !data.targetUid) return;
+        sendSignalingEvent(data.targetUid, 'call_cancelled', data);
     });
 
     socket.on('call_response', (data) => {
-        io.to(data.targetUid).emit('call_response_received', data);
+        if (!data || !data.targetUid) return;
+        sendSignalingEvent(data.targetUid, 'call_response_received', data);
     });
 
     socket.on('webrtc_offer', (data) => {
-        io.to(data.targetUid).emit('webrtc_offer_received', data);
+        if (!data || !data.targetUid) return;
+        sendSignalingEvent(data.targetUid, 'webrtc_offer_received', data);
     });
 
     socket.on('webrtc_answer', (data) => {
-        io.to(data.targetUid).emit('webrtc_answer_received', data);
+        if (!data || !data.targetUid) return;
+        sendSignalingEvent(data.targetUid, 'webrtc_answer_received', data);
     });
 
     socket.on('webrtc_ice_candidate', (data) => {
-        io.to(data.targetUid).emit('webrtc_ice_candidate_received', data);
+        if (!data || !data.targetUid) return;
+        sendSignalingEvent(data.targetUid, 'webrtc_ice_candidate_received', data);
     });
 
     socket.on('webrtc_end_call', (data) => {
-        io.to(data.targetUid).emit('webrtc_call_ended');
+        if (!data || !data.targetUid) return;
+        sendSignalingEvent(data.targetUid, 'webrtc_call_ended', data);
     });
 
     // Fire TV Alexa Voice Command Relay

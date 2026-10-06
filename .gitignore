@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+build/
+android/app/build/
+android/build/
+.gradle/
+local.properties
+
+# Environment variables
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db

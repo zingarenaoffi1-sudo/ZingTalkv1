@@ -46,7 +46,7 @@ export async function saveContactToFirebase(contactUid, contactName) {
     const newContact = { uid: cleanUid, name: cleanName };
     updated.unshift(newContact);
     myContacts = updated;
-    try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
+    saveUserContactsToStorage();
     renderContacts(myContacts);
 
     // Save strictly { uid, contacts: [{ uid, name }] } to Firebase Firestore
@@ -80,14 +80,18 @@ export function showToast(message) {
 }
 
 // Web Audio API Pleasant 2-Tone Notification Sound (Zero External Dependency)
+let sharedAudioCtx = null;
 export function playIncomingChime() {
     try {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         if (!AudioCtx) return;
-        const ctx = new AudioCtx();
-        if (ctx.state === "suspended") {
-            ctx.resume();
+        if (!sharedAudioCtx || sharedAudioCtx.state === "closed") {
+            sharedAudioCtx = new AudioCtx();
         }
+        if (sharedAudioCtx.state === "suspended") {
+            sharedAudioCtx.resume().catch(() => {});
+        }
+        const ctx = sharedAudioCtx;
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.connect(gain);
@@ -117,29 +121,36 @@ const PRIMARY_STUN = "stun:18.234.224.25:3478";
 const BACKUP_STUN = "stun:stun.l.google.com:19302";
 let isStunFailoverActive = false;
 
-// Resolve backend signaling URL: defaults directly to user's AWS server
+// Resolve backend signaling URL: defaults directly to user's AWS server on Native Android, same-origin on Web
 export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
     if (saved && saved.trim()) return saved.trim();
 
     if (typeof window !== "undefined") {
-        const origin = window.location.origin || "";
-        const hostname = window.location.hostname || "";
-        const port = window.location.port || "";
+        const isNative = Boolean(window.Capacitor?.isNativePlatform?.());
+        // In Native Android / Fire TV APK, connect directly to AWS EC2 Signaling Server
+        if (isNative) {
+            return AWS_SIGNALING_URL;
+        }
 
-        // If explicitly running in local Node development on a PC on port 3000 (NOT inside Android / Capacitor)
-        if (hostname === "localhost" && port === "3000" && !window.Capacitor?.isNativePlatform?.()) {
+        const origin = window.location.origin || "";
+        const protocol = window.location.protocol || "";
+        const hostname = window.location.hostname || "";
+
+        // If in a browser on HTTPS (like AI Studio preview, Web PWA, or Cloud), connect same-origin to prevent Mixed Content security blocks
+        if (protocol === "https:") {
             return origin;
         }
 
-        // If user accessed their EC2 IP directly in browser
-        if (hostname === "18.234.224.25") {
-            return AWS_SIGNALING_URL;
+        // If running in browser on localhost or preview dev server
+        if (origin && origin !== "null" && origin.startsWith("http")) {
+            if (hostname === "18.234.224.25") {
+                return AWS_SIGNALING_URL;
+            }
+            return origin;
         }
     }
 
-    // FOR ALL ANDROID APKS, APPETIZE.IO, EMULATORS, AND CLOUD CLIENTS:
-    // ALWAYS CONNECT TO THE GLOBAL AWS EC2 SIGNALING SERVER!
     return AWS_SIGNALING_URL;
 }
 
@@ -169,12 +180,12 @@ export function updateUidDisplays(uid) {
     if (modalUid) modalUid.innerText = my10DigitUid;
 }
 
-// WebRTC STUN/TURN Configuration (Google Primary + User AWS EC2 Port 3478 + Twilio/Mozilla Fallback)
+// WebRTC STUN Configuration (Google Primary + User AWS EC2 Port 3478 + Twilio Fallback)
 const rtcConfig = {
     iceServers: [
         { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"] },
-        { urls: ["stun:18.234.224.25:3478", "turn:18.234.224.25:3478"] },
-        { urls: ["stun:global.stun.twilio.com:3478", "stun:stun.services.mozilla.com"] }
+        { urls: ["stun:18.234.224.25:3478"] },
+        { urls: ["stun:global.stun.twilio.com:3478"] }
     ],
     iceCandidatePoolSize: 10
 };
@@ -249,6 +260,13 @@ export function stopRingtone() {
     }
 }
 
+// Purge legacy unscoped cache keys from previous versions
+try {
+    localStorage.removeItem("zingTalkHistory");
+    localStorage.removeItem("zingTalkContacts");
+    localStorage.removeItem("zingTalkUnread");
+} catch (_) {}
+
 let localStream = null;
 let peerConnection = null;
 let activeCallTarget = null;
@@ -257,13 +275,21 @@ let isMicMuted = false;
 let callDurationTimer = null;
 let callSecondsElapsed = 0;
 let iceCandidatesQueue = [];
+let pendingOffer = null;
+let outgoingCallTimer = null;
+let incomingCallTimer = null;
 
 // Auto-login from saved session (Dual-layer: LocalStorage + Native Preferences)
 const savedSession = localStorage.getItem("zingTalkTvSession");
 if (savedSession) {
     try {
         const sessionData = JSON.parse(savedSession);
-        if (sessionData && (sessionData.displayName || sessionData.uid)) {
+        if (sessionData && (sessionData.displayName || sessionData.uid || sessionData.zingUid)) {
+            if (sessionData.zingUid) {
+                my10DigitUid = String(sessionData.zingUid);
+                updateUidDisplays(my10DigitUid);
+                loadUserStorageData(my10DigitUid);
+            }
             loginUserSession(sessionData);
         }
     } catch (_) {}
@@ -285,7 +311,12 @@ async function restoreSessionFromNativeBackup() {
             const { value } = await window.Capacitor.Plugins.Preferences.get({ key: "zingTalkTvSession" });
             if (value) {
                 const sessionData = JSON.parse(value);
-                if (sessionData && (sessionData.displayName || sessionData.uid)) {
+                if (sessionData && (sessionData.displayName || sessionData.uid || sessionData.zingUid)) {
+                    if (sessionData.zingUid && !my10DigitUid) {
+                        my10DigitUid = String(sessionData.zingUid);
+                        updateUidDisplays(my10DigitUid);
+                        loadUserStorageData(my10DigitUid);
+                    }
                     loginUserSession(sessionData);
                 }
             }
@@ -296,6 +327,11 @@ restoreSessionFromNativeBackup();
 
 function loginUserSession(user) {
     currentUser = user;
+    if (user.zingUid && !my10DigitUid) {
+        my10DigitUid = String(user.zingUid);
+        updateUidDisplays(my10DigitUid);
+        loadUserStorageData(my10DigitUid);
+    }
     document.getElementById("login-screen")?.classList.add("hidden");
     document.getElementById("tv-top-bar")?.classList.remove("hidden");
     document.getElementById("main-screen")?.classList.remove("hidden");
@@ -312,7 +348,7 @@ function loginUserSession(user) {
     if (messagesArea) messagesArea.innerHTML = "";
 
     // Server-Authoritative UID: Do NOT generate fake local math UID.
-    // Wait strictly for server response.
+    // Wait strictly for server response if not yet restored.
     if (!my10DigitUid) {
         updateUidDisplays(null); // Displays "UID: Connecting..."
     }
@@ -322,7 +358,9 @@ function loginUserSession(user) {
             email: user.email,
             name: displayName,
             authUid: user.uid,
-            uid: my10DigitUid,
+            uid: my10DigitUid || user.zingUid,
+            isAnonymous: Boolean(user.isAnonymous),
+            isGuest: Boolean(user.isAnonymous),
             contacts: myContacts
         });
         if (my10DigitUid) {
@@ -384,7 +422,7 @@ function logoutUserSession() {
     document.getElementById("main-screen")?.classList.add("hidden");
     document.getElementById("tv-top-bar")?.classList.add("hidden");
     document.getElementById("login-screen")?.classList.remove("hidden");
-    const loginError = document.getElementById("login-error");
+    const loginError = document.getElementById("login-message") || document.getElementById("login-error");
     if (loginError) loginError.style.display = "none";
     
     showToast("Signed out successfully");
@@ -447,7 +485,9 @@ export function registerSocketListeners(s) {
             email: email,
             name: displayName,
             authUid: authUid,
-            uid: my10DigitUid,
+            uid: my10DigitUid || currentUser?.zingUid,
+            isAnonymous: Boolean(currentUser?.isAnonymous),
+            isGuest: Boolean(currentUser?.isAnonymous),
             contacts: myContacts
         });
         if (my10DigitUid) {
@@ -474,6 +514,10 @@ export function registerSocketListeners(s) {
         if (data && data.uid) {
             updateUidDisplays(data.uid);
             loadUserStorageData(data.uid);
+            if (currentUser) {
+                currentUser.zingUid = String(data.uid);
+                persistSessionBackup("zingTalkTvSession", JSON.stringify(currentUser));
+            }
         }
         if (data && data.contacts && Array.isArray(data.contacts) && data.contacts.length > 0) {
             myContacts = data.contacts;
@@ -601,6 +645,18 @@ export function registerSocketListeners(s) {
         document.getElementById("incoming-call-overlay")?.classList.remove("hidden");
         document.getElementById("accept-call-btn")?.focus();
         startRingtone();
+
+        if (incomingCallTimer) clearTimeout(incomingCallTimer);
+        incomingCallTimer = setTimeout(() => {
+            const overlay = document.getElementById("incoming-call-overlay");
+            if (overlay && !overlay.classList.contains("hidden")) {
+                stopRingtone();
+                overlay.classList.add("hidden");
+                activeCallTarget = null;
+                endCallCleanup();
+                showToast("Missed call from " + callerNameToShow);
+            }
+        }, 45000);
     });
 
     s.on("call_cancelled", () => {
@@ -616,8 +672,10 @@ export function registerSocketListeners(s) {
     s.on("call_response_received", async (data) => {
         stopRingtone();
         document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
-        if (data.status === "accepted") {
-            await startWebRTC(true);
+        if (data && data.status === "accepted") {
+            if (!peerConnection) {
+                await startWebRTC(true);
+            }
         } else {
             showToast("Call declined");
             activeCallTarget = null;
@@ -627,7 +685,12 @@ export function registerSocketListeners(s) {
     });
 
     s.on("webrtc_offer_received", async (data) => {
-        if (!peerConnection) return;
+        if (!data || !data.offer) return;
+        if (!peerConnection) {
+            pendingOffer = data.offer;
+            return;
+        }
+        if (peerConnection.signalingState !== "stable") return;
         try {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
             const answer = await peerConnection.createAnswer();
@@ -635,22 +698,38 @@ export function registerSocketListeners(s) {
             s.emit("webrtc_answer", { targetUid: activeCallTarget, answer });
 
             while (iceCandidatesQueue.length > 0) {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidatesQueue.shift()));
+                const cand = iceCandidatesQueue.shift();
+                if (cand) {
+                    try {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(cand));
+                    } catch (_) {}
+                }
             }
-        } catch (_) {}
+        } catch (err) {
+            console.error("[WebRTC] Offer error:", err);
+        }
     });
 
     s.on("webrtc_answer_received", async (data) => {
-        if (!peerConnection) return;
+        if (!peerConnection || !data || !data.answer) return;
+        if (peerConnection.signalingState !== "have-local-offer") return;
         try {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
             while (iceCandidatesQueue.length > 0) {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidatesQueue.shift()));
+                const cand = iceCandidatesQueue.shift();
+                if (cand) {
+                    try {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(cand));
+                    } catch (_) {}
+                }
             }
-        } catch (_) {}
+        } catch (err) {
+            console.error("[WebRTC] Answer error:", err);
+        }
     });
 
     s.on("webrtc_ice_candidate_received", async (data) => {
+        if (!data || !data.candidate) return;
         if (peerConnection && peerConnection.remoteDescription) {
             try {
                 await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
@@ -677,7 +756,7 @@ export function registerSocketListeners(s) {
     s.on("contact_saved", (updatedContacts) => {
         if (Array.isArray(updatedContacts)) {
             myContacts = updatedContacts;
-            try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
+            saveUserContactsToStorage();
             renderContacts(myContacts);
             showToast("Contact saved successfully");
         }
@@ -777,7 +856,12 @@ function renderContacts(contacts) {
         card.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
                 e.preventDefault();
-                openChat(contact);
+                const btn = e.target.closest("button");
+                if (btn && btn.dataset.action) {
+                    initiateDirectCall(contact.uid, btn.dataset.action);
+                } else {
+                    openChat(contact);
+                }
             }
         });
 
@@ -797,7 +881,7 @@ function openChat(contact) {
     // Clear unread counter for this contact when opened (WhatsApp standard)
     if (unreadCounts[uid]) {
         delete unreadCounts[uid];
-        try { localStorage.setItem("zingTalkUnread", JSON.stringify(unreadCounts)); } catch (_) {}
+        saveUserUnreadToStorage();
         renderContacts(myContacts);
     }
 
@@ -874,9 +958,7 @@ function sendMessageLogic() {
 
     if (!chatHistory[currentTargetUid]) chatHistory[currentTargetUid] = [];
     chatHistory[currentTargetUid].push({ ...msgData, type: "msg-sent" });
-    try {
-        localStorage.setItem("zingTalkHistory", JSON.stringify(chatHistory));
-    } catch (_) {}
+    saveUserHistoryToStorage();
 
     input.value = "";
 
@@ -990,38 +1072,40 @@ async function startWebRTC(isCaller) {
         sampleRate: { ideal: 48000 }
     };
 
-    let streamObtained = null;
-    if (currentCallType === "video") {
-        try {
-            streamObtained = await navigator.mediaDevices.getUserMedia({
-                audio: audioConstraints,
-                video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 } }
-            });
-        } catch (vidErr) {
-            console.warn("[WebRTC] Video media request failed, attempting standard video fallback:", vidErr);
+    let streamObtained = localStream;
+    if (!streamObtained) {
+        if (currentCallType === "video") {
             try {
-                streamObtained = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: true });
-            } catch (fallbackErr) {
-                console.warn("[WebRTC] Camera unavailable on this device, gracefully falling back to Audio Call:", fallbackErr);
-                currentCallType = "audio";
-                showToast("Camera not available on this device. Switched to HD Audio Call.");
+                streamObtained = await navigator.mediaDevices.getUserMedia({
+                    audio: audioConstraints,
+                    video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 } }
+                });
+            } catch (vidErr) {
+                console.warn("[WebRTC] Video media request failed, attempting standard video fallback:", vidErr);
+                try {
+                    streamObtained = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: true });
+                } catch (fallbackErr) {
+                    console.warn("[WebRTC] Camera unavailable on this device, gracefully falling back to Audio Call:", fallbackErr);
+                    currentCallType = "audio";
+                    showToast("Camera not available on this device. Switched to HD Audio Call.");
+                }
             }
         }
-    }
 
-    if (!streamObtained) {
-        try {
-            streamObtained = await navigator.mediaDevices.getUserMedia({
-                audio: audioConstraints,
-                video: false
-            });
-        } catch (audErr) {
-            showToast("Microphone access required: " + audErr.message);
-            endCall();
-            return;
+        if (!streamObtained) {
+            try {
+                streamObtained = await navigator.mediaDevices.getUserMedia({
+                    audio: audioConstraints,
+                    video: false
+                });
+            } catch (audErr) {
+                showToast("Microphone access required: " + audErr.message);
+                endCall();
+                return;
+            }
         }
+        localStream = streamObtained;
     }
-    localStream = streamObtained;
 
     if (currentCallType === "audio") {
         if (localVideo) localVideo.classList.add("hidden");
@@ -1044,7 +1128,7 @@ async function startWebRTC(isCaller) {
     peerConnection = new RTCPeerConnection(rtcConfig);
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-    // Dynamic bandwidth floor and balanced resolution degradation (Prevents Minecraft pixels & MTU drops)
+    // Dynamic bandwidth floor and balanced resolution degradation
     try {
         const senders = peerConnection.getSenders();
         const videoSender = senders.find(s => s.track && s.track.kind === "video");
@@ -1060,7 +1144,7 @@ async function startWebRTC(isCaller) {
         }
     } catch (_) {}
 
-    // Universal Codec Prioritization: VP8 & H.264 first (Prevents Bug 74: H.265 reject & Bug 75: VP9 CPU spikes)
+    // Universal Codec Prioritization: VP8 & H.264 first
     try {
         if ('RTCRtpSender' in window && 'getCapabilities' in RTCRtpSender) {
             const capabilities = RTCRtpSender.getCapabilities('video');
@@ -1073,7 +1157,7 @@ async function startWebRTC(isCaller) {
                     return 0;
                 });
                 peerConnection.getTransceivers().forEach(t => {
-                    if (t.setCodecPreferences) {
+                    if (t.setCodecPreferences && t.receiver && t.receiver.track && t.receiver.track.kind === "video") {
                         try { t.setCodecPreferences(sortedCodecs); } catch (_) {}
                     }
                 });
@@ -1084,15 +1168,26 @@ async function startWebRTC(isCaller) {
     peerConnection.ontrack = (event) => {
         const remote = document.getElementById("remote-video");
         if (remote) {
-            remote.srcObject = event.streams[0];
-            remote.play().catch(() => {});
-            // Audio focus recovery: if OS transiently pauses remote playback (e.g. alarm/notification), auto-resume
+            if (event.streams && event.streams[0]) {
+                remote.srcObject = event.streams[0];
+            } else {
+                if (!remote.srcObject) remote.srcObject = new MediaStream();
+                remote.srcObject.addTrack(event.track);
+            }
+            remote.play().catch(() => {
+                const resumeOnInteraction = () => {
+                    remote.play().catch(() => {});
+                    document.removeEventListener("click", resumeOnInteraction);
+                    document.removeEventListener("keydown", resumeOnInteraction);
+                };
+                document.addEventListener("click", resumeOnInteraction, { once: true });
+                document.addEventListener("keydown", resumeOnInteraction, { once: true });
+            });
             remote.onpause = () => {
                 if (peerConnection && (peerConnection.iceConnectionState === "connected" || peerConnection.iceConnectionState === "completed")) {
                     remote.play().catch(() => {});
                 }
             };
-            // GPU context or buffer stall recovery (Bug 53 & 55)
             remote.onstalled = () => {
                 if (peerConnection && (peerConnection.iceConnectionState === "connected" || peerConnection.iceConnectionState === "completed")) {
                     remote.play().catch(() => {});
@@ -1107,7 +1202,6 @@ async function startWebRTC(isCaller) {
         }
     };
 
-    // Background STUN Failover Monitoring
     peerConnection.onicecandidateerror = (event) => {
         if (event.url && event.url.includes("google.com")) {
             isStunFailoverActive = true;
@@ -1116,12 +1210,19 @@ async function startWebRTC(isCaller) {
 
     peerConnection.oniceconnectionstatechange = () => {
         const state = peerConnection ? peerConnection.iceConnectionState : "";
-        if (state === "failed" || state === "disconnected") {
-            isStunFailoverActive = true;
+        if (state === "failed") {
+            showToast("Connection lost with peer.");
+            endCallCleanup();
+        } else if (state === "disconnected") {
+            setTimeout(() => {
+                if (peerConnection && peerConnection.iceConnectionState === "disconnected") {
+                    showToast("Call ended due to network disconnection.");
+                    endCallCleanup();
+                }
+            }, 6000);
         }
     };
 
-    // Call Duration Timer
     callSecondsElapsed = 0;
     clearInterval(callDurationTimer);
     const timerEl = document.getElementById("call-timer");
@@ -1135,18 +1236,46 @@ async function startWebRTC(isCaller) {
 
     if (isCaller) {
         try {
-            const offer = await peerConnection.createOffer();
+            const offer = await peerConnection.createOffer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: currentCallType === "video"
+            });
             await peerConnection.setLocalDescription(offer);
             socket.emit("webrtc_offer", { targetUid: activeCallTarget, offer });
-        } catch (_) {}
+        } catch (err) {
+            console.error("[WebRTC] Offer error:", err);
+        }
+    } else if (pendingOffer) {
+        try {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(pendingOffer));
+            pendingOffer = null;
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            socket.emit("webrtc_answer", { targetUid: activeCallTarget, answer });
+
+            while (iceCandidatesQueue.length > 0) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidatesQueue.shift()));
+            }
+        } catch (err) {
+            console.error("[WebRTC] Pending offer execution error:", err);
+        }
     }
 }
 
 function endCallCleanup() {
+    stopRingtone();
     clearInterval(callDurationTimer);
     releaseScreenWakeLock();
 
-    // 1. Unbind and safely close PeerConnection (prevents SIGSEGV / JNI / Context Leaks)
+    if (outgoingCallTimer) {
+        clearTimeout(outgoingCallTimer);
+        outgoingCallTimer = null;
+    }
+    if (incomingCallTimer) {
+        clearTimeout(incomingCallTimer);
+        incomingCallTimer = null;
+    }
+
     if (peerConnection) {
         try {
             peerConnection.ontrack = null;
@@ -1159,34 +1288,37 @@ function endCallCleanup() {
         peerConnection = null;
     }
 
-    // 2. Stop and release all hardware camera/mic tracks
     if (localStream) {
         localStream.getTracks().forEach(track => {
             try {
                 track.stop();
-                localStream.removeTrack(track);
             } catch (_) {}
         });
         localStream = null;
     }
 
-    // 3. Clear video element surfaces so OpenGL EglBase surfaces are cleanly released
-    const remoteVideo = document.getElementById("remote-video");
-    if (remoteVideo) {
-        try { remoteVideo.pause(); remoteVideo.srcObject = null; } catch (_) {}
-    }
     const localVideo = document.getElementById("local-video");
-    if (localVideo) {
-        try { localVideo.pause(); localVideo.srcObject = null; } catch (_) {}
+    const remoteVideo = document.getElementById("remote-video");
+    if (localVideo) localVideo.srcObject = null;
+    if (remoteVideo) {
+        if (remoteVideo.srcObject) {
+            try {
+                remoteVideo.srcObject.getTracks().forEach(t => t.stop());
+            } catch (_) {}
+        }
+        remoteVideo.srcObject = null;
+        remoteVideo.style.opacity = "";
     }
 
-    activeCallTarget = null;
-    isCallInitiating = false;
-    iceCandidatesQueue = [];
     document.getElementById("full-call-screen")?.classList.add("hidden");
     document.getElementById("audio-call-visualizer")?.classList.add("hidden");
     document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
     document.getElementById("incoming-call-overlay")?.classList.add("hidden");
+
+    isCallInitiating = false;
+    activeCallTarget = null;
+    pendingOffer = null;
+    iceCandidatesQueue = [];
 }
 
 function endCall() {
@@ -1219,13 +1351,30 @@ async function initiateDirectCall(targetUid, type) {
 
     currentCallType = type || "video";
 
-    // 1. Request hardware permissions so the device/Android OS prompts the user with the system dialog!
+    // Request hardware permissions and retain localStream to avoid Android camera freeze
     try {
-        const testStream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-            video: currentCallType === "video"
-        });
-        testStream.getTracks().forEach(t => t.stop());
+        const audioConstraints = {
+            echoCancellation: { ideal: true },
+            noiseSuppression: { ideal: true },
+            autoGainControl: { ideal: true }
+        };
+        if (currentCallType === "video") {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    audio: audioConstraints,
+                    video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 } }
+                });
+            } catch (_) {
+                try {
+                    localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: true });
+                } catch (_) {
+                    currentCallType = "audio";
+                    localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+                }
+            }
+        } else {
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+        }
     } catch (permErr) {
         console.warn("[Media Permission Error]:", permErr);
         showToast("❌ Camera/Microphone permission required for call: " + (permErr.message || "Permission denied"));
@@ -1249,6 +1398,18 @@ async function initiateDirectCall(targetUid, type) {
         outgoingType.innerText = `Connecting ${currentCallType === 'video' ? 'HD Video' : 'Audio'} Call...`;
     }
     document.getElementById("outgoing-call-overlay")?.classList.remove("hidden");
+
+    if (outgoingCallTimer) clearTimeout(outgoingCallTimer);
+    outgoingCallTimer = setTimeout(() => {
+        const overlay = document.getElementById("outgoing-call-overlay");
+        if (overlay && !overlay.classList.contains("hidden")) {
+            showToast("No answer from " + targetNameToShow);
+            if (socket && activeCallTarget) {
+                socket.emit("cancel_call", { targetUid: activeCallTarget });
+            }
+            endCallCleanup();
+        }
+    }, 45000);
 
     socket.emit("initiate_call", {
         callerUid: my10DigitUid,
@@ -1342,7 +1503,7 @@ function handleAlexaIncomingCommand(cmd) {
             chatHistory[currentTargetUid] = [];
             const messagesArea = document.getElementById("messages-area");
             if (messagesArea) messagesArea.innerHTML = "";
-            try { localStorage.setItem("zingTalkHistory", JSON.stringify(chatHistory)); } catch (_) {}
+            saveUserHistoryToStorage();
             showToast("Chat cleared");
         }
     } else if (action === 'open_dialpad') {
@@ -1853,7 +2014,7 @@ document.addEventListener("click", async (e) => {
         const updated = myContacts.filter(c => c.uid !== uid);
         updated.push(newContact);
         myContacts = updated;
-        localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
+        saveUserContactsToStorage();
         renderContacts(myContacts);
         showToast(`✅ Saved contact: ${name}`);
 
@@ -2017,4 +2178,13 @@ document.addEventListener("keypress", (e) => {
         e.preventDefault();
         document.getElementById("guest-login-btn")?.click();
     }
+});
+
+// Strict Numeric 10-Digit Sanitizers for Quick Dial & Contact Add
+document.getElementById("dial-uid-input")?.addEventListener("input", (e) => {
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
+});
+
+document.getElementById("contact-uid-input")?.addEventListener("input", (e) => {
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
 });
