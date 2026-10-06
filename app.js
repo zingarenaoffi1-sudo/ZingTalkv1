@@ -115,42 +115,30 @@ export let my10DigitUid = null;
 export let currentTargetUid = null;
 export let socket = null;
 
-// Infrastructure Configuration (Handled directly on user's AWS EC2 server)
+// Infrastructure Configuration (Always hosted directly on user's AWS EC2 server)
 const AWS_SIGNALING_URL = "http://18.234.224.25:3000";
-const PRIMARY_STUN = "stun:18.234.224.25:3478";
-const BACKUP_STUN = "stun:stun.l.google.com:19302";
+const PRIMARY_STUN = "stun:stun.l.google.com:19302"; // Google STUN 1st Priority
+const SECONDARY_STUN = "stun:18.234.224.25:3478";
 let isStunFailoverActive = false;
 
-// Resolve backend signaling URL: defaults directly to user's AWS server on Native Android, same-origin on Web
+// Resolve backend signaling URL: ALWAYS routes 100% directly to user's AWS EC2 server (18.234.224.25:3000)
 export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
     if (saved && saved.trim()) return saved.trim();
 
     if (typeof window !== "undefined") {
-        const isNative = Boolean(window.Capacitor?.isNativePlatform?.());
-        // In Native Android / Fire TV APK, connect directly to AWS EC2 Signaling Server
-        if (isNative) {
-            return AWS_SIGNALING_URL;
-        }
-
-        const origin = window.location.origin || "";
-        const protocol = window.location.protocol || "";
         const hostname = window.location.hostname || "";
+        const port = window.location.port || "";
 
-        // If in a browser on HTTPS (like AI Studio preview, Web PWA, or Cloud), connect same-origin to prevent Mixed Content security blocks
-        if (protocol === "https:") {
-            return origin;
-        }
-
-        // If running in browser on localhost or preview dev server
-        if (origin && origin !== "null" && origin.startsWith("http")) {
-            if (hostname === "18.234.224.25") {
-                return AWS_SIGNALING_URL;
-            }
-            return origin;
+        // Only when running strictly in local machine PC development on localhost:3000 (NOT GitHub Pages)
+        if ((hostname === "localhost" || hostname === "127.0.0.1") && port === "3000" && !window.Capacitor?.isNativePlatform?.()) {
+            return window.location.origin;
         }
     }
 
+    // FOR ALL ANDROID APKS, FIRE TV, GITHUB PAGES, EMULATORS, AND CLIENTS:
+    // ALWAYS CONNECT DIRECTLY TO YOUR AWS EC2 SERVER (18.234.224.25:3000)!
+    // NEVER CONNECT TO GITHUB OR ANY OTHER HOST!
     return AWS_SIGNALING_URL;
 }
 
@@ -180,10 +168,18 @@ export function updateUidDisplays(uid) {
     if (modalUid) modalUid.innerText = my10DigitUid;
 }
 
-// WebRTC STUN Configuration (Google Primary + User AWS EC2 Port 3478 + Twilio Fallback)
+// WebRTC STUN Configuration (Google STUN 1st Priority + User AWS EC2 Port 3478 + Twilio Fallback)
 const rtcConfig = {
     iceServers: [
-        { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"] },
+        { 
+            urls: [
+                "stun:stun.l.google.com:19302",
+                "stun:stun1.l.google.com:19302",
+                "stun:stun2.l.google.com:19302",
+                "stun:stun3.l.google.com:19302",
+                "stun:stun4.l.google.com:19302"
+            ] 
+        },
         { urls: ["stun:18.234.224.25:3478"] },
         { urls: ["stun:global.stun.twilio.com:3478"] }
     ],
