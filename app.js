@@ -179,26 +179,76 @@ const rtcConfig = {
     iceCandidatePoolSize: 10
 };
 
-// Clean contacts list: starts empty, populated only when the user adds real contacts
+// Clean in-memory user states (isolated per user UID)
 let myContacts = [];
-try {
-    const saved = localStorage.getItem("zingTalkContacts");
-    if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-            // Purge any legacy dummy/seed contacts
-            myContacts = parsed.filter(c => !["1000000002", "1000000003", "1000000005"].includes(c.uid) && !["Aman", "Rahul", "Raman"].includes(c.name));
-            localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts));
-        }
-    }
-} catch (_) {}
-
-let chatHistory = JSON.parse(localStorage.getItem("zingTalkHistory")) || {};
+let chatHistory = {};
 let unreadCounts = {};
-try {
-    const savedUnread = localStorage.getItem("zingTalkUnread");
-    if (savedUnread) unreadCounts = JSON.parse(savedUnread);
-} catch (_) {}
+
+export function getHistoryKey(uid) {
+    const id = uid || my10DigitUid;
+    return id ? `zingTalkHistory_${id}` : "zingTalkHistory_guest";
+}
+export function getContactsKey(uid) {
+    const id = uid || my10DigitUid;
+    return id ? `zingTalkContacts_${id}` : "zingTalkContacts_guest";
+}
+export function getUnreadKey(uid) {
+    const id = uid || my10DigitUid;
+    return id ? `zingTalkUnread_${id}` : "zingTalkUnread_guest";
+}
+
+export function loadUserStorageData(uid) {
+    const targetUid = uid || my10DigitUid;
+    try {
+        const hist = localStorage.getItem(getHistoryKey(targetUid));
+        chatHistory = hist ? JSON.parse(hist) : {};
+    } catch (_) { chatHistory = {}; }
+
+    try {
+        const cont = localStorage.getItem(getContactsKey(targetUid));
+        myContacts = cont ? JSON.parse(cont) : [];
+    } catch (_) { myContacts = []; }
+
+    try {
+        const unread = localStorage.getItem(getUnreadKey(targetUid));
+        unreadCounts = unread ? JSON.parse(unread) : {};
+    } catch (_) { unreadCounts = {}; }
+}
+
+export function saveUserHistoryToStorage() {
+    try {
+        localStorage.setItem(getHistoryKey(), JSON.stringify(chatHistory));
+    } catch (_) {}
+}
+
+export function saveUserContactsToStorage() {
+    try {
+        localStorage.setItem(getContactsKey(), JSON.stringify(myContacts));
+    } catch (_) {}
+}
+
+export function saveUserUnreadToStorage() {
+    try {
+        localStorage.setItem(getUnreadKey(), JSON.stringify(unreadCounts));
+    } catch (_) {}
+}
+
+let ringtoneInterval = null;
+export function startRingtone() {
+    stopRingtone();
+    playIncomingChime();
+    ringtoneInterval = setInterval(() => {
+        playIncomingChime();
+    }, 2500);
+}
+
+export function stopRingtone() {
+    if (ringtoneInterval) {
+        clearInterval(ringtoneInterval);
+        ringtoneInterval = null;
+    }
+}
+
 let localStream = null;
 let peerConnection = null;
 let activeCallTarget = null;
@@ -256,6 +306,11 @@ function loginUserSession(user) {
     if (document.getElementById("my-name")) document.getElementById("my-name").innerText = displayName;
     if (document.getElementById("my-avatar")) document.getElementById("my-avatar").innerText = displayName.charAt(0).toUpperCase();
 
+    // Close any previous open chat and clear message area so no old user's chat leaks!
+    closeChat();
+    const messagesArea = document.getElementById("messages-area");
+    if (messagesArea) messagesArea.innerHTML = "";
+
     // Server-Authoritative UID: Do NOT generate fake local math UID.
     // Wait strictly for server response.
     if (!my10DigitUid) {
@@ -282,9 +337,28 @@ function loginUserSession(user) {
 }
 
 function logoutUserSession() {
+    // 1. Notify server of logout
+    if (socket && socket.connected && my10DigitUid) {
+        try {
+            socket.emit("logout_user", { uid: my10DigitUid });
+        } catch (_) {}
+    }
+
+    // 2. Disconnect socket completely to tear down old rooms and mappings
+    if (socket) {
+        try { socket.disconnect(); } catch (_) {}
+        socket = null;
+    }
+
+    // 3. Clear all in-memory user variables
     currentUser = null;
     my10DigitUid = null;
     currentTargetUid = null;
+    chatHistory = {};
+    myContacts = [];
+    unreadCounts = {};
+
+    // 4. Clear storage
     localStorage.removeItem("zingTalkTvSession");
     if (window.Capacitor?.Plugins?.Preferences) {
         window.Capacitor.Plugins.Preferences.remove({ key: "zingTalkTvSession" }).catch(() => {});
@@ -292,11 +366,28 @@ function logoutUserSession() {
     if (auth) {
         signOut(auth).catch(() => {});
     }
+
+    // 5. Clean DOM elements
+    closeChat();
+    const messagesArea = document.getElementById("messages-area");
+    if (messagesArea) messagesArea.innerHTML = "";
+    const contactsList = document.getElementById("contacts-list");
+    if (contactsList) contactsList.innerHTML = "";
+    const myNameEl = document.getElementById("my-name");
+    if (myNameEl) myNameEl.innerText = "TV User";
+    const myAvatarEl = document.getElementById("my-avatar");
+    if (myAvatarEl) myAvatarEl.innerText = "U";
+    updateUidDisplays(null);
+
+    // 6. Navigation
     document.getElementById("profile-modal")?.classList.add("hidden");
     document.getElementById("main-screen")?.classList.add("hidden");
     document.getElementById("tv-top-bar")?.classList.add("hidden");
     document.getElementById("login-screen")?.classList.remove("hidden");
-    showToast("Signed out");
+    const loginError = document.getElementById("login-error");
+    if (loginError) loginError.style.display = "none";
+    
+    showToast("Signed out successfully");
 }
 
 if (auth) {
@@ -382,13 +473,14 @@ export function registerSocketListeners(s) {
     s.on("user_data", (data) => {
         if (data && data.uid) {
             updateUidDisplays(data.uid);
-            const cacheKey = "zingTalkUid_" + (currentUser?.email || currentUser?.uid || data.uid);
-            try { localStorage.setItem(cacheKey, data.uid); } catch (_) {}
+            loadUserStorageData(data.uid);
         }
         if (data && data.contacts && Array.isArray(data.contacts) && data.contacts.length > 0) {
             myContacts = data.contacts;
-            try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
-            renderContacts(myContacts);
+            saveUserContactsToStorage();
+        }
+        renderContacts(myContacts);
+        if (my10DigitUid) {
             s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
         }
     });
@@ -396,9 +488,11 @@ export function registerSocketListeners(s) {
     s.on("contact_saved", (contacts) => {
         if (Array.isArray(contacts)) {
             myContacts = contacts;
-            try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
+            saveUserContactsToStorage();
             renderContacts(myContacts);
-            s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+            if (my10DigitUid) {
+                s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+            }
             showToast("Contact saved successfully");
         }
     });
@@ -418,19 +512,21 @@ export function registerSocketListeners(s) {
         if (!knownContact) {
             knownContact = { uid: sender, name: senderName };
             myContacts.unshift(knownContact);
-            try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
-            s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+            saveUserContactsToStorage();
+            if (my10DigitUid) {
+                s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+            }
             saveContactToFirebase(sender, senderName);
         } else {
             // Move conversation to the top of the contact list
             myContacts = [knownContact, ...myContacts.filter(c => c.uid !== sender)];
-            try { localStorage.setItem("zingTalkContacts", JSON.stringify(myContacts)); } catch (_) {}
+            saveUserContactsToStorage();
         }
 
         // 2. Save strictly locally in device (zero retention on server or Firebase)
         if (!chatHistory[sender]) chatHistory[sender] = [];
         chatHistory[sender].push({ ...data, type: "msg-received" });
-        try { localStorage.setItem("zingTalkHistory", JSON.stringify(chatHistory)); } catch (_) {}
+        saveUserHistoryToStorage();
 
         // 3. Play incoming sound chime
         playIncomingChime();
@@ -441,11 +537,11 @@ export function registerSocketListeners(s) {
             // ONLY if user currently has this exact conversation open on screen, append message!
             appendMessage(data, "msg-received");
             unreadCounts[sender] = 0;
-            try { localStorage.setItem("zingTalkUnread", JSON.stringify(unreadCounts)); } catch (_) {}
+            saveUserUnreadToStorage();
         } else {
             // Increment unread count for this sender so the unread counter badge (1, 2, ...) appears on their contact card!
             unreadCounts[sender] = (unreadCounts[sender] || 0) + 1;
-            try { localStorage.setItem("zingTalkUnread", JSON.stringify(unreadCounts)); } catch (_) {}
+            saveUserUnreadToStorage();
             
             // Show toast preview notification
             showToast(`💬 ${knownContact.name} (${sender}): "${data.text ? data.text.slice(0, 30) : ''}"`);
@@ -473,6 +569,12 @@ export function registerSocketListeners(s) {
     s.on("call_error", (data) => {
         const msg = data && data.message ? data.message : "Call failed.";
         showToast("❌ " + msg);
+        stopRingtone();
+        document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
+        document.getElementById("incoming-call-overlay")?.classList.add("hidden");
+        isCallInitiating = false;
+        activeCallTarget = null;
+        endCallCleanup();
     });
 
     s.on("uid_check_result", (data) => {
@@ -498,21 +600,29 @@ export function registerSocketListeners(s) {
         }
         document.getElementById("incoming-call-overlay")?.classList.remove("hidden");
         document.getElementById("accept-call-btn")?.focus();
+        startRingtone();
     });
 
     s.on("call_cancelled", () => {
+        stopRingtone();
         document.getElementById("incoming-call-overlay")?.classList.add("hidden");
+        document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
         activeCallTarget = null;
+        isCallInitiating = false;
+        endCallCleanup();
         showToast("Call cancelled");
     });
 
     s.on("call_response_received", async (data) => {
+        stopRingtone();
         document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
         if (data.status === "accepted") {
             await startWebRTC(true);
         } else {
             showToast("Call declined");
             activeCallTarget = null;
+            isCallInitiating = false;
+            endCallCleanup();
         }
     });
 
@@ -1088,20 +1198,43 @@ function endCall() {
 
 let isCallInitiating = false;
 
-function initiateDirectCall(targetUid, type) {
+async function initiateDirectCall(targetUid, type) {
     if (!targetUid) return;
-    if (isCallInitiating || peerConnection) {
-        return; // Prevents Bug 86: Remote Double-Bounce & Fast Finger duplicate calls
+    if (!socket || !socket.connected) {
+        showToast("❌ Server not connected. Please wait for AWS Cloud connection.");
+        connectSocket();
+        return;
+    }
+    if (!my10DigitUid) {
+        showToast("❌ Waiting for official server UID assignment...");
+        return;
     }
     if (targetUid === my10DigitUid) {
-        showToast("You cannot call your own UID");
+        showToast("❌ You cannot call your own UID");
+        return;
+    }
+    if (isCallInitiating || peerConnection) {
+        return;
+    }
+
+    currentCallType = type || "video";
+
+    // 1. Request hardware permissions so the device/Android OS prompts the user with the system dialog!
+    try {
+        const testStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: currentCallType === "video"
+        });
+        testStream.getTracks().forEach(t => t.stop());
+    } catch (permErr) {
+        console.warn("[Media Permission Error]:", permErr);
+        showToast("❌ Camera/Microphone permission required for call: " + (permErr.message || "Permission denied"));
         return;
     }
 
     isCallInitiating = true;
-    setTimeout(() => { isCallInitiating = false; }, 1200);
+    setTimeout(() => { isCallInitiating = false; }, 2000);
 
-    currentCallType = type || "video";
     activeCallTarget = targetUid;
 
     let targetNameToShow = "UID: " + targetUid;
@@ -1117,14 +1250,12 @@ function initiateDirectCall(targetUid, type) {
     }
     document.getElementById("outgoing-call-overlay")?.classList.remove("hidden");
 
-    if (socket) {
-        socket.emit("initiate_call", {
-            callerUid: my10DigitUid,
-            targetUid: targetUid,
-            callerName: currentUser ? currentUser.displayName : "TV User",
-            type: currentCallType
-        });
-    }
+    socket.emit("initiate_call", {
+        callerUid: my10DigitUid,
+        targetUid: targetUid,
+        callerName: currentUser ? (currentUser.displayName || currentUser.name) : ("User " + my10DigitUid),
+        type: currentCallType
+    });
 }
 
 // ----------------- Alexa Skill Remote Command Handler -----------------
@@ -1790,33 +1921,41 @@ document.addEventListener("click", async (e) => {
 
     // Call Response Overlays
     if (e.target.id === "accept-call-btn" || e.target.closest("#accept-call-btn")) {
+        stopRingtone();
         document.getElementById("incoming-call-overlay")?.classList.add("hidden");
         try {
             await startWebRTC(false);
             if (socket) socket.emit("call_response", { targetUid: activeCallTarget, status: "accepted" });
-        } catch (_) {
+        } catch (err) {
+            console.error("[Call Accept Error]:", err);
+            showToast("Failed to start media: " + err.message);
             if (socket) socket.emit("call_response", { targetUid: activeCallTarget, status: "rejected" });
             activeCallTarget = null;
+            endCallCleanup();
         }
         return;
     }
 
     if (e.target.id === "reject-call-btn" || e.target.closest("#reject-call-btn")) {
+        stopRingtone();
         document.getElementById("incoming-call-overlay")?.classList.add("hidden");
         if (socket && activeCallTarget) {
             socket.emit("call_response", { targetUid: activeCallTarget, status: "rejected" });
         }
         activeCallTarget = null;
+        endCallCleanup();
         return;
     }
 
     if (e.target.id === "cancel-outgoing-btn" || e.target.closest("#cancel-outgoing-btn") || e.target.id === "cancel-outgoing-call-btn" || e.target.closest("#cancel-outgoing-call-btn")) {
+        stopRingtone();
         document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
         if (socket && activeCallTarget) {
             socket.emit("cancel_call", { targetUid: activeCallTarget });
         }
         activeCallTarget = null;
         isCallInitiating = false;
+        endCallCleanup();
         return;
     }
 

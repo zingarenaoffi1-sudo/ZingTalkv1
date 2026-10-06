@@ -576,10 +576,28 @@ async function checkUserUidExists(targetUid) {
         io.emit('alexa_command', data);
     });
 
+    // User Explicit Logout
+    socket.on('logout_user', (data) => {
+        const uid = data && data.uid ? String(data.uid).trim() : null;
+        if (uid) {
+            connectedUsers.delete(uid);
+            socket.leave(uid);
+            console.log(`[ZingTalk] User logged out: ${uid}`);
+        }
+        for (const [u, sId] of connectedUsers.entries()) {
+            if (sId === socket.id) {
+                connectedUsers.delete(u);
+                socket.leave(u);
+            }
+        }
+    });
+
     socket.on('disconnect', () => {
         for (const [uid, socketId] of connectedUsers.entries()) {
             if (socketId === socket.id) {
                 connectedUsers.delete(uid);
+                socket.leave(uid);
+                console.log(`[ZingTalk] Socket disconnected for user: ${uid}`);
                 break;
             }
         }
