@@ -28,4 +28,5 @@ ZingTalk and its developers shall not be liable for any indirect, incidental, or
 We reserve the right to modify these terms at any time. Continued use of ZingTalk constitutes acceptance of modified terms.
 
 ---
-**Developer Contact**: `zingarenaoffi1@gmail.com`
+**Developer / Account Owner**: KM MAMATA / Sunny (Founder of ZingTalk)  
+**Contact Email**: `zingarenaoffi1@gmail.com`

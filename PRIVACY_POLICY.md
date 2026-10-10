@@ -31,8 +31,8 @@ Your conversations belong exclusively to you and the person you are communicatin
 
 ### A. Authentication & User Profile
 - **Randomized 10-Digit Unique Identifier (UID)**: Each user is allocated a unique 10-digit numeric ID (e.g. `2156774755`). This replaces phone numbers and physical SIM card identifiers, preserving user anonymity.
-- **Google Sign-In / Email Authentication**: We use Google Firebase Authentication strictly to verify identity and enable cloud contact synchronization across your devices. We only store your email, display name, and your 10-digit UID.
-- **Contacts Directory**: Your saved contacts (Name and 10-Digit UID) are stored so that you can quickly initiate calls or send messages. Contacts are private to your account.
+- **Guest Mode & Email Login**: ZingTalk supports instant Guest Mode (no personal credentials required) and standard Email/Password authentication. We do NOT use third-party OAuth or Google Sign-In. Only your display name and 10-digit UID are utilized for routing.
+- **Contacts Directory**: Your saved contacts (Name and 10-Digit UID) are stored locally so that you can quickly initiate calls or send messages. Contacts are private to your device.
 
 ### B. Device Permissions
 - **Microphone**: Required exclusively during active audio and video calls. The microphone is active only while a call is in progress.
@@ -79,4 +79,4 @@ We may periodically update this Privacy Policy. Any modifications will be displa
 If you have any questions, suggestions, or privacy requests regarding ZingTalk, please contact:
 - **Email**: `zingarenaoffi1@gmail.com`
 - **Application Package**: `com.zingtalk.com`
-- **Developer**: Aryan (ZingTalk Creator)
+- **Developer / Account Owner**: KM MAMATA / Sunny (Founder of ZingTalk)

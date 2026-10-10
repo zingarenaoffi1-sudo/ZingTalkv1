@@ -106,6 +106,6 @@ For full details on our zero-retention data architecture, please consult:
 ## 📄 License & Confidentiality
 
 **PROPRIETARY AND CONFIDENTIAL**  
-Copyright (c) 2026 Aryan (zingarenaoffi1@gmail.com). All Rights Reserved.
+Copyright (c) 2026 KM MAMATA / Sunny (zingarenaoffi1@gmail.com). All Rights Reserved.
 
 This software, source code, and associated materials are proprietary, private, and confidential. Prepared and submitted exclusively for evaluation by the **Amazon Hackathon Judging Committee**.
