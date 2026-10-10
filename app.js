@@ -121,24 +121,14 @@ const PRIMARY_STUN = "stun:stun.l.google.com:19302"; // Google STUN 1st Priority
 const SECONDARY_STUN = "stun:18.234.224.25:3478";
 let isStunFailoverActive = false;
 
-// Resolve backend signaling URL: ALWAYS routes 100% directly to user's AWS EC2 server (18.234.224.25:3000)
+// Resolve backend signaling URL: ALWAYS routes 100% directly to user's AWS EC2 server (http://18.234.224.25:3000)
 export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
     if (saved && saved.trim()) return saved.trim();
 
-    if (typeof window !== "undefined") {
-        const hostname = window.location.hostname || "";
-        const port = window.location.port || "";
-
-        // Only when running strictly in local machine PC development on localhost:3000 (NOT GitHub Pages)
-        if ((hostname === "localhost" || hostname === "127.0.0.1") && port === "3000" && !window.Capacitor?.isNativePlatform?.()) {
-            return window.location.origin;
-        }
-    }
-
-    // FOR ALL ANDROID APKS, FIRE TV, GITHUB PAGES, EMULATORS, AND CLIENTS:
-    // ALWAYS CONNECT DIRECTLY TO YOUR AWS EC2 SERVER (18.234.224.25:3000)!
-    // NEVER CONNECT TO GITHUB OR ANY OTHER HOST!
+    // ALWAYS CONNECT DIRECTLY TO USER'S AWS EC2 SERVER:
+    // http://18.234.224.25:3000
+    // Handles all WebSocket signaling, real-time messaging, and Alexa commands.
     return AWS_SIGNALING_URL;
 }
 
@@ -168,7 +158,11 @@ export function updateUidDisplays(uid) {
     if (modalUid) modalUid.innerText = my10DigitUid;
 }
 
-// WebRTC STUN Configuration (Google STUN 1st Priority + User AWS EC2 Port 3478 + Twilio Fallback)
+// WebRTC ICE Configuration:
+// 1st Priority: Google Public STUN Cluster (Instant global NAT traversal)
+// 2nd Priority: User AWS EC2 Dedicated STUN Server (18.234.224.25:3478)
+// 3rd Priority: User AWS EC2 Dedicated TURN Server (coturn relay with credential fallback)
+// 4th Priority: Twilio Global Public STUN Fallback
 const rtcConfig = {
     iceServers: [
         { 
@@ -180,8 +174,23 @@ const rtcConfig = {
                 "stun:stun4.l.google.com:19302"
             ] 
         },
-        { urls: ["stun:18.234.224.25:3478"] },
-        { urls: ["stun:global.stun.twilio.com:3478"] }
+        { 
+            urls: [
+                "stun:18.234.224.25:3478",
+                "stun:18.234.224.25:5349"
+            ] 
+        },
+        {
+            urls: [
+                "turn:18.234.224.25:3478?transport=udp",
+                "turn:18.234.224.25:3478?transport=tcp"
+            ],
+            username: "zingtalk",
+            credential: "zingtalkpassword"
+        },
+        { 
+            urls: ["stun:global.stun.twilio.com:3478"] 
+        }
     ],
     iceCandidatePoolSize: 10
 };
