@@ -1,6 +1,6 @@
 {
   "name": "ZingTalk Fire TV",
-  "description": "Real-time chat, HD audio/video calling, and Alexa Voice AI integration optimized for Fire TV and Smart TVs with AWS signaling and STUN failover.",
+  "description": "Real-time chat, HD audio/video calling, and Alexa Voice AI integration built exclusively for Amazon Fire TV with AWS signaling and multi-tier STUN/TURN.",
   "permissions": [],
   "capabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

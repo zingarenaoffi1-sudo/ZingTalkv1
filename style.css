@@ -1,6 +1,6 @@
 /*
-   ZingTalk - Smart TV HD Calling & Real-Time Chat
-   Original ZingTalk Structure with Fire TV 10-Foot UI & Alexa Voice AI
+   ZingTalk - Amazon Fire TV Real-Time Communication
+   Fire TV 10-Foot Leanback UI & Alexa Voice Control
 */
 
 :root {
@@ -55,34 +55,33 @@ body.tv-body {
 
 /* ==========================================================================
    FIRE TV D-PAD FOCUS INDICATORS (Cyan Glowing Ring #00d29d)
+   Optimized exclusively for Amazon Fire TV Remote & D-Pad Navigation
    ========================================================================== */
 .tv-focusable {
     outline: none;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
     user-select: none;
-    cursor: pointer;
+    -webkit-user-select: none;
+    cursor: default;
+    touch-action: none;
     transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), 
                 box-shadow 0.16s cubic-bezier(0.16, 1, 0.3, 1), 
                 border-color 0.16s ease,
                 background-color 0.16s ease;
 }
 
-/* Mobile Touch Support: allow touch cursor placement and keyboard input */
 input.tv-focusable, 
 textarea.tv-focusable {
-    user-select: text !important;
-    -webkit-user-select: text !important;
-    cursor: text !important;
-    touch-action: auto !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    cursor: default !important;
+    touch-action: none !important;
 }
 
-/* Mobile Touch Support: smooth touch inertia scrolling */
 .tv-contacts-list,
 .tv-messages,
 .tv-policy-scroll {
-    -webkit-overflow-scrolling: touch;
-    touch-action: pan-y;
+    touch-action: none;
+    scrollbar-width: thin;
 }
 
 .tv-focusable:active {

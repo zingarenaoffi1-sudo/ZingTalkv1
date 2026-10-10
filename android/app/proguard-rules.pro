@@ -208,3 +208,57 @@
 # Keep WebRTC & MediaCodec decoders
 -keep class org.webrtc.** { *; }
 -dontwarn org.webrtc.**
+
+# ZingTalk Production ProGuard Rules
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,JavascriptInterface
+
+# Keep Capacitor Core & Native Plugins
+-keep class com.getcapacitor.** { *; }
+-keep class * extends com.getcapacitor.Plugin { *; }
+-keepclassmembers class * extends com.getcapacitor.Plugin {
+    public <methods>;
+}
+
+# Keep Firebase Authentication & Play Services
+-keep class com.google.firebase.** { *; }
+-keep class com.google.android.gms.** { *; }
+-keep class io.capawesome.capacitorjs.plugins.firebase.authentication.** { *; }
+-dontwarn com.google.firebase.**
+-dontwarn com.google.android.gms.**
+
+# Keep Android WebKit and JS Interface
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keep class android.webkit.** { *; }
+
+# Keep WebRTC & MediaCodec decoders
+-keep class org.webrtc.** { *; }
+-dontwarn org.webrtc.**
+
+# ZingTalk Production ProGuard Rules
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,JavascriptInterface
+
+# Keep Capacitor Core & Native Plugins
+-keep class com.getcapacitor.** { *; }
+-keep class * extends com.getcapacitor.Plugin { *; }
+-keepclassmembers class * extends com.getcapacitor.Plugin {
+    public <methods>;
+}
+
+# Keep Firebase Authentication & Play Services
+-keep class com.google.firebase.** { *; }
+-keep class com.google.android.gms.** { *; }
+-keep class io.capawesome.capacitorjs.plugins.firebase.authentication.** { *; }
+-dontwarn com.google.firebase.**
+-dontwarn com.google.android.gms.**
+
+# Keep Android WebKit and JS Interface
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keep class android.webkit.** { *; }
+
+# Keep WebRTC & MediaCodec decoders
+-keep class org.webrtc.** { *; }
+-dontwarn org.webrtc.**
