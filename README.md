@@ -8,6 +8,7 @@
 [![WebRTC](https://img.shields.io/badge/WebRTC-Peer--to--Peer-blue.svg)](https://webrtc.org/)
 [![Socket.IO](https://img.shields.io/badge/Socket.IO-v4-black.svg)](https://socket.io/)
 [![Capacitor](https://img.shields.io/badge/Capacitor-Fire%20TV-blueviolet.svg)](https://capacitorjs.com/)
+[![Judges Guide](https://img.shields.io/badge/Judges%20Guide-Interactive%20Testing%20Manual-brightgreen.svg)](TESTING_GUIDE.md)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](#license)
 
 ---
@@ -79,6 +80,44 @@ ZingTalk re-engineers communication from first principles with **Zero Server Ret
 
 ---
 
+## 🧪 Judges & Evaluation Guide (How to Test ZingTalk)
+
+> **For the Amazon Hackathon Judging Panel**:  
+> For the complete exhaustive testing manual with exact curl payloads, WebRTC inspection steps, and Alexa Skill simulator inputs, please refer to the dedicated guide:  
+> 👉 **[TESTING_GUIDE.md — Official Hackathon Evaluation & Testing Manual](TESTING_GUIDE.md)**
+
+### ⏱️ The 60-Second Split-Screen Test (Test P2P Calling & Chat Now)
+You can evaluate ZingTalk's live signaling, sub-second messaging, and WebRTC peer calling immediately on your computer:
+1. Open the application in **two side-by-side browser windows** (Window A and Window B).
+2. In both windows, click **Guest Mode** and enter a TV Name (e.g., `Living Room TV` in Window A, `Bedroom TV` in Window B).
+3. Click **Start as Guest**. Each screen instantly receives a unique **10-Digit Anonymous UID** (visible in top-right header).
+4. In Window A, enter Window B's 10-digit UID in **Quick Connect** and click **💬 Chat**.
+5. Type a message and hit Enter: Window B receives it in volatile RAM in a **fraction of a second** with an audio alert.
+6. In Window A, click **🎥 Video** (or **📞 Audio**):
+   * Window B instantly triggers an **Incoming Call** popup with synthetic ringer chime.
+   * Click **Answer** on Window B to immediately establish an encrypted WebRTC DTLS-SRTP connection!
+   * Test in-call **Mute**, **Camera Toggle**, and **Hang Up**.
+
+### 🎮 Amazon Fire TV Remote & D-Pad Keyboard Controls
+ZingTalk replaces mobile touch with a certified 10-foot TV directional navigation model:
+* **D-Pad Directional Arrows**: `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight` (Spatial focus traversal with neon cyan halo glow `#00d29d`).
+* **Select / Enter**: `Enter` (Activate buttons, open inputs, select tabs).
+* **Back**: `Escape` / `Backspace` (Close modals, dismiss calls, exit chat).
+
+### 🎙️ Alexa Voice Control & Webhook Testing
+ZingTalk provides a live Alexa Skill webhook at `POST /api/alexa`. Judges can test hands-free voice control via the **Alexa Developer Console Simulator** or terminal curl commands:
+* *"Alexa, open ZingTalk"* — Greets user and lists saved contacts.
+* *"Alexa, pair UID 4819203841"* — Binds your Alexa device exclusively to your TV screen.
+* *"Alexa, call Rahul on ZingTalk"* — Looks up saved contact and triggers outgoing call.
+* *"Alexa, call UID 4819203841"* — Direct 10-digit voice dialing.
+* *"Alexa, answer call"* — Answers incoming call hands-free.
+* *"Alexa, mute microphone"* / *"Alexa, unmute"* — Toggles hardware microphone track.
+* *"Alexa, end call"* — Terminates active peer connection.
+
+*(See [TESTING_GUIDE.md](TESTING_GUIDE.md) for full JSON payloads and curl commands).*
+
+---
+
 ## 📦 Building the Fire TV APK
 
 ### Via GitHub Actions (Recommended)
@@ -100,6 +139,7 @@ cd android && ./gradlew assembleRelease
 For full details on our zero-retention data architecture, please consult:
 * [Privacy Policy](PRIVACY_POLICY.md)
 * [Terms of Service](TERMS_OF_SERVICE.md)
+* [Testing & Evaluation Guide](TESTING_GUIDE.md)
 
 ---
 
