@@ -86,17 +86,56 @@ ZingTalk re-engineers communication from first principles with **Zero Server Ret
 > For the complete exhaustive testing manual with exact curl payloads, WebRTC inspection steps, and Alexa Skill simulator inputs, please refer to the dedicated guide:  
 > 👉 **[TESTING_GUIDE.md — Official Hackathon Evaluation & Testing Manual](TESTING_GUIDE.md)**
 
-### ⏱️ The 60-Second Split-Screen Test (Test P2P Calling & Chat Now)
-You can evaluate ZingTalk's live signaling, sub-second messaging, and WebRTC peer calling immediately on your computer:
-1. Open the application in **two side-by-side browser windows** (Window A and Window B).
-2. In both windows, click **Guest Mode** and enter a TV Name (e.g., `Living Room TV` in Window A, `Bedroom TV` in Window B).
-3. Click **Start as Guest**. Each screen instantly receives a unique **10-Digit Anonymous UID** (visible in top-right header).
-4. In Window A, enter Window B's 10-digit UID in **Quick Connect** and click **💬 Chat**.
-5. Type a message and hit Enter: Window B receives it in volatile RAM in a **fraction of a second** with an audio alert.
-6. In Window A, click **🎥 Video** (or **📞 Audio**):
-   * Window B instantly triggers an **Incoming Call** popup with synthetic ringer chime.
-   * Click **Answer** on Window B to immediately establish an encrypted WebRTC DTLS-SRTP connection!
-   * Test in-call **Mute**, **Camera Toggle**, and **Hang Up**.
+### ⚠️ Critical Architecture Note for Judges: Native Fire TV APK vs. HTTPS Web Browser
+
+> **IMPORTANT**: ZingTalk is built strictly as a **Native Amazon Fire TV Application (APK)**, not a public browser website.
+> 
+> * **AWS EC2 Production Signaling**: The production signaling server runs on our dedicated AWS EC2 instance at `http://18.234.224.25:3000`.
+> * **Browser Mixed-Content Policy**: If you attempt to open an HTTPS web preview URL in a desktop browser (Chrome, Edge, Safari), the browser will **block the WebSocket signaling connection** due to the browser's standard **Mixed Content Security Policy** (blocking unencrypted HTTP/WebSocket requests initiated from HTTPS pages).
+> * **Native Fire TV APK Compatibility**: In the **Real Fire TV APK (`ZingTalk.apk`)**, native Android cleartext traffic permissions (`android:usesCleartextTraffic="true"`) and network security configurations (`network_security_config.xml`) allow direct, high-speed, sub-second communication with the AWS EC2 server.
+
+---
+
+### 📱 Official Evaluation Method: Sideload & Test the Native Fire TV APK
+
+This is the primary and recommended method for the Amazon Hackathon Judging Panel:
+
+1. **Obtain the APK**: Download the pre-built `ZingTalk.apk` from GitHub Actions Release Artifacts or build locally (`./gradlew assembleRelease`).
+2. **Enable Fire TV Developer Options**:
+   * On Fire TV: **Settings** > **My Fire TV** > **About** > Click device name 7 times.
+   * Go to **Developer Options** > Enable **ADB Debugging** and **Apps from Unknown Sources**.
+3. **Connect and Install via ADB**:
+   ```bash
+   adb connect <FIRE_TV_IP_ADDRESS>:5555
+   adb install -r ZingTalk.apk
+   ```
+4. **Launch the Native Leanback App**:
+   ```bash
+   adb shell monkey -p com.zingtalk.com -c android.intent.category.LEANBACK_LAUNCHER 1
+   ```
+5. **Evaluate Live Calling & Ephemeral Chat**:
+   * Launch `ZingTalk.apk` on two Fire TV devices (or one physical Fire TV and one Android TV/Fire OS Emulator).
+   * Click **Guest Mode**, enter a TV Name (e.g., `Living Room TV` on Device A, `Bedroom TV` on Device B), and click **Start as Guest**.
+   * Note the unique **10-Digit Anonymous UIDs** generated on each device.
+   * Enter Device B's UID in Quick Connect on Device A and press **💬 Chat** or **🎥 Video Call**.
+   * Instant sub-second WebRTC audio/video and RAM-only messaging is established!
+
+---
+
+### 💻 Local HTTP Developer Simulation (Without Mixed Content)
+
+If an evaluator wishes to inspect the interface and signaling quickly on a computer without a physical Fire TV:
+
+1. Clone the repository and run the local Node server:
+   ```bash
+   npm install
+   npm start
+   ```
+2. Open **`http://localhost:3000`** in your browser.  
+   *(Because `http://localhost:3000` is pure HTTP, the browser does NOT enforce HTTPS mixed-content blocking against `http://18.234.224.25:3000`, allowing live signaling simulation).*
+3. Use keyboard navigation (`Arrow` keys, `Enter`, `Escape`) to simulate Fire TV Remote D-Pad controls.
+
+---
 
 ### 🎮 Amazon Fire TV Remote & D-Pad Keyboard Controls
 ZingTalk replaces mobile touch with a certified 10-foot TV directional navigation model:

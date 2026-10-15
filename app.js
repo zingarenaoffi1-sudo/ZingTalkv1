@@ -512,7 +512,14 @@ export function registerSocketListeners(s) {
 
     s.on("connect_error", (err) => {
         console.warn("[ZingTalk Socket] Connect error:", err.message);
-        updateServerStatusBadge(false, "Connecting to AWS...");
+        const isHttpsWeb = typeof window !== "undefined" && window.location.protocol === "https:" && (!window.Capacitor || !window.Capacitor.isNativePlatform());
+        if (isHttpsWeb) {
+            updateServerStatusBadge(false, "Native APK Required (HTTPS Mixed Content)");
+            const banner = document.getElementById("mixed-content-banner");
+            if (banner) banner.classList.remove("hidden");
+        } else {
+            updateServerStatusBadge(false, "Connecting to AWS...");
+        }
     });
 
     s.on("user_data", (data) => {
@@ -2193,3 +2200,14 @@ document.getElementById("dial-uid-input")?.addEventListener("input", (e) => {
 document.getElementById("contact-uid-input")?.addEventListener("input", (e) => {
     e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
 });
+
+// Environment Runtime Check: If loaded on HTTPS web browser, show informational notice
+(function checkEnvironmentRuntime() {
+    try {
+        const isHttpsWeb = typeof window !== "undefined" && window.location.protocol === "https:" && (!window.Capacitor || !window.Capacitor.isNativePlatform());
+        if (isHttpsWeb) {
+            const banner = document.getElementById("mixed-content-banner");
+            if (banner) banner.classList.remove("hidden");
+        }
+    } catch (_) {}
+})();

@@ -8,7 +8,10 @@
 
 ## 📑 Table of Contents
 
-1. [⏱️ 60-Second Quick Start: The Split-Screen Evaluation](#️-60-second-quick-start-the-split-screen-evaluation)
+1. [📱 Primary Evaluation: Native Fire TV APK Installation & Verification](#-primary-evaluation-native-fire-tv-apk-installation--verification)
+   * [⚠️ Critical Notice: Native Fire TV APK vs. HTTPS Browser Mixed Content](#️-critical-notice-native-fire-tv-apk-vs-https-browser-mixed-content)
+   * [Sideloading the APK via ADB onto Amazon Fire TV](#sideloading-the-apk-via-adb-onto-amazon-fire-tv)
+   * [Local HTTP Simulation (No Mixed Content)](#local-http-simulation-no-mixed-content)
 2. [🎮 10-Foot Leanback Remote & Keyboard D-Pad Navigation](#-10-foot-leanback-remote--keyboard-d-pad-navigation)
 3. [📋 Feature-by-Feature Testing & Verification Matrix](#-feature-by-feature-testing--verification-matrix)
    * [Feature 1: Fire TV D-Pad Spatial Navigation](#feature-1-fire-tv-d-pad-spatial-navigation)
@@ -29,35 +32,60 @@
 
 ---
 
-## ⏱️ 60-Second Quick Start: The Split-Screen Evaluation
+## 📱 Primary Evaluation: Native Fire TV APK Installation & Verification
 
-Judges can test ZingTalk's live real-time signaling, messaging, and peer-to-peer WebRTC calling in **under 60 seconds** on any desktop computer or laptop:
+### ⚠️ Critical Notice: Native Fire TV APK vs. HTTPS Browser Mixed Content
 
-```
-┌──────────────────────────────────────┐  ┌──────────────────────────────────────┐
-│        WINDOW 1 (TV Device A)        │  │        WINDOW 2 (TV Device B)        │
-│                                      │  │                                      │
-│  1. Click "Guest Mode"               │  │  1. Click "Guest Mode"               │
-│  2. Name: "Living Room TV"           │  │  2. Name: "Bedroom TV"               │
-│  3. UID generated: 4819203841        │  │  3. UID generated: 8392019482        │
-│                                      │  │                                      │
-│  4. Enter 8392019482 in Quick Connect│  │                                      │
-│  5. Click "Chat" -> Type "Hi TV 2!"  │  │  5. Message appears instantly (RAM)  │
-│  6. Click "Video" or "Audio" Call    │  │  6. Incoming Call chime & popup!     │
-│                                      │  │  7. Click "Answer" -> Connected!     │
-└──────────────────────────────────────┘  └──────────────────────────────────────┘
-```
+> **IMPORTANT ARCHITECTURAL CONTEXT FOR JUDGES**:  
+> ZingTalk is engineered strictly as a **Native Amazon Fire TV Application (APK)**, not a public browser web page.
+> 
+> * **Production Signaling Server**: Hosted on our dedicated AWS EC2 instance at `http://18.234.224.25:3000`.
+> * **Desktop Web Browsers over HTTPS**: Modern browsers (Chrome, Safari, Edge) block unencrypted HTTP WebSocket/XHR connections initiated from an HTTPS page due to the standard **Mixed Content Security Policy** (`Blocked loading mixed active content`).
+> * **Real Native Fire TV APK (`ZingTalk.apk`)**: Inside the native Android package, cleartext traffic is explicitly authorized (`android:usesCleartextTraffic="true"` and `network_security_config.xml`), allowing 100% full, uninterrupted connectivity, sub-second latency, and Fire TV remote navigation on Amazon Fire TV hardware.
 
-### Steps:
-1. Open the application URL in **two side-by-side browser windows** (or two different browser profiles/incognito windows).
-2. On **Window 1 (Device A)**: Select **Guest Mode**, enter `Living Room TV`, and click **Start as Guest**. Note the generated 10-digit UID at the top right (e.g., `4819203841`).
-3. On **Window 2 (Device B)**: Select **Guest Mode**, enter `Bedroom TV`, and click **Start as Guest**. Note Device B's UID (e.g., `8392019482`).
-4. On **Window 1**: Under **Quick Connect**, enter Device B's 10-digit UID (`8392019482`) and press **💬 Chat**.
-5. Type `Hello from TV A` and press Enter. Observe that the message appears in Window 2 in **fraction of a second** with an audio alert.
-6. Click **🎥 Video** (or **📞 Audio**) on Window 1:
-   * Window 2 immediately triggers an **Incoming Call** modal with synthetic ringer chime.
-   * Click **Answer** on Window 2.
-   * WebRTC P2P DTLS-SRTP connection is instantly negotiated!
+---
+
+### Sideloading the APK via ADB onto Amazon Fire TV
+
+This is the official evaluation path for testing ZingTalk on physical Amazon Fire TV hardware or Fire OS / Android TV emulators:
+
+1. **Enable Developer Options on Fire TV**:
+   * Navigate to: **Settings** > **My Fire TV** > **About**
+   * Highlight the device name and press the **Select** button 7 times until *"You are now a developer"* appears.
+   * Return to **Settings** > **My Fire TV** > **Developer Options**.
+   * Turn **ON** both **ADB Debugging** and **Apps from Unknown Sources**.
+2. **Find Fire TV IP Address**:
+   * Go to: **Settings** > **My Fire TV** > **About** > **Network** (e.g., `192.168.1.50`).
+3. **Connect and Install via ADB**:
+   ```bash
+   adb connect <FIRE_TV_IP_ADDRESS>:5555
+   adb install -r ZingTalk.apk
+   ```
+4. **Launch ZingTalk on Fire TV**:
+   ```bash
+   adb shell monkey -p com.zingtalk.com -c android.intent.category.LEANBACK_LAUNCHER 1
+   ```
+5. **Testing Calling & Messaging**:
+   * Launch the app on two devices (or one Fire TV and one Android TV emulator).
+   * Choose **Guest Mode** on both screens and enter names (e.g., `Living Room Fire TV` and `Bedroom TV`).
+   * Each TV screen receives an instant, anonymous **10-Digit UID** (e.g., `4819203841` and `8392019482`).
+   * Enter the opposite UID into **Quick Connect** and click **💬 Chat** or **🎥 Video Call**.
+   * Use the **Fire TV Remote D-Pad** to navigate, answer calls, mute, and toggle video!
+
+---
+
+### Local HTTP Simulation (No Mixed Content)
+
+If an evaluator wants to test the app on a PC or laptop without physical Fire TV hardware:
+
+1. Run the local Node server via pure HTTP:
+   ```bash
+   npm install
+   npm start
+   ```
+2. Open **`http://localhost:3000`** in two browser windows.  
+   *(Because the local dev server runs on pure HTTP, the browser does NOT enforce mixed-content blocking against `http://18.234.224.25:3000`, enabling live signaling and calling simulation).*
+3. Use keyboard arrows (`↑`, `↓`, `←`, `→`), `Enter`, and `Escape` to simulate Fire TV Remote D-Pad controls.
 
 ---
 
