@@ -18,6 +18,16 @@ const io = new Server(server, {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Health check endpoint for AWS EC2 & load balancer monitoring
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        app: 'ZingTalk Fire TV Signaling Server',
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString()
+    });
+});
+
 // Serve static frontend assets
 app.use(express.static(__dirname));
 
@@ -663,10 +673,14 @@ function levenshtein(a, b) {
 function cleanVoiceInput(raw) {
     if (!raw) return "";
     let text = String(raw).toLowerCase().trim();
-    // Strip common conversational prefixes (English & Hinglish)
-    text = text.replace(/^(?:please\s+)?(?:call\s+to|call\s+my\s+friend|call\s+my|call|audio\s+call\s+to|audio\s+call|video\s+call\s+to|video\s+call|dial|connect\s+with|connect\s+to|start\s+call\s+with|start\s+video\s+call\s+with|phone\s+karo|lagao|milao)\s+/i, "");
-    // Strip trailing conversational suffixes / noise
-    text = text.replace(/\s+(?:ko|se|par|pe|toll|tell|please|now|call|video\s+call|audio\s+call)$/i, "");
+    // Multi-pass iterative prefix stripping (handles compound commands like "video call" followed by "lagao" or "karo")
+    for (let i = 0; i < 3; i++) {
+        text = text.replace(/^(?:please\s+)?(?:call\s+to|call\s+my\s+friend|call\s+my|call|audio\s+call\s+to|audio\s+call|video\s+call\s+to|video\s+call|dial|connect\s+with|connect\s+to|start\s+call\s+with|start\s+video\s+call\s+with|phone\s+karo|phone\s+lagao|call\s+karo|call\s+lagao|video\s+call\s+lagao|video\s+call\s+karo|lagao|karo|milao)\s+/i, "").trim();
+    }
+    // Multi-pass iterative suffix stripping (handles Hindi particles and conversational endings)
+    for (let i = 0; i < 3; i++) {
+        text = text.replace(/\s+(?:ko|se|par|pe|toll|tell|please|now|call|video\s+call|audio\s+call|karo|lagao|milao)$/i, "").trim();
+    }
     return text.trim();
 }
 

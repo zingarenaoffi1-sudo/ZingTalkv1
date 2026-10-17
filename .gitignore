@@ -13,6 +13,8 @@ local.properties
 .env
 .env.local
 
-# OS files
+# OS & Temp files
 .DS_Store
 Thumbs.db
+*.log
+test-*.js
