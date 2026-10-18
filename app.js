@@ -1697,30 +1697,40 @@ window.addEventListener("keydown", (e) => {
 // ----------------- Global Clicks & UI Triggers -----------------
 let isSignUpMode = false;
 
+// Fluid Mobile & Tablet Touch Support (Syncs Cyan Glow and focus to touched target)
+document.addEventListener("pointerdown", (e) => {
+    const focusable = e.target.closest(".tv-focusable");
+    if (focusable) {
+        focusable.focus();
+    }
+}, { passive: true });
+
 document.addEventListener("click", async (e) => {
     if (e.target.tagName === "BUTTON") e.preventDefault();
 
     // 1. Login Tabs Switching (Email & Password / Guest Mode)
-    if (e.target.id === "tab-btn-email") {
+    if (e.target.id === "tab-btn-email" || e.target.closest("#tab-btn-email")) {
         document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
         document.querySelectorAll(".tv-tab-pane").forEach(p => p.classList.add("hidden"));
-        e.target.classList.add("active");
+        const tabEl = document.getElementById("tab-btn-email");
+        if (tabEl) tabEl.classList.add("active");
         document.getElementById("pane-email")?.classList.remove("hidden");
         document.getElementById("login-email-input")?.focus();
         return;
     }
 
-    if (e.target.id === "tab-btn-guest") {
+    if (e.target.id === "tab-btn-guest" || e.target.closest("#tab-btn-guest")) {
         document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
         document.querySelectorAll(".tv-tab-pane").forEach(p => p.classList.add("hidden"));
-        e.target.classList.add("active");
+        const tabEl = document.getElementById("tab-btn-guest");
+        if (tabEl) tabEl.classList.add("active");
         document.getElementById("pane-guest")?.classList.remove("hidden");
         document.getElementById("guest-name-input")?.focus();
         return;
     }
 
     // Toggle Email Auth Mode (Sign In vs Sign Up)
-    if (e.target.id === "toggle-auth-mode-btn") {
+    if (e.target.id === "toggle-auth-mode-btn" || e.target.closest("#toggle-auth-mode-btn")) {
         isSignUpMode = !isSignUpMode;
         const nameGroup = document.getElementById("email-signup-name-group");
         const btnText = document.getElementById("email-btn-text");
