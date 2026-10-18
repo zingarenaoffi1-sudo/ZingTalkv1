@@ -1551,9 +1551,15 @@ function handleAlexaIncomingCommand(cmd) {
 
 // ----------------- Fire TV Remote Spatial Navigation Engine -----------------
 function getVisibleFocusableElements() {
-    return Array.from(document.querySelectorAll('.tv-focusable')).filter(el => {
-        if (el.offsetParent === null) return false;
+    const activeModal = document.querySelector('.tv-modal-backdrop:not(.hidden)');
+    const callScreen = document.getElementById("full-call-screen");
+    const activeCall = (callScreen && !callScreen.classList.contains("hidden")) ? callScreen : null;
+    const scope = activeModal || activeCall || document;
+
+    return Array.from(scope.querySelectorAll('.tv-focusable')).filter(el => {
+        if (el.offsetParent === null && el.tagName !== 'BODY') return false;
         if (el.closest('.hidden')) return false;
+        if (!activeModal && el.closest('.tv-modal-backdrop')) return false;
         const rect = el.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
     });
@@ -1576,6 +1582,23 @@ function handleDpadNavigation(direction) {
         return;
     }
 
+    // Special scroll handling for TV remote on scrollable areas
+    if (current.id === "policy-scroll-area" || current.id === "messages-area") {
+        if (direction === 'down') {
+            const canScrollDown = current.scrollTop < (current.scrollHeight - current.clientHeight - 8);
+            if (canScrollDown) {
+                current.scrollTop += 90;
+                return;
+            }
+        } else if (direction === 'up') {
+            const canScrollUp = current.scrollTop > 8;
+            if (canScrollUp) {
+                current.scrollTop -= 90;
+                return;
+            }
+        }
+    }
+
     const currentRect = current.getBoundingClientRect();
     const currentCenter = { 
         x: currentRect.left + currentRect.width / 2, 
@@ -1596,17 +1619,17 @@ function handleDpadNavigation(direction) {
         const dy = targetCenter.y - currentCenter.y;
 
         let isValidDirection = false;
-        if (direction === 'up' && dy < -5) isValidDirection = true;
-        if (direction === 'down' && dy > 5) isValidDirection = true;
-        if (direction === 'left' && dx < -5) isValidDirection = true;
-        if (direction === 'right' && dx > 5) isValidDirection = true;
+        if (direction === 'up' && dy < -4) isValidDirection = true;
+        if (direction === 'down' && dy > 4) isValidDirection = true;
+        if (direction === 'left' && dx < -4) isValidDirection = true;
+        if (direction === 'right' && dx > 4) isValidDirection = true;
 
         if (isValidDirection) {
             let dist = 0;
             if (direction === 'up' || direction === 'down') {
-                dist = Math.abs(dy) + Math.abs(dx) * 1.4;
+                dist = Math.abs(dy) + Math.abs(dx) * 1.35;
             } else {
-                dist = Math.abs(dx) + Math.abs(dy) * 1.4;
+                dist = Math.abs(dx) + Math.abs(dy) * 1.35;
             }
 
             if (dist < bestDistance) {
@@ -1675,35 +1698,100 @@ if (window.Capacitor?.Plugins?.App) {
     });
 }
 
-// Global Remote Keydown Event Listener
+// Global Remote Keydown Event Listener (Amazon Fire TV Remote & D-Pad Engine)
 window.addEventListener("keydown", (e) => {
-    const isTyping = document.activeElement && 
-        (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA");
+    const isUp = e.key === "ArrowUp" || e.keyCode === 19 || e.keyCode === 38;
+    const isDown = e.key === "ArrowDown" || e.keyCode === 20 || e.keyCode === 40;
+    const isLeft = e.key === "ArrowLeft" || e.keyCode === 21 || e.keyCode === 37;
+    const isRight = e.key === "ArrowRight" || e.keyCode === 22 || e.keyCode === 39;
+    const isSelect = e.key === "Enter" || e.key === "Select" || e.keyCode === 13 || e.keyCode === 23;
+    const isBack = e.key === "Escape" || e.keyCode === 4 || e.keyCode === 10009 || e.key === "GoBack" || e.key === "Back";
 
-    if (e.key === "ArrowUp") {
-        if (!isTyping) { e.preventDefault(); handleDpadNavigation("up"); }
-    } else if (e.key === "ArrowDown") {
-        if (!isTyping) { e.preventDefault(); handleDpadNavigation("down"); }
-    } else if (e.key === "ArrowLeft") {
-        if (!isTyping) { e.preventDefault(); handleDpadNavigation("left"); }
-    } else if (e.key === "ArrowRight") {
-        if (!isTyping) { e.preventDefault(); handleDpadNavigation("right"); }
-    } else if (e.key === "Escape" || e.keyCode === 4 || e.keyCode === 10009 || e.key === "GoBack" || e.key === "Back" || (e.key === "Backspace" && !isTyping)) {
+    const active = document.activeElement;
+    const isInput = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+
+    if (isUp) {
         e.preventDefault();
-        handleBackKey();
+        handleDpadNavigation("up");
+        return;
+    }
+
+    if (isDown) {
+        e.preventDefault();
+        handleDpadNavigation("down");
+        return;
+    }
+
+    if (isLeft) {
+        if (!isInput || active.selectionStart === 0 || active.value.length === 0) {
+            e.preventDefault();
+            handleDpadNavigation("left");
+        }
+        return;
+    }
+
+    if (isRight) {
+        if (!isInput || active.selectionEnd === active.value.length || active.value.length === 0) {
+            e.preventDefault();
+            handleDpadNavigation("right");
+        }
+        return;
+    }
+
+    if (isBack) {
+        if (!isInput || active.value.length === 0 || e.key === "Escape" || e.keyCode === 4) {
+            e.preventDefault();
+            handleBackKey();
+        }
+        return;
+    }
+
+    if (isSelect) {
+        if (active && active.classList.contains("tv-focusable") && !isInput) {
+            e.preventDefault();
+            active.click();
+            return;
+        }
+
+        // Context-aware input submission on Enter / Select
+        if (active && isInput) {
+            if (active.id === "dial-uid-input") {
+                const val = active.value.trim().replace(/\D/g, '');
+                if (val.length === 10) {
+                    e.preventDefault();
+                    document.getElementById("quick-chat-btn")?.click();
+                }
+            } else if (active.id === "contact-uid-input") {
+                e.preventDefault();
+                document.getElementById("contact-name-input")?.focus();
+            } else if (active.id === "contact-name-input") {
+                e.preventDefault();
+                document.getElementById("save-contact-btn")?.click();
+            } else if (active.id === "login-name-input") {
+                e.preventDefault();
+                document.getElementById("login-email-input")?.focus();
+            } else if (active.id === "login-email-input") {
+                e.preventDefault();
+                document.getElementById("login-password-input")?.focus();
+            } else if (active.id === "login-password-input") {
+                e.preventDefault();
+                document.getElementById("email-login-submit-btn")?.click();
+            } else if (active.id === "guest-name-input") {
+                e.preventDefault();
+                document.getElementById("guest-login-btn")?.click();
+            } else if (active.id === "reset-email-input") {
+                e.preventDefault();
+                document.getElementById("send-reset-link-btn")?.click();
+            } else if (active.id === "message-input") {
+                e.preventDefault();
+                sendMessageLogic();
+            }
+        }
     }
 });
 
 // ----------------- Global Clicks & UI Triggers -----------------
 let isSignUpMode = false;
-
-// Fluid Mobile & Tablet Touch Support (Syncs Cyan Glow and focus to touched target)
-document.addEventListener("pointerdown", (e) => {
-    const focusable = e.target.closest(".tv-focusable");
-    if (focusable) {
-        focusable.focus();
-    }
-}, { passive: true });
 
 document.addEventListener("click", async (e) => {
     if (e.target.tagName === "BUTTON") e.preventDefault();
@@ -2151,11 +2239,13 @@ document.addEventListener("click", async (e) => {
         document.getElementById("modal-email").innerText = email;
         document.getElementById("modal-uid").innerText = my10DigitUid || "Generating...";
         document.getElementById("profile-modal")?.classList.remove("hidden");
+        setTimeout(() => document.getElementById("copy-uid-btn")?.focus(), 60);
         return;
     }
 
-    if (e.target.id === "close-profile-btn") {
+    if (e.target.id === "close-profile-btn" || e.target.closest("#close-profile-btn")) {
         document.getElementById("profile-modal")?.classList.add("hidden");
+        setTimeout(() => document.getElementById("my-profile-chip")?.focus(), 60);
         return;
     }
 
@@ -2164,7 +2254,7 @@ document.addEventListener("click", async (e) => {
         return;
     }
 
-    if (e.target.id === "copy-uid-btn") {
+    if (e.target.id === "copy-uid-btn" || e.target.closest("#copy-uid-btn")) {
         if (my10DigitUid) {
             navigator.clipboard.writeText(my10DigitUid).then(() => {
                 showToast("10-Digit UID copied: " + my10DigitUid);
@@ -2179,26 +2269,14 @@ document.addEventListener("click", async (e) => {
     if (e.target.id === "open-policy-btn" || e.target.id === "sidebar-policy-btn" || e.target.id === "profile-policy-btn" || e.target.closest(".tv-policy-btn-trigger")) {
         document.getElementById("profile-modal")?.classList.add("hidden");
         document.getElementById("policy-modal")?.classList.remove("hidden");
+        setTimeout(() => document.getElementById("policy-ok-btn")?.focus(), 60);
         return;
     }
 
-    if (e.target.id === "close-policy-btn" || e.target.id === "policy-ok-btn") {
+    if (e.target.id === "close-policy-btn" || e.target.closest("#close-policy-btn") || e.target.id === "policy-ok-btn" || e.target.closest("#policy-ok-btn")) {
         document.getElementById("policy-modal")?.classList.add("hidden");
+        autoFocusFirstElement();
         return;
-    }
-});
-
-// Input Submission via Enter
-document.addEventListener("keypress", (e) => {
-    if (e.key === "Enter" && document.activeElement === document.getElementById("message-input")) {
-        e.preventDefault();
-        sendMessageLogic();
-    } else if (e.key === "Enter" && document.activeElement === document.getElementById("login-password-input")) {
-        e.preventDefault();
-        document.getElementById("email-login-submit-btn")?.click();
-    } else if (e.key === "Enter" && document.activeElement === document.getElementById("guest-name-input")) {
-        e.preventDefault();
-        document.getElementById("guest-login-btn")?.click();
     }
 });
 
@@ -2221,3 +2299,9 @@ document.getElementById("contact-uid-input")?.addEventListener("input", (e) => {
         }
     } catch (_) {}
 })();
+
+// Initial Fire TV Leanback D-Pad Auto-Focus
+window.addEventListener("load", () => {
+    setTimeout(autoFocusFirstElement, 150);
+});
+setTimeout(autoFocusFirstElement, 300);
