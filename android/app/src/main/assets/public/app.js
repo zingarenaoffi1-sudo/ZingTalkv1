@@ -9,14 +9,8 @@ import {
     updateProfile,
     signOut
 } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js";
-import {
-    getFirestore,
-    doc,
-    setDoc,
-    getDoc
-} from "https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js";
 
-// Client Firebase configuration
+// Client Firebase configuration (Used exclusively for Authentication - ZERO database storage)
 const firebaseConfig = {
     apiKey: "AIzaSyDDi5b_GBmRLSXQOXe-_ZA3bP6KuxHZvvQ",
     authDomain: "zing-talk-c6496.firebaseapp.com",
@@ -27,17 +21,16 @@ const firebaseConfig = {
     measurementId: "G-W87FM4ZNJ7"
 };
 
-let app, auth, firestoreDb;
+let app, auth;
 try {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
-    firestoreDb = getFirestore(app);
 } catch (e) {
     // Initialized in offline fallback mode
 }
 
-// Zero-Knowledge Storage: Save ONLY Contact UID & Name to Firebase Firestore (Never chats, messages, or media)
-export async function saveContactToFirebase(contactUid, contactName) {
+// Local-Only Storage: Save contacts strictly on the user's local device (100% Zero-Server & Privacy Policy Compliant)
+export function saveContactLocally(contactUid, contactName) {
     if (!contactUid || !contactName) return;
     const cleanUid = String(contactUid).trim().replace(/\D/g, '');
     const cleanName = String(contactName).trim();
@@ -49,21 +42,7 @@ export async function saveContactToFirebase(contactUid, contactName) {
     saveUserContactsToStorage();
     renderContacts(myContacts);
 
-    // Save strictly { uid, contacts: [{ uid, name }] } to Firebase Firestore
-    if (firestoreDb && my10DigitUid) {
-        try {
-            const userDocRef = doc(firestoreDb, "users", my10DigitUid);
-            await setDoc(userDocRef, {
-                uid: my10DigitUid,
-                contacts: myContacts.map(c => ({ uid: c.uid, name: c.name }))
-            }, { merge: true });
-            console.log("[Firebase Firestore] Contact saved successfully in users/" + my10DigitUid);
-        } catch (fsErr) {
-            console.warn("[Firebase Firestore] Notice:", fsErr.message);
-        }
-    }
-
-    // Also sync to server so EC2 / local signaling instance knows the contact
+    // Sync only to volatile in-memory RAM so live Alexa voice commands know who to call during this active session
     if (socket && socket.connected && my10DigitUid) {
         socket.emit("save_contact", { myUid: my10DigitUid, targetUid: cleanUid, customName: cleanName });
     }
@@ -531,12 +510,8 @@ export function registerSocketListeners(s) {
                 persistSessionBackup("zingTalkTvSession", JSON.stringify(currentUser));
             }
         }
-        if (data && data.contacts && Array.isArray(data.contacts) && data.contacts.length > 0) {
-            myContacts = data.contacts;
-            saveUserContactsToStorage();
-        }
         renderContacts(myContacts);
-        if (my10DigitUid) {
+        if (my10DigitUid && myContacts.length > 0) {
             s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
         }
     });
@@ -546,10 +521,7 @@ export function registerSocketListeners(s) {
             myContacts = contacts;
             saveUserContactsToStorage();
             renderContacts(myContacts);
-            if (my10DigitUid) {
-                s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
-            }
-            showToast("Contact saved successfully");
+            showToast("Contact saved locally");
         }
     });
 
@@ -572,7 +544,6 @@ export function registerSocketListeners(s) {
             if (my10DigitUid) {
                 s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
             }
-            saveContactToFirebase(sender, senderName);
         } else {
             // Move conversation to the top of the contact list
             myContacts = [knownContact, ...myContacts.filter(c => c.uid !== sender)];

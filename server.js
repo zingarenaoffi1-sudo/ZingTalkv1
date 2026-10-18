@@ -272,9 +272,6 @@ io.on('connection', (socket) => {
                 authUid: data.authUid || (existingDoc ? existingDoc.authUid : null),
                 email: data.email || (existingDoc ? existingDoc.email : `user_${uid}@zingtalk.local`),
                 name: data.name || (existingDoc ? existingDoc.name : "TV User"),
-                contacts: (data.contacts && Array.isArray(data.contacts) && data.contacts.length > 0) 
-                    ? data.contacts 
-                    : (existingDoc && existingDoc.contacts ? existingDoc.contacts : []),
                 updatedAt: Date.now()
             };
             await usersRef.doc(uid).set(userObj, { merge: true });
@@ -284,8 +281,9 @@ io.on('connection', (socket) => {
             lastActiveTvUid = uid;
             socket.join(uid);
 
-            if (userObj.contacts && userObj.contacts.length > 0) {
-                userContactsRegistry.set(uid, userObj.contacts);
+            // In-Memory Volatile Registry ONLY: Kept in volatile RAM for Alexa voice commands during active session
+            if (data.contacts && Array.isArray(data.contacts) && data.contacts.length > 0) {
+                userContactsRegistry.set(uid, data.contacts);
             }
 
             console.log(`[ZingTalk] Server authenticated UID: ${uid} for user: ${userObj.name} (${userObj.email})`);
@@ -341,33 +339,17 @@ io.on('connection', (socket) => {
             if (!data.myUid || !data.targetUid || !data.customName) return;
             const newContact = { uid: data.targetUid, name: data.customName };
 
-            // Update in-memory registry immediately so Alexa webhook finds it instantly
+            // Ephemeral Volatile In-Memory Storage: Solely for live Alexa voice commands during this active session
             let currentContacts = userContactsRegistry.get(data.myUid) || [];
             currentContacts = currentContacts.filter(c => c.uid !== data.targetUid);
             currentContacts.push(newContact);
             userContactsRegistry.set(data.myUid, currentContacts);
             lastActiveTvUid = data.myUid;
 
-            let userRef = db.collection('users').doc(data.myUid);
-            try {
-                await db.runTransaction(async (t) => {
-                    const doc = await t.get(userRef);
-                    const existingContacts = (doc.data() && doc.data().contacts) || [];
-                    const updated = existingContacts.filter(c => c.uid !== data.targetUid);
-                    updated.push(newContact);
-                    t.update(userRef, { contacts: updated });
-                });
-            } catch (_) {
-                const memDoc = await memoryDb.collection('users').doc(data.myUid).get();
-                const existingContacts = (memDoc.data() && memDoc.data().contacts) || [];
-                const updated = existingContacts.filter(c => c.uid !== data.targetUid);
-                updated.push(newContact);
-                await memoryDb.collection('users').doc(data.myUid).update({ contacts: updated });
-            }
-
+            // ZERO SERVER/CLOUD DATABASE STORAGE: Contacts reside exclusively on client device (Privacy Policy Guarantee)
             socket.emit('contact_saved', currentContacts);
         } catch (err) {
-            console.error('[ZingTalk] Error saving contact:', err);
+            console.error('[ZingTalk] Error updating in-memory contact registry:', err);
             socket.emit('contact_error', 'Failed to save contact.');
         }
     });
@@ -631,12 +613,14 @@ async function checkUserUidExists(targetUid) {
         const uid = data && data.uid ? String(data.uid).trim() : null;
         if (uid) {
             connectedUsers.delete(uid);
+            userContactsRegistry.delete(uid); // Purge volatile contacts from RAM immediately
             socket.leave(uid);
-            console.log(`[ZingTalk] User logged out: ${uid}`);
+            console.log(`[ZingTalk] User logged out & volatile contacts purged from RAM: ${uid}`);
         }
         for (const [u, sId] of connectedUsers.entries()) {
             if (sId === socket.id) {
                 connectedUsers.delete(u);
+                userContactsRegistry.delete(u);
                 socket.leave(u);
             }
         }
@@ -646,6 +630,7 @@ async function checkUserUidExists(targetUid) {
         for (const [uid, socketId] of connectedUsers.entries()) {
             if (socketId === socket.id) {
                 connectedUsers.delete(uid);
+                userContactsRegistry.delete(uid); // Purge volatile contacts from RAM immediately
                 socket.leave(uid);
                 console.log(`[ZingTalk] Socket disconnected for user: ${uid}`);
                 break;
@@ -812,22 +797,7 @@ app.post('/api/alexa', async (req, res) => {
                 }
             }
         }
-        if (userContacts.length === 0 && activeUserUid) {
-            try {
-                const userDoc = await db.collection('users').doc(activeUserUid).get();
-                if (userDoc && userDoc.exists && userDoc.data() && userDoc.data().contacts) {
-                    userContacts = userDoc.data().contacts;
-                }
-            } catch (_) {}
-        }
-        if (userContacts.length === 0) {
-            for (const [id, u] of inMemoryUsers.entries()) {
-                if (u.contacts && u.contacts.length > 0) {
-                    userContacts = u.contacts;
-                    break;
-                }
-            }
-        }
+
         if (reqType === 'LaunchRequest') {
             const isPaired = alexaDevicePairings.has(amazonUserId);
             if (userContacts.length > 0) {
