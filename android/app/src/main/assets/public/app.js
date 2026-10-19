@@ -1764,6 +1764,14 @@ window.addEventListener("keydown", (e) => {
 // ----------------- Global Clicks & UI Triggers -----------------
 let isSignUpMode = false;
 
+// Fluid Mobile & Tablet Touch Support (Syncs Cyan Glow and focus to touched target)
+document.addEventListener("pointerdown", (e) => {
+    const focusable = e.target.closest(".tv-focusable");
+    if (focusable) {
+        focusable.focus();
+    }
+}, { passive: true });
+
 document.addEventListener("click", async (e) => {
     if (e.target.tagName === "BUTTON") e.preventDefault();
 
