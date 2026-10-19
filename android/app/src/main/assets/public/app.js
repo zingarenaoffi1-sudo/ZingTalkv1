@@ -9,8 +9,18 @@ import {
     updateProfile,
     signOut
 } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js";
+import {
+    getFirestore,
+    doc,
+    setDoc,
+    getDoc,
+    collection,
+    query,
+    where,
+    getDocs
+} from "https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js";
 
-// Client Firebase configuration (Used exclusively for Authentication - ZERO database storage)
+// Client Firebase configuration
 const firebaseConfig = {
     apiKey: "AIzaSyDDi5b_GBmRLSXQOXe-_ZA3bP6KuxHZvvQ",
     authDomain: "zing-talk-c6496.firebaseapp.com",
@@ -21,12 +31,86 @@ const firebaseConfig = {
     measurementId: "G-W87FM4ZNJ7"
 };
 
-let app, auth;
+let app, auth, firestoreDb;
 try {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
+    firestoreDb = getFirestore(app);
 } catch (e) {
     // Initialized in offline fallback mode
+}
+
+// ----------------- Firestore 10-Digit UID Registry -----------------
+// Automatically persists the user's allocated 10-digit UID in the 'users' collection on Firestore
+export async function saveUserUidToFirestore(user, uid) {
+    if (!firestoreDb || !uid) return;
+    try {
+        const cleanUid = String(uid).trim().replace(/\D/g, '');
+        if (cleanUid.length !== 10) return;
+
+        const authUid = user?.uid || (auth?.currentUser ? auth.currentUser.uid : null);
+        const email = user?.email || (auth?.currentUser ? auth.currentUser.email : "") || (user?.isAnonymous ? `guest_${cleanUid}@zingtalk.local` : "");
+        const displayName = user?.displayName || (auth?.currentUser ? auth.currentUser.displayName : "") || (email ? email.split("@")[0] : "TV User");
+
+        const dataToSave = {
+            uid: cleanUid,
+            authUid: authUid,
+            email: email,
+            displayName: displayName,
+            isGuest: Boolean(user?.isAnonymous || auth?.currentUser?.isAnonymous),
+            platform: "Fire TV / Android",
+            updatedAt: new Date().toISOString()
+        };
+
+        // 1. Primary Record: Keyed by 10-Digit UID in 'users' collection
+        try {
+            const docByUid = doc(firestoreDb, "users", cleanUid);
+            await setDoc(docByUid, dataToSave, { merge: true });
+            console.log(`[Firestore] ✅ 10-Digit UID [${cleanUid}] saved to Firestore users/${cleanUid}`);
+        } catch (err1) {
+            console.warn(`[Firestore] Notice on users/${cleanUid}:`, err1.message);
+        }
+
+        // 2. Secondary Index: Keyed by Firebase Auth UID in 'user_profiles' collection
+        if (authUid) {
+            try {
+                const docByAuth = doc(firestoreDb, "user_profiles", authUid);
+                await setDoc(docByAuth, dataToSave, { merge: true });
+                console.log(`[Firestore] ✅ Profile mapped to Firestore user_profiles/${authUid}`);
+            } catch (err2) {
+                console.warn(`[Firestore] Notice on user_profiles/${authUid}:`, err2.message);
+            }
+        }
+    } catch (err) {
+        console.warn("[Firestore] Notice saving UID to Firestore:", err.message);
+    }
+}
+
+// Lookup existing 10-Digit UID from Firestore for a returning user
+export async function lookupUserUidFromFirestore(email, authUid) {
+    if (!firestoreDb) return null;
+    try {
+        const usersCol = collection(firestoreDb, "users");
+        if (email) {
+            const q = query(usersCol, where("email", "==", email));
+            const snap = await getDocs(q);
+            if (!snap.empty) {
+                const d = snap.docs[0].data();
+                if (d && d.uid && String(d.uid).length === 10) return String(d.uid);
+            }
+        }
+        if (authUid) {
+            const q = query(usersCol, where("authUid", "==", authUid));
+            const snap = await getDocs(q);
+            if (!snap.empty) {
+                const d = snap.docs[0].data();
+                if (d && d.uid && String(d.uid).length === 10) return String(d.uid);
+            }
+        }
+    } catch (err) {
+        console.warn("[Firestore] Lookup notice:", err.message);
+    }
+    return null;
 }
 
 // Local-Only Storage: Save contacts strictly on the user's local device (100% Zero-Server & Privacy Policy Compliant)
@@ -316,6 +400,9 @@ function loginUserSession(user) {
         updateUidDisplays(my10DigitUid);
         loadUserStorageData(my10DigitUid);
     }
+    if (my10DigitUid) {
+        saveUserUidToFirestore(user, my10DigitUid);
+    }
     document.getElementById("login-screen")?.classList.add("hidden");
     document.getElementById("tv-top-bar")?.classList.remove("hidden");
     document.getElementById("main-screen")?.classList.remove("hidden");
@@ -413,8 +500,14 @@ function logoutUserSession() {
 }
 
 if (auth) {
-    onAuthStateChanged(auth, (user) => {
+    onAuthStateChanged(auth, async (user) => {
         if (user) {
+            if (!user.zingUid && user.email) {
+                const existingUid = await lookupUserUidFromFirestore(user.email, user.uid);
+                if (existingUid) {
+                    user.zingUid = existingUid;
+                }
+            }
             loginUserSession(user);
         } else if (!currentUser) {
             document.getElementById("login-screen")?.classList.remove("hidden");
@@ -508,6 +601,9 @@ export function registerSocketListeners(s) {
             if (currentUser) {
                 currentUser.zingUid = String(data.uid);
                 persistSessionBackup("zingTalkTvSession", JSON.stringify(currentUser));
+                saveUserUidToFirestore(currentUser, data.uid);
+            } else {
+                saveUserUidToFirestore({ uid: null, isAnonymous: true }, data.uid);
             }
         }
         renderContacts(myContacts);
@@ -2218,6 +2314,9 @@ document.addEventListener("click", async (e) => {
         document.getElementById("modal-email").innerText = email;
         document.getElementById("modal-uid").innerText = my10DigitUid || "Generating...";
         document.getElementById("profile-modal")?.classList.remove("hidden");
+        if (my10DigitUid) {
+            saveUserUidToFirestore(currentUser, my10DigitUid);
+        }
         setTimeout(() => document.getElementById("copy-uid-btn")?.focus(), 60);
         return;
     }
