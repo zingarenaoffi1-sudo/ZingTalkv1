@@ -18,3 +18,10 @@ local.properties
 Thumbs.db
 *.log
 test-*.js
+
+# AI Studio & Uploaded User Media
+.aistudio/
+public/
+tempmediaStorage/
+*.tmp
+
