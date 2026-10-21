@@ -20,8 +20,8 @@ Thumbs.db
 test-*.js
 
 # AI Studio & Uploaded User Media
-.aistudio/
-public/
+/.aistudio/
+/public/
 tempmediaStorage/
 *.tmp
 
