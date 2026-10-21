@@ -158,16 +158,14 @@ ZingTalk is custom-built for a **10-foot living room experience**. Standard mobi
 
 ---
 
-### Feature 5: Address Book & Saved Contacts Management
-* **What to Test**: Storing peer UIDs for single-click calling and Alexa voice dialing.
+### Feature 5: Quick Connect & Direct 10-Digit UID Dialing (Zero Contact Retention)
+* **What to Test**: Pure direct-dial calling and chat by 10-digit UID with zero cloud address book storage.
 * **Test Procedure**:
-  1. In the left sidebar, find the **Add Contact** card.
+  1. In the left sidebar, find the **Quick Connect** card.
   2. In the 10-digit UID field, enter a peer's UID (e.g., `8392019482`).
-  3. In the Name field, enter `Rahul`.
-  4. Click **Save Contact**.
-  5. Look at the **Saved Contacts** list below: `Rahul` appears with an avatar and UID.
-  6. Click on Rahul: Chat studio opens automatically.
-* **Expected Result**: Contacts persist locally and are synced with the Alexa Voice registry so commands like *"Alexa, call Rahul"* work seamlessly.
+  3. Click **💬 Chat**, **📞 Audio**, or **🎥 Video**.
+  4. The conversation or call initiates instantly with zero contact retention in the cloud.
+* **Expected Result**: Sub-second direct connection to peer UID with zero contact database retention.
 
 ---
 

@@ -35,8 +35,7 @@ Your communications belong exclusively to you and the family members you connect
 
 ### A. Authentication & User Profile
 - **Randomized 10-Digit Unique Identifier (UID)**: Each user is allocated an anonymous 10-digit numeric ID (e.g., `2156774755`). This replaces phone numbers, SIM card telemetry, and hardware IMEI identifiers, protecting user anonymity.
-- **Guest Mode & Email Login**: ZingTalk supports instant Guest Mode (no personal credentials required, ideal for elderly users) and standard Email/Password authentication. We do NOT use third-party OAuth tracking or invasive social logins.
-- **Contacts Directory (100% Local Device Storage)**: Your saved contacts (Name and 10-Digit UID) are stored **strictly on your local device** (`localStorage` / local device preferences). Contacts are **NEVER saved to Firebase Firestore, nor backed up to any cloud database**. During an active TV session, your local contacts are held solely in volatile in-memory RAM for real-time Alexa voice intent matching (e.g., *"Alexa, call Rahul"*), and are instantly purged from memory upon logout or disconnection. Contacts remain completely private to your device.
+- **Contacts Directory (100% Local Device Storage)**: Saved contacts (Name and 10-Digit UID) reside **strictly inside your local device memory** (`localStorage` / local device preferences). Contacts are **NEVER saved to Firebase Firestore, nor backed up to any cloud database**. During an active TV session, local contacts are mirrored solely in volatile in-memory RAM for real-time Alexa voice intent matching (e.g. *"Alexa, call Rahul"*), and are instantly purged from RAM upon sign out or disconnection. Contacts remain completely private to your device.
 
 ### B. Device Permissions
 - **Microphone**: Required exclusively during active audio and video calls. The microphone is active only while a call is in progress.

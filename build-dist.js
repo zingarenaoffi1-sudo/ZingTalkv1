@@ -14,12 +14,19 @@ const filesToCopy = [
     'service-worker.js'
 ];
 
+const androidPublicDir = path.join(__dirname, 'android', 'app', 'src', 'main', 'assets', 'public');
+
 filesToCopy.forEach(file => {
     const srcPath = path.join(__dirname, file);
     const destPath = path.join(distDir, file);
     if (fs.existsSync(srcPath)) {
         fs.copyFileSync(srcPath, destPath);
         console.log(`[build-dist] Copied ${file} -> dist/${file}`);
+        if (fs.existsSync(androidPublicDir)) {
+            const androidDest = path.join(androidPublicDir, file);
+            fs.copyFileSync(srcPath, androidDest);
+            console.log(`[build-dist] Synced ${file} -> android/.../public/${file}`);
+        }
     }
 });
 

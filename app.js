@@ -1617,6 +1617,26 @@ function handleAlexaIncomingCommand(cmd) {
 }
 
 // ----------------- Fire TV Remote Spatial Navigation Engine -----------------
+// ----------------- Fire TV Remote Spatial Navigation Engine -----------------
+export function focusElement(el) {
+    if (!el) return;
+    document.querySelectorAll('.tv-focused').forEach(node => node.classList.remove('tv-focused'));
+    el.classList.add('tv-focused');
+    el.focus();
+    try {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    } catch (_) {}
+}
+
+function isElementVisibleAndFocusable(el) {
+    if (!el) return false;
+    if (el.offsetParent === null && el.tagName !== 'BODY') return false;
+    if (el.closest('.hidden')) return false;
+    if (el.disabled) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+}
+
 function getVisibleFocusableElements() {
     const activeModal = document.querySelector('.tv-modal-backdrop:not(.hidden)');
     const callScreen = document.getElementById("full-call-screen");
@@ -1624,19 +1644,372 @@ function getVisibleFocusableElements() {
     const scope = activeModal || activeCall || document;
 
     return Array.from(scope.querySelectorAll('.tv-focusable')).filter(el => {
-        if (el.offsetParent === null && el.tagName !== 'BODY') return false;
-        if (el.closest('.hidden')) return false;
+        if (!isElementVisibleAndFocusable(el)) return false;
         if (!activeModal && el.closest('.tv-modal-backdrop')) return false;
-        const rect = el.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
+        return true;
     });
 }
 
 function autoFocusFirstElement() {
+    const activeModal = document.querySelector('.tv-modal-backdrop:not(.hidden)');
+    if (activeModal) {
+        const modalInputs = activeModal.querySelectorAll('input:not([type="hidden"]), button');
+        for (const input of modalInputs) {
+            if (isElementVisibleAndFocusable(input)) {
+                focusElement(input);
+                return;
+            }
+        }
+    }
+
+    const loginScreen = document.getElementById("login-screen");
+    if (loginScreen && !loginScreen.classList.contains("hidden")) {
+        const paneEmail = document.getElementById("pane-email");
+        if (paneEmail && !paneEmail.classList.contains("hidden")) {
+            const signupGroup = document.getElementById("email-signup-name-group");
+            if (signupGroup && !signupGroup.classList.contains("hidden")) {
+                const nameInp = document.getElementById("login-name-input");
+                if (isElementVisibleAndFocusable(nameInp)) {
+                    focusElement(nameInp);
+                    return;
+                }
+            }
+            const emailInp = document.getElementById("login-email-input");
+            if (isElementVisibleAndFocusable(emailInp)) {
+                focusElement(emailInp);
+                return;
+            }
+        }
+        const paneGuest = document.getElementById("pane-guest");
+        if (paneGuest && !paneGuest.classList.contains("hidden")) {
+            const guestInp = document.getElementById("guest-name-input");
+            if (isElementVisibleAndFocusable(guestInp)) {
+                focusElement(guestInp);
+                return;
+            }
+        }
+    }
+
+    const mainScreen = document.getElementById("main-screen");
+    if (mainScreen && !mainScreen.classList.contains("hidden")) {
+        const activeChat = document.getElementById("tv-active-chat");
+        if (activeChat && !activeChat.classList.contains("hidden")) {
+            const msgInp = document.getElementById("message-input");
+            if (isElementVisibleAndFocusable(msgInp)) {
+                focusElement(msgInp);
+                return;
+            }
+        }
+        const dialInp = document.getElementById("dial-uid-input");
+        if (isElementVisibleAndFocusable(dialInp)) {
+            focusElement(dialInp);
+            return;
+        }
+    }
+
     const focusables = getVisibleFocusableElements();
     if (focusables.length > 0) {
-        focusables[0].focus();
+        focusElement(focusables[0]);
     }
+}
+
+function getCustomNavigationTarget(current, direction) {
+    if (!current) return null;
+    const id = current.id;
+    const isSignUp = !document.getElementById("email-signup-name-group")?.classList.contains("hidden");
+
+    // --- 1. Login Screen ---
+    if (id === "tab-btn-email") {
+        if (direction === "right") return document.getElementById("tab-btn-guest");
+        if (direction === "down") return isSignUp ? document.getElementById("login-name-input") : document.getElementById("login-email-input");
+    }
+    if (id === "tab-btn-guest") {
+        if (direction === "left") return document.getElementById("tab-btn-email");
+        if (direction === "down") return document.getElementById("guest-name-input");
+    }
+
+    // Email Form (Strict, predictable two-way vertical flow)
+    if (id === "login-name-input") {
+        if (direction === "up") return document.getElementById("tab-btn-email");
+        if (direction === "down") return document.getElementById("login-email-input");
+    }
+    if (id === "login-email-input") {
+        if (direction === "up") return isSignUp ? document.getElementById("login-name-input") : document.getElementById("tab-btn-email");
+        if (direction === "down") return document.getElementById("login-password-input");
+        if (direction === "right") return document.getElementById("forgot-password-link");
+    }
+    if (id === "login-password-input") {
+        // GUARANTEED: Up always returns directly to email input! Never get trapped in forgot-password
+        if (direction === "up") return document.getElementById("login-email-input");
+        if (direction === "down") return document.getElementById("email-login-submit-btn");
+        if (direction === "right") return document.getElementById("forgot-password-link");
+    }
+    if (id === "forgot-password-link") {
+        if (direction === "up") return document.getElementById("login-email-input");
+        if (direction === "down") return document.getElementById("login-password-input");
+        if (direction === "left") return document.getElementById("login-password-input");
+    }
+    if (id === "email-login-submit-btn") {
+        if (direction === "up") return document.getElementById("login-password-input");
+        if (direction === "down") return document.getElementById("toggle-auth-mode-btn");
+    }
+    if (id === "toggle-auth-mode-btn") {
+        if (direction === "up") return document.getElementById("email-login-submit-btn");
+        if (direction === "down") return document.getElementById("open-policy-btn");
+    }
+    if (id === "open-policy-btn") {
+        if (direction === "up") {
+            const guestPane = document.getElementById("pane-guest");
+            if (guestPane && !guestPane.classList.contains("hidden")) {
+                return document.getElementById("guest-login-btn");
+            }
+            return document.getElementById("toggle-auth-mode-btn");
+        }
+    }
+
+    // Guest Form
+    if (id === "guest-name-input") {
+        if (direction === "up") return document.getElementById("tab-btn-guest");
+        if (direction === "down") return document.getElementById("guest-login-btn");
+    }
+    if (id === "guest-login-btn") {
+        if (direction === "up") return document.getElementById("guest-name-input");
+        if (direction === "down") return document.getElementById("open-policy-btn");
+    }
+
+    // --- 2. Main Screen Layout Navigation ---
+    // Top Bar
+    if (id === "my-profile-chip") {
+        if (direction === "right") return document.getElementById("header-logout-btn");
+        if (direction === "down") return document.getElementById("dial-uid-input");
+    }
+    if (id === "header-logout-btn") {
+        if (direction === "left") return document.getElementById("my-profile-chip");
+        if (direction === "down") {
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("chat-audio-call-btn") || document.getElementById("chat-back-btn");
+            }
+            return document.getElementById("dial-uid-input");
+        }
+    }
+
+    // Sidebar: Direct Dial & Add Contact
+    if (id === "dial-uid-input") {
+        if (direction === "up") return document.getElementById("my-profile-chip");
+        if (direction === "down") return document.getElementById("quick-chat-btn");
+        if (direction === "right") {
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("chat-back-btn") || document.getElementById("message-input");
+            }
+        }
+    }
+    if (id === "quick-chat-btn") {
+        if (direction === "up") return document.getElementById("dial-uid-input");
+        if (direction === "right") return document.getElementById("quick-audio-call-btn");
+        if (direction === "down") return document.getElementById("contact-uid-input");
+    }
+    if (id === "quick-audio-call-btn") {
+        if (direction === "left") return document.getElementById("quick-chat-btn");
+        if (direction === "right") return document.getElementById("quick-video-call-btn");
+        if (direction === "up") return document.getElementById("dial-uid-input");
+        if (direction === "down") return document.getElementById("contact-uid-input");
+    }
+    if (id === "quick-video-call-btn") {
+        if (direction === "left") return document.getElementById("quick-audio-call-btn");
+        if (direction === "up") return document.getElementById("dial-uid-input");
+        if (direction === "down") return document.getElementById("contact-uid-input");
+        if (direction === "right") {
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("messages-area") || document.getElementById("message-input");
+            }
+        }
+    }
+    if (id === "contact-uid-input") {
+        if (direction === "up") return document.getElementById("quick-chat-btn");
+        if (direction === "down") return document.getElementById("contact-name-input");
+        if (direction === "right") {
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("messages-area") || document.getElementById("message-input");
+            }
+        }
+    }
+    if (id === "contact-name-input") {
+        if (direction === "up") return document.getElementById("contact-uid-input");
+        if (direction === "down") return document.getElementById("save-contact-btn");
+    }
+    if (id === "save-contact-btn") {
+        if (direction === "up") return document.getElementById("contact-name-input");
+        if (direction === "down") {
+            const firstContact = document.querySelector("#contacts-list .tv-contact-card");
+            return firstContact || document.getElementById("sidebar-policy-btn");
+        }
+    }
+
+    // Contacts list cards & mini call buttons
+    if (current.classList.contains("tv-contact-card")) {
+        if (direction === "up") {
+            const prevCard = current.previousElementSibling;
+            if (prevCard && prevCard.classList.contains("tv-contact-card")) return prevCard;
+            return document.getElementById("save-contact-btn");
+        }
+        if (direction === "down") {
+            const nextCard = current.nextElementSibling;
+            if (nextCard && nextCard.classList.contains("tv-contact-card")) return nextCard;
+            return document.getElementById("sidebar-policy-btn");
+        }
+        if (direction === "right") {
+            const audioBtn = current.querySelector('.tv-mini-call-btn[data-action="audio"]');
+            if (audioBtn) return audioBtn;
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("message-input") || document.getElementById("chat-back-btn");
+            }
+        }
+    }
+
+    if (current.classList.contains("tv-mini-call-btn")) {
+        const card = current.closest(".tv-contact-card");
+        if (direction === "left") {
+            if (current.dataset.action === "video") {
+                const audioBtn = card?.querySelector('.tv-mini-call-btn[data-action="audio"]');
+                if (audioBtn) return audioBtn;
+            }
+            return card;
+        }
+        if (direction === "right") {
+            if (current.dataset.action === "audio") {
+                const videoBtn = card?.querySelector('.tv-mini-call-btn[data-action="video"]');
+                if (videoBtn) return videoBtn;
+            }
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("message-input") || document.getElementById("chat-back-btn");
+            }
+        }
+        if (direction === "up") {
+            const prevCard = card?.previousElementSibling;
+            if (prevCard && prevCard.classList.contains("tv-contact-card")) return prevCard;
+            return document.getElementById("save-contact-btn");
+        }
+        if (direction === "down") {
+            const nextCard = card?.nextElementSibling;
+            if (nextCard && nextCard.classList.contains("tv-contact-card")) return nextCard;
+            return document.getElementById("sidebar-policy-btn");
+        }
+    }
+
+    if (id === "sidebar-policy-btn") {
+        if (direction === "up") {
+            const lastContact = document.querySelector("#contacts-list .tv-contact-card:last-child");
+            return lastContact || document.getElementById("save-contact-btn");
+        }
+    }
+
+    // --- 3. Active Chat Stage ---
+    if (id === "chat-back-btn") {
+        if (direction === "left") return document.getElementById("quick-chat-btn");
+        if (direction === "right") return document.getElementById("chat-audio-call-btn");
+        if (direction === "down") return document.getElementById("messages-area");
+    }
+    if (id === "chat-audio-call-btn") {
+        if (direction === "left") return document.getElementById("chat-back-btn");
+        if (direction === "right") return document.getElementById("chat-video-call-btn");
+        if (direction === "down") return document.getElementById("messages-area");
+        if (direction === "up") return document.getElementById("header-logout-btn");
+    }
+    if (id === "chat-video-call-btn") {
+        if (direction === "left") return document.getElementById("chat-audio-call-btn");
+        if (direction === "down") return document.getElementById("messages-area");
+        if (direction === "up") return document.getElementById("header-logout-btn");
+    }
+    if (id === "messages-area") {
+        if (direction === "left") return document.querySelector("#contacts-list .tv-contact-card") || document.getElementById("dial-uid-input");
+        if (direction === "up") return document.getElementById("chat-audio-call-btn") || document.getElementById("chat-back-btn");
+        if (direction === "down") return document.getElementById("message-input");
+    }
+    if (id === "message-input") {
+        if (direction === "up") return document.getElementById("messages-area");
+        if (direction === "right") return document.getElementById("send-btn");
+        if (direction === "left") return document.querySelector("#contacts-list .tv-contact-card") || document.getElementById("quick-chat-btn");
+    }
+    if (id === "send-btn") {
+        if (direction === "left") return document.getElementById("message-input");
+        if (direction === "up") return document.getElementById("messages-area");
+    }
+
+    // --- 4. Call Screen Dock ---
+    if (id === "mute-mic-btn") {
+        if (direction === "right") return document.getElementById("toggle-video-btn");
+    }
+    if (id === "toggle-video-btn") {
+        if (direction === "left") return document.getElementById("mute-mic-btn");
+        if (direction === "right") return document.getElementById("end-call-btn");
+    }
+    if (id === "end-call-btn") {
+        if (direction === "left") return document.getElementById("toggle-video-btn");
+    }
+
+    // --- 5. Incoming / Outgoing Overlays ---
+    if (id === "reject-call-btn") {
+        if (direction === "right") return document.getElementById("accept-call-btn");
+    }
+    if (id === "accept-call-btn") {
+        if (direction === "left") return document.getElementById("reject-call-btn");
+    }
+
+    // --- 6. Forgot Password Modal ---
+    if (id === "close-forgot-modal-btn") {
+        if (direction === "down") return document.getElementById("reset-email-input");
+    }
+    if (id === "reset-email-input") {
+        if (direction === "up") return document.getElementById("close-forgot-modal-btn");
+        if (direction === "down") return document.getElementById("send-reset-link-btn");
+    }
+    if (id === "send-reset-link-btn") {
+        if (direction === "up") return document.getElementById("reset-email-input");
+        if (direction === "down") return document.getElementById("cancel-reset-btn");
+    }
+    if (id === "cancel-reset-btn") {
+        if (direction === "up") return document.getElementById("send-reset-link-btn");
+        if (direction === "down") return document.getElementById("close-forgot-modal-btn");
+    }
+
+    // --- 7. Profile Modal ---
+    if (id === "copy-uid-btn") {
+        if (direction === "down") return document.getElementById("profile-policy-btn");
+    }
+    if (id === "profile-policy-btn") {
+        if (direction === "up") return document.getElementById("copy-uid-btn");
+        if (direction === "right") return document.getElementById("close-profile-btn");
+        if (direction === "down") return document.getElementById("modal-logout-btn");
+    }
+    if (id === "close-profile-btn") {
+        if (direction === "left") return document.getElementById("profile-policy-btn");
+        if (direction === "right") return document.getElementById("modal-logout-btn");
+        if (direction === "up") return document.getElementById("copy-uid-btn");
+    }
+    if (id === "modal-logout-btn") {
+        if (direction === "left") return document.getElementById("close-profile-btn");
+        if (direction === "up") return document.getElementById("copy-uid-btn");
+    }
+
+    // --- 8. Policy Modal ---
+    if (id === "close-policy-btn") {
+        if (direction === "down") return document.getElementById("policy-scroll-area");
+    }
+    if (id === "policy-scroll-area") {
+        if (direction === "up") return document.getElementById("close-policy-btn");
+        if (direction === "down") return document.getElementById("policy-ok-btn");
+    }
+    if (id === "policy-ok-btn") {
+        if (direction === "up") return document.getElementById("policy-scroll-area");
+    }
+
+    return null;
 }
 
 function handleDpadNavigation(direction) {
@@ -1645,7 +2018,7 @@ function handleDpadNavigation(direction) {
 
     let current = document.activeElement;
     if (!current || !focusables.includes(current)) {
-        focusables[0].focus();
+        autoFocusFirstElement();
         return;
     }
 
@@ -1666,50 +2039,86 @@ function handleDpadNavigation(direction) {
         }
     }
 
+    // 1. Check deterministic, high-priority form/layout navigation targets
+    const customTarget = getCustomNavigationTarget(current, direction);
+    if (customTarget && isElementVisibleAndFocusable(customTarget)) {
+        focusElement(customTarget);
+        return;
+    }
+
+    // 2. High-precision 2D Spatial Geometry fallback (W3C Projection Overlap Algorithm)
     const currentRect = current.getBoundingClientRect();
-    const currentCenter = { 
-        x: currentRect.left + currentRect.width / 2, 
-        y: currentRect.top + currentRect.height / 2 
-    };
-
     let bestElement = null;
-    let bestDistance = Infinity;
+    let bestScore = Infinity;
 
-    focusables.forEach(target => {
-        if (target === current) return;
+    for (const target of focusables) {
+        if (target === current) continue;
         const targetRect = target.getBoundingClientRect();
-        const targetCenter = { 
-            x: targetRect.left + targetRect.width / 2, 
-            y: targetRect.top + targetRect.height / 2 
-        };
-        const dx = targetCenter.x - currentCenter.x;
-        const dy = targetCenter.y - currentCenter.y;
 
-        let isValidDirection = false;
-        if (direction === 'up' && dy < -4) isValidDirection = true;
-        if (direction === 'down' && dy > 4) isValidDirection = true;
-        if (direction === 'left' && dx < -4) isValidDirection = true;
-        if (direction === 'right' && dx > 4) isValidDirection = true;
+        let isCandidate = false;
+        let primaryDist = 0;
+        let overlap = 0;
+        let orthogonalGap = 0;
 
-        if (isValidDirection) {
-            let dist = 0;
-            if (direction === 'up' || direction === 'down') {
-                dist = Math.abs(dy) + Math.abs(dx) * 1.35;
-            } else {
-                dist = Math.abs(dx) + Math.abs(dy) * 1.35;
+        if (direction === 'down') {
+            if (targetRect.top >= currentRect.top + 2) {
+                isCandidate = true;
+                primaryDist = Math.max(0, targetRect.top - currentRect.bottom);
+                overlap = Math.max(0, Math.min(currentRect.right, targetRect.right) - Math.max(currentRect.left, targetRect.left));
+                orthogonalGap = overlap > 0 ? 0 : Math.max(0, Math.max(currentRect.left - targetRect.right, targetRect.left - currentRect.right));
             }
+        } else if (direction === 'up') {
+            if (targetRect.bottom <= currentRect.bottom - 2) {
+                isCandidate = true;
+                primaryDist = Math.max(0, currentRect.top - targetRect.bottom);
+                overlap = Math.max(0, Math.min(currentRect.right, targetRect.right) - Math.max(currentRect.left, targetRect.left));
+                orthogonalGap = overlap > 0 ? 0 : Math.max(0, Math.max(currentRect.left - targetRect.right, targetRect.left - currentRect.right));
+            }
+        } else if (direction === 'right') {
+            if (targetRect.left >= currentRect.left + 2) {
+                isCandidate = true;
+                primaryDist = Math.max(0, targetRect.left - currentRect.right);
+                overlap = Math.max(0, Math.min(currentRect.bottom, targetRect.bottom) - Math.max(currentRect.top, targetRect.top));
+                orthogonalGap = overlap > 0 ? 0 : Math.max(0, Math.max(currentRect.top - targetRect.bottom, targetRect.top - currentRect.bottom));
+            }
+        } else if (direction === 'left') {
+            if (targetRect.right <= currentRect.right - 2) {
+                isCandidate = true;
+                primaryDist = Math.max(0, currentRect.left - targetRect.right);
+                overlap = Math.max(0, Math.min(currentRect.bottom, targetRect.bottom) - Math.max(currentRect.top, targetRect.top));
+                orthogonalGap = overlap > 0 ? 0 : Math.max(0, Math.max(currentRect.top - targetRect.bottom, targetRect.top - currentRect.bottom));
+            }
+        }
 
-            if (dist < bestDistance) {
-                bestDistance = dist;
+        if (isCandidate) {
+            // Overlapping elements in the movement axis get heavily prioritized (zero orthogonal penalty)
+            const score = primaryDist + orthogonalGap * 3.5;
+            if (score < bestScore) {
+                bestScore = score;
                 bestElement = target;
             }
         }
-    });
+    }
 
     if (bestElement) {
-        bestElement.focus();
-        bestElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        focusElement(bestElement);
     }
+}
+
+function handleTabNavigation(isShift) {
+    const focusables = getVisibleFocusableElements();
+    if (focusables.length === 0) return;
+
+    let current = document.activeElement;
+    let idx = focusables.indexOf(current);
+
+    if (idx === -1) {
+        focusElement(focusables[0]);
+        return;
+    }
+
+    let nextIdx = isShift ? (idx - 1 + focusables.length) % focusables.length : (idx + 1) % focusables.length;
+    focusElement(focusables[nextIdx]);
 }
 
 let backPressCount = 0;
@@ -1767,16 +2176,38 @@ if (window.Capacitor?.Plugins?.App) {
 
 // Global Remote Keydown Event Listener (Amazon Fire TV Remote & D-Pad Engine)
 window.addEventListener("keydown", (e) => {
-    const isUp = e.key === "ArrowUp" || e.keyCode === 19 || e.keyCode === 38;
-    const isDown = e.key === "ArrowDown" || e.keyCode === 20 || e.keyCode === 40;
-    const isLeft = e.key === "ArrowLeft" || e.keyCode === 21 || e.keyCode === 37;
-    const isRight = e.key === "ArrowRight" || e.keyCode === 22 || e.keyCode === 39;
-    const isSelect = e.key === "Enter" || e.key === "Select" || e.keyCode === 13 || e.keyCode === 23;
-    const isBack = e.key === "Escape" || e.keyCode === 4 || e.keyCode === 10009 || e.key === "GoBack" || e.key === "Back";
+    // 0. Ignore IME composition events (Gboard, Asian IMEs, TV virtual keyboard composition)
+    if (e.isComposing) return;
 
     const active = document.activeElement;
     const isInput = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
 
+    // Standard TV remote & Keyboard key identification (NO CapsLock keyCode 20, NO Pause keyCode 19)
+    const isUp = e.key === "ArrowUp" || e.code === "ArrowUp" || e.keyCode === 38;
+    const isDown = e.key === "ArrowDown" || e.code === "ArrowDown" || e.keyCode === 40;
+    const isLeft = e.key === "ArrowLeft" || e.code === "ArrowLeft" || e.keyCode === 37;
+    const isRight = e.key === "ArrowRight" || e.code === "ArrowRight" || e.keyCode === 39;
+    const isTab = e.key === "Tab" || e.keyCode === 9;
+    const isEnter = e.key === "Enter" || e.keyCode === 13 || (!isInput && (e.key === "Select" || e.keyCode === 23));
+    const isBack = e.key === "Escape" || e.code === "Escape" || e.key === "GoBack" || e.key === "Back" || e.keyCode === 10009 || (!isInput && (e.key === "Backspace" || e.keyCode === 4));
+
+    // 1. Tab / Shift+Tab cycling across visible focusables
+    if (isTab) {
+        e.preventDefault();
+        handleTabNavigation(e.shiftKey);
+        return;
+    }
+
+    // 2. Hardware / Remote Back key
+    if (isBack) {
+        if (!isInput || active.value.length === 0 || e.key === "Escape" || e.keyCode === 10009) {
+            e.preventDefault();
+            handleBackKey();
+        }
+        return;
+    }
+
+    // 3. Directional Navigation (Up, Down, Left, Right)
     if (isUp) {
         e.preventDefault();
         handleDpadNavigation("up");
@@ -1790,56 +2221,61 @@ window.addEventListener("keydown", (e) => {
     }
 
     if (isLeft) {
-        if (!isInput || active.selectionStart === 0 || active.value.length === 0) {
+        if (!isInput) {
+            e.preventDefault();
+            handleDpadNavigation("left");
+        } else if (active.selectionStart === 0 && active.selectionEnd === 0) {
+            // Only leave input to the left when cursor is strictly at position 0
             e.preventDefault();
             handleDpadNavigation("left");
         }
+        // Otherwise, allow natural caret cursor movement inside the text
         return;
     }
 
     if (isRight) {
-        if (!isInput || active.selectionEnd === active.value.length || active.value.length === 0) {
+        if (!isInput) {
+            e.preventDefault();
+            handleDpadNavigation("right");
+        } else if (active.selectionStart === active.value.length && active.selectionEnd === active.value.length) {
+            // Only leave input to the right when cursor is strictly at the end of text
             e.preventDefault();
             handleDpadNavigation("right");
         }
+        // Otherwise, allow natural caret cursor movement inside the text
         return;
     }
 
-    if (isBack) {
-        if (!isInput || active.value.length === 0 || e.key === "Escape" || e.keyCode === 4) {
-            e.preventDefault();
-            handleBackKey();
-        }
-        return;
-    }
-
-    if (isSelect) {
+    // 4. Action / Enter / Select Key
+    if (isEnter) {
         if (active && active.classList.contains("tv-focusable") && !isInput) {
             e.preventDefault();
             active.click();
             return;
         }
 
-        // Context-aware input submission on Enter / Select
         if (active && isInput) {
             if (active.id === "dial-uid-input") {
                 const val = active.value.trim().replace(/\D/g, '');
                 if (val.length === 10) {
                     e.preventDefault();
                     document.getElementById("quick-chat-btn")?.click();
+                } else {
+                    e.preventDefault();
+                    focusElement(document.getElementById("quick-chat-btn"));
                 }
             } else if (active.id === "contact-uid-input") {
                 e.preventDefault();
-                document.getElementById("contact-name-input")?.focus();
+                focusElement(document.getElementById("contact-name-input"));
             } else if (active.id === "contact-name-input") {
                 e.preventDefault();
                 document.getElementById("save-contact-btn")?.click();
             } else if (active.id === "login-name-input") {
                 e.preventDefault();
-                document.getElementById("login-email-input")?.focus();
+                focusElement(document.getElementById("login-email-input"));
             } else if (active.id === "login-email-input") {
                 e.preventDefault();
-                document.getElementById("login-password-input")?.focus();
+                focusElement(document.getElementById("login-password-input"));
             } else if (active.id === "login-password-input") {
                 e.preventDefault();
                 document.getElementById("email-login-submit-btn")?.click();
@@ -1860,11 +2296,18 @@ window.addEventListener("keydown", (e) => {
 // ----------------- Global Clicks & UI Triggers -----------------
 let isSignUpMode = false;
 
-// Fluid Mobile & Tablet Touch Support (Syncs Cyan Glow and focus to touched target)
+// Fluid Focus & Touch Support (Syncs Cyan Glow and focus to focused/touched target)
+document.addEventListener("focusin", (e) => {
+    if (e.target && e.target.classList && e.target.classList.contains("tv-focusable")) {
+        document.querySelectorAll('.tv-focused').forEach(node => node.classList.remove('tv-focused'));
+        e.target.classList.add('tv-focused');
+    }
+});
+
 document.addEventListener("pointerdown", (e) => {
     const focusable = e.target.closest(".tv-focusable");
     if (focusable) {
-        focusable.focus();
+        focusElement(focusable);
     }
 }, { passive: true });
 
@@ -1878,7 +2321,8 @@ document.addEventListener("click", async (e) => {
         const tabEl = document.getElementById("tab-btn-email");
         if (tabEl) tabEl.classList.add("active");
         document.getElementById("pane-email")?.classList.remove("hidden");
-        document.getElementById("login-email-input")?.focus();
+        const isSignUp = !document.getElementById("email-signup-name-group")?.classList.contains("hidden");
+        focusElement(isSignUp ? document.getElementById("login-name-input") : document.getElementById("login-email-input"));
         return;
     }
 
@@ -1888,7 +2332,7 @@ document.addEventListener("click", async (e) => {
         const tabEl = document.getElementById("tab-btn-guest");
         if (tabEl) tabEl.classList.add("active");
         document.getElementById("pane-guest")?.classList.remove("hidden");
-        document.getElementById("guest-name-input")?.focus();
+        focusElement(document.getElementById("guest-name-input"));
         return;
     }
 
@@ -1903,10 +2347,12 @@ document.addEventListener("click", async (e) => {
             nameGroup?.classList.remove("hidden");
             if (btnText) btnText.innerText = "Create Account";
             if (toggleBtn) toggleBtn.innerText = "Already have an account? Sign In";
+            focusElement(document.getElementById("login-name-input"));
         } else {
             nameGroup?.classList.add("hidden");
             if (btnText) btnText.innerText = "Sign In";
             if (toggleBtn) toggleBtn.innerText = "Don't have an account? Sign Up";
+            focusElement(document.getElementById("login-email-input"));
         }
         return;
     }
@@ -1922,14 +2368,14 @@ document.addEventListener("click", async (e) => {
             statusEl.innerText = "";
         }
         document.getElementById("forgot-password-modal")?.classList.remove("hidden");
-        resetInput?.focus();
+        focusElement(resetInput);
         return;
     }
 
     // Close Forgot Password Modal
     if (e.target.id === "close-forgot-modal-btn" || e.target.id === "cancel-reset-btn") {
         document.getElementById("forgot-password-modal")?.classList.add("hidden");
-        document.getElementById("login-password-input")?.focus();
+        focusElement(document.getElementById("login-password-input"));
         return;
     }
 
@@ -2317,13 +2763,13 @@ document.addEventListener("click", async (e) => {
         if (my10DigitUid) {
             saveUserUidToFirestore(currentUser, my10DigitUid);
         }
-        setTimeout(() => document.getElementById("copy-uid-btn")?.focus(), 60);
+        setTimeout(() => focusElement(document.getElementById("copy-uid-btn")), 60);
         return;
     }
 
     if (e.target.id === "close-profile-btn" || e.target.closest("#close-profile-btn")) {
         document.getElementById("profile-modal")?.classList.add("hidden");
-        setTimeout(() => document.getElementById("my-profile-chip")?.focus(), 60);
+        setTimeout(() => focusElement(document.getElementById("my-profile-chip")), 60);
         return;
     }
 
@@ -2347,7 +2793,7 @@ document.addEventListener("click", async (e) => {
     if (e.target.id === "open-policy-btn" || e.target.id === "sidebar-policy-btn" || e.target.id === "profile-policy-btn" || e.target.closest(".tv-policy-btn-trigger")) {
         document.getElementById("profile-modal")?.classList.add("hidden");
         document.getElementById("policy-modal")?.classList.remove("hidden");
-        setTimeout(() => document.getElementById("policy-ok-btn")?.focus(), 60);
+        setTimeout(() => focusElement(document.getElementById("policy-ok-btn")), 60);
         return;
     }
 

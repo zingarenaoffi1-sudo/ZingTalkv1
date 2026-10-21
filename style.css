@@ -104,11 +104,13 @@ textarea.tv-focusable {
 }
 
 .tv-messages-scroll.tv-focusable:focus,
-.tv-policy-scroll.tv-focusable:focus {
+.tv-policy-scroll.tv-focusable:focus,
+.tv-input.tv-focusable:focus,
+.tv-input.tv-focused {
     transform: none !important;
     outline: 2.5px solid var(--tv-cyan-glow) !important;
-    outline-offset: -2px !important;
-    box-shadow: 0 0 20px rgba(0, 210, 157, 0.5) !important;
+    outline-offset: -1px !important;
+    box-shadow: 0 0 22px rgba(0, 210, 157, 0.6) !important;
 }
 
 /* ==========================================================================
