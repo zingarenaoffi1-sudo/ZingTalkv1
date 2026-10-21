@@ -98,7 +98,7 @@
                     <div class="tv-auth-form">
                         <div class="tv-input-group">
                             <label class="tv-input-label" for="guest-name-input">TV Display Name</label>
-                            <input type="text" id="guest-name-input" class="tv-input tv-focusable" tabindex="0" placeholder="e.g. Living Room TV">
+                            <input type="text" id="guest-name-input" class="tv-input tv-focusable" tabindex="0" placeholder="e.g. Living Room TV" inputmode="text" autocomplete="name">
                         </div>
                         <button type="button" id="guest-login-btn" class="tv-primary-btn tv-focusable" tabindex="0">
                             <span>Start as Guest</span>
@@ -131,7 +131,7 @@
                             <span class="tv-card-hint">Enter 10-Digit UID</span>
                         </div>
                         <div class="tv-direct-dial-row">
-                            <input type="text" id="dial-uid-input" maxlength="10" class="tv-input tv-focusable" tabindex="0" placeholder="Enter 10-digit UID">
+                            <input type="tel" id="dial-uid-input" maxlength="10" inputmode="numeric" pattern="[0-9]*" class="tv-input tv-focusable" tabindex="0" placeholder="Enter 10-digit UID">
                         </div>
                         <div class="tv-direct-dial-actions">
                             <button type="button" id="quick-chat-btn" class="tv-action-btn tv-action-primary tv-focusable" tabindex="0">
@@ -152,8 +152,8 @@
                             <span class="tv-card-title">Add Contact</span>
                         </div>
                         <div class="tv-add-contact-inputs">
-                            <input type="text" id="contact-uid-input" maxlength="10" class="tv-input tv-focusable" tabindex="0" placeholder="10-digit UID">
-                            <input type="text" id="contact-name-input" class="tv-input tv-focusable" tabindex="0" placeholder="Contact Name" style="margin-top: 10px;">
+                            <input type="tel" id="contact-uid-input" maxlength="10" inputmode="numeric" pattern="[0-9]*" class="tv-input tv-focusable" tabindex="0" placeholder="10-digit UID">
+                            <input type="text" id="contact-name-input" inputmode="text" class="tv-input tv-focusable" tabindex="0" placeholder="Contact Name" style="margin-top: 10px;">
                             <button type="button" id="save-contact-btn" class="tv-secondary-btn tv-focusable" tabindex="0" style="margin-top: 12px;">
                                 <span>Save Contact</span>
                             </button>

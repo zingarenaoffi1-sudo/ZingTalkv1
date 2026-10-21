@@ -2255,39 +2255,58 @@ window.addEventListener("keydown", (e) => {
         }
 
         if (active && isInput) {
+            // When Enter / Center (OK) is pressed on an input:
+            // If the field already has text entered (e.g. from physical keyboard), Enter advances/submits.
+            // If the field is being selected or opened on Fire TV, do not preventDefault so Android/Fire OS
+            // natively summons the Fire TV virtual on-screen keyboard (IME) for remote or voice typing!
             if (active.id === "dial-uid-input") {
                 const val = active.value.trim().replace(/\D/g, '');
                 if (val.length === 10) {
                     e.preventDefault();
                     document.getElementById("quick-chat-btn")?.click();
-                } else {
-                    e.preventDefault();
-                    focusElement(document.getElementById("quick-chat-btn"));
                 }
             } else if (active.id === "contact-uid-input") {
-                e.preventDefault();
-                focusElement(document.getElementById("contact-name-input"));
+                const val = active.value.trim().replace(/\D/g, '');
+                if (val.length === 10) {
+                    e.preventDefault();
+                    focusElement(document.getElementById("contact-name-input"));
+                }
             } else if (active.id === "contact-name-input") {
-                e.preventDefault();
-                document.getElementById("save-contact-btn")?.click();
+                if (active.value.trim().length > 0) {
+                    e.preventDefault();
+                    document.getElementById("save-contact-btn")?.click();
+                }
             } else if (active.id === "login-name-input") {
-                e.preventDefault();
-                focusElement(document.getElementById("login-email-input"));
+                if (active.value.trim().length > 0) {
+                    e.preventDefault();
+                    focusElement(document.getElementById("login-email-input"));
+                }
             } else if (active.id === "login-email-input") {
-                e.preventDefault();
-                focusElement(document.getElementById("login-password-input"));
+                if (active.value.trim().length > 0) {
+                    e.preventDefault();
+                    focusElement(document.getElementById("login-password-input"));
+                }
             } else if (active.id === "login-password-input") {
-                e.preventDefault();
-                document.getElementById("email-login-submit-btn")?.click();
+                if (active.value.length > 0) {
+                    e.preventDefault();
+                    document.getElementById("email-login-submit-btn")?.click();
+                }
             } else if (active.id === "guest-name-input") {
-                e.preventDefault();
-                document.getElementById("guest-login-btn")?.click();
+                if (active.value.trim().length > 0) {
+                    e.preventDefault();
+                    document.getElementById("guest-login-btn")?.click();
+                }
             } else if (active.id === "reset-email-input") {
-                e.preventDefault();
-                document.getElementById("send-reset-link-btn")?.click();
+                if (active.value.trim().length > 0) {
+                    e.preventDefault();
+                    document.getElementById("send-reset-link-btn")?.click();
+                }
             } else if (active.id === "message-input") {
-                e.preventDefault();
-                sendMessageLogic();
+                const text = active.value.trim();
+                if (text.length > 0) {
+                    e.preventDefault();
+                    sendMessageLogic();
+                }
             }
         }
     }

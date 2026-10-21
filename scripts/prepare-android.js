@@ -187,6 +187,9 @@ if (fs.existsSync(manifestPath)) {
         if (!content.includes('android:keepScreenOn')) {
             content = content.replace('<activity', '<activity android:keepScreenOn="true"');
         }
+        if (!content.includes('android:windowSoftInputMode')) {
+            content = content.replace('<activity', '<activity android:windowSoftInputMode="adjustPan"');
+        }
     }
 
     fs.writeFileSync(manifestPath, content, 'utf8');
