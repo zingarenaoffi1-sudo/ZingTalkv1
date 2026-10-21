@@ -1630,9 +1630,14 @@ export function focusElement(el) {
 
 function isElementVisibleAndFocusable(el) {
     if (!el) return false;
-    if (el.offsetParent === null && el.tagName !== 'BODY') return false;
     if (el.closest('.hidden')) return false;
     if (el.disabled) return false;
+    if (el.offsetParent === null && el.tagName !== 'BODY') {
+        const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+        if (!style || (style.position !== 'fixed' && !el.closest('.tv-modal-backdrop'))) {
+            return false;
+        }
+    }
     const rect = el.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
 }
@@ -1720,10 +1725,14 @@ function getCustomNavigationTarget(current, direction) {
 
     // --- 1. Login Screen ---
     if (id === "tab-btn-email") {
+        if (direction === "up") return document.getElementById("tab-btn-email");
+        if (direction === "left") return document.getElementById("tab-btn-email");
         if (direction === "right") return document.getElementById("tab-btn-guest");
         if (direction === "down") return isSignUp ? document.getElementById("login-name-input") : document.getElementById("login-email-input");
     }
     if (id === "tab-btn-guest") {
+        if (direction === "up") return document.getElementById("tab-btn-guest");
+        if (direction === "right") return document.getElementById("tab-btn-guest");
         if (direction === "left") return document.getElementById("tab-btn-email");
         if (direction === "down") return document.getElementById("guest-name-input");
     }
@@ -1758,6 +1767,7 @@ function getCustomNavigationTarget(current, direction) {
         if (direction === "down") return document.getElementById("open-policy-btn");
     }
     if (id === "open-policy-btn") {
+        if (direction === "down") return document.getElementById("open-policy-btn");
         if (direction === "up") {
             const guestPane = document.getElementById("pane-guest");
             if (guestPane && !guestPane.classList.contains("hidden")) {
@@ -2048,51 +2058,64 @@ function handleDpadNavigation(direction) {
 
     // 2. High-precision 2D Spatial Geometry fallback (W3C Projection Overlap Algorithm)
     const currentRect = current.getBoundingClientRect();
+    const currentCenterX = (currentRect.left + currentRect.right) / 2;
+    const currentCenterY = (currentRect.top + currentRect.bottom) / 2;
+
     let bestElement = null;
     let bestScore = Infinity;
 
     for (const target of focusables) {
         if (target === current) continue;
         const targetRect = target.getBoundingClientRect();
+        const targetCenterX = (targetRect.left + targetRect.right) / 2;
+        const targetCenterY = (targetRect.top + targetRect.bottom) / 2;
 
         let isCandidate = false;
         let primaryDist = 0;
-        let overlap = 0;
         let orthogonalGap = 0;
+        let centerOrthogonal = 0;
 
         if (direction === 'down') {
-            if (targetRect.top >= currentRect.top + 2) {
+            // Target must be strictly below current
+            if (targetCenterY > currentCenterY + 4 && targetRect.bottom > currentRect.bottom + 2) {
                 isCandidate = true;
                 primaryDist = Math.max(0, targetRect.top - currentRect.bottom);
-                overlap = Math.max(0, Math.min(currentRect.right, targetRect.right) - Math.max(currentRect.left, targetRect.left));
+                const overlap = Math.max(0, Math.min(currentRect.right, targetRect.right) - Math.max(currentRect.left, targetRect.left));
                 orthogonalGap = overlap > 0 ? 0 : Math.max(0, Math.max(currentRect.left - targetRect.right, targetRect.left - currentRect.right));
+                centerOrthogonal = Math.abs(targetCenterX - currentCenterX);
             }
         } else if (direction === 'up') {
-            if (targetRect.bottom <= currentRect.bottom - 2) {
+            // Target must be strictly above current
+            if (targetCenterY < currentCenterY - 4 && targetRect.top < currentRect.top - 2) {
                 isCandidate = true;
                 primaryDist = Math.max(0, currentRect.top - targetRect.bottom);
-                overlap = Math.max(0, Math.min(currentRect.right, targetRect.right) - Math.max(currentRect.left, targetRect.left));
+                const overlap = Math.max(0, Math.min(currentRect.right, targetRect.right) - Math.max(currentRect.left, targetRect.left));
                 orthogonalGap = overlap > 0 ? 0 : Math.max(0, Math.max(currentRect.left - targetRect.right, targetRect.left - currentRect.right));
+                centerOrthogonal = Math.abs(targetCenterX - currentCenterX);
             }
         } else if (direction === 'right') {
-            if (targetRect.left >= currentRect.left + 2) {
+            // Target must be strictly to the right
+            if (targetCenterX > currentCenterX + 4 && targetRect.right > currentRect.right + 2) {
                 isCandidate = true;
                 primaryDist = Math.max(0, targetRect.left - currentRect.right);
-                overlap = Math.max(0, Math.min(currentRect.bottom, targetRect.bottom) - Math.max(currentRect.top, targetRect.top));
+                const overlap = Math.max(0, Math.min(currentRect.bottom, targetRect.bottom) - Math.max(currentRect.top, targetRect.top));
                 orthogonalGap = overlap > 0 ? 0 : Math.max(0, Math.max(currentRect.top - targetRect.bottom, targetRect.top - currentRect.bottom));
+                centerOrthogonal = Math.abs(targetCenterY - currentCenterY);
             }
         } else if (direction === 'left') {
-            if (targetRect.right <= currentRect.right - 2) {
+            // Target must be strictly to the left
+            if (targetCenterX < currentCenterX - 4 && targetRect.left < currentRect.left - 2) {
                 isCandidate = true;
                 primaryDist = Math.max(0, currentRect.left - targetRect.right);
-                overlap = Math.max(0, Math.min(currentRect.bottom, targetRect.bottom) - Math.max(currentRect.top, targetRect.top));
+                const overlap = Math.max(0, Math.min(currentRect.bottom, targetRect.bottom) - Math.max(currentRect.top, targetRect.top));
                 orthogonalGap = overlap > 0 ? 0 : Math.max(0, Math.max(currentRect.top - targetRect.bottom, targetRect.top - currentRect.bottom));
+                centerOrthogonal = Math.abs(targetCenterY - currentCenterY);
             }
         }
 
         if (isCandidate) {
             // Overlapping elements in the movement axis get heavily prioritized (zero orthogonal penalty)
-            const score = primaryDist + orthogonalGap * 3.5;
+            const score = primaryDist + (orthogonalGap * 4) + (centerOrthogonal * 0.5);
             if (score < bestScore) {
                 bestScore = score;
                 bestElement = target;
@@ -2182,14 +2205,31 @@ window.addEventListener("keydown", (e) => {
     const active = document.activeElement;
     const isInput = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
 
-    // Standard TV remote & Keyboard key identification (NO CapsLock keyCode 20, NO Pause keyCode 19)
-    const isUp = e.key === "ArrowUp" || e.code === "ArrowUp" || e.keyCode === 38;
-    const isDown = e.key === "ArrowDown" || e.code === "ArrowDown" || e.keyCode === 40;
-    const isLeft = e.key === "ArrowLeft" || e.code === "ArrowLeft" || e.keyCode === 37;
-    const isRight = e.key === "ArrowRight" || e.code === "ArrowRight" || e.keyCode === 39;
-    const isTab = e.key === "Tab" || e.keyCode === 9;
-    const isEnter = e.key === "Enter" || e.keyCode === 13 || (!isInput && (e.key === "Select" || e.keyCode === 23));
-    const isBack = e.key === "Escape" || e.code === "Escape" || e.key === "GoBack" || e.key === "Back" || e.keyCode === 10009 || (!isInput && (e.key === "Backspace" || e.keyCode === 4));
+    // Guard against PC keyboard CapsLock (keyCode 20) and Pause/Break (keyCode 19)
+    const isCapsLock = e.key === "CapsLock" || e.code === "CapsLock" || (typeof e.key === "string" && e.key.toLowerCase().includes("caps"));
+    const isPause = e.key === "Pause" || e.code === "Pause" || (typeof e.key === "string" && e.key.toLowerCase().includes("pause"));
+
+    // Universal TV Remote, Fire TV Remote, AWS Device Farm & Physical Keyboard Identification:
+    // UP: ArrowUp, Up (Legacy Android), code: ArrowUp, keyCode 38 (Standard), keyCode 19 (Android KEYCODE_DPAD_UP)
+    const isUp = e.key === "ArrowUp" || e.key === "Up" || e.code === "ArrowUp" || e.keyCode === 38 || e.which === 38 || (!isPause && (e.keyCode === 19 || e.which === 19));
+
+    // DOWN: ArrowDown, Down (Legacy Android), code: ArrowDown, keyCode 40 (Standard), keyCode 20 (Android KEYCODE_DPAD_DOWN)
+    const isDown = e.key === "ArrowDown" || e.key === "Down" || e.code === "ArrowDown" || e.keyCode === 40 || e.which === 40 || (!isCapsLock && (e.keyCode === 20 || e.which === 20));
+
+    // LEFT: ArrowLeft, Left (Legacy Android), code: ArrowLeft, keyCode 37 (Standard), keyCode 21 (Android KEYCODE_DPAD_LEFT)
+    const isLeft = e.key === "ArrowLeft" || e.key === "Left" || e.code === "ArrowLeft" || e.keyCode === 37 || e.which === 37 || e.keyCode === 21 || e.which === 21;
+
+    // RIGHT: ArrowRight, Right (Legacy Android), code: ArrowRight, keyCode 39 (Standard), keyCode 22 (Android KEYCODE_DPAD_RIGHT)
+    const isRight = e.key === "ArrowRight" || e.key === "Right" || e.code === "ArrowRight" || e.keyCode === 39 || e.which === 39 || e.keyCode === 22 || e.which === 22;
+
+    // TAB: Standard Tab cycling
+    const isTab = e.key === "Tab" || e.keyCode === 9 || e.which === 9;
+
+    // ENTER: Enter, Select, Ok, keyCode 13, Android KEYCODE_ENTER (66), Android KEYCODE_DPAD_CENTER (23)
+    const isEnter = e.key === "Enter" || e.code === "Enter" || e.key === "Select" || e.key === "Ok" || e.keyCode === 13 || e.which === 13 || e.keyCode === 66 || e.which === 66 || e.keyCode === 23 || e.which === 23;
+
+    // BACK: Escape, GoBack, Back, Android KEYCODE_BACK (4), Samsung Tizen (10009), Backspace when not in input
+    const isBack = e.key === "Escape" || e.code === "Escape" || e.key === "GoBack" || e.key === "Back" || e.keyCode === 27 || e.which === 27 || e.keyCode === 4 || e.which === 4 || e.keyCode === 10009 || (!isInput && (e.key === "Backspace" || e.keyCode === 8 || e.which === 8));
 
     // 1. Tab / Shift+Tab cycling across visible focusables
     if (isTab) {
