@@ -27,10 +27,14 @@
     -webkit-tap-highlight-color: transparent;
 }
 
+*:focus {
+    outline: none;
+}
+
 body.tv-body {
     width: 100vw;
     height: 100vh;
-    padding: env(safe-area-inset-top, 12px) env(safe-area-inset-right, 20px) env(safe-area-inset-bottom, 12px) env(safe-area-inset-left, 20px);
+    padding: env(safe-area-inset-top, 24px) env(safe-area-inset-right, 36px) env(safe-area-inset-bottom, 24px) env(safe-area-inset-left, 36px);
     overflow: hidden;
     background-color: var(--tv-bg);
     color: var(--tv-text-primary);

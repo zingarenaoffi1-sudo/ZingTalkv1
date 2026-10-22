@@ -1205,7 +1205,20 @@ async function startWebRTC(isCaller) {
     }
 
     peerConnection = new RTCPeerConnection(rtcConfig);
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    localStream.getTracks().forEach(track => {
+        peerConnection.addTrack(track, localStream);
+        track.onended = () => {
+            if (track.kind === "video") {
+                console.warn("[WebRTC] Local video track ended (hardware disconnect/unplug).");
+                showToast("Camera disconnected or unavailable.");
+                const localVideo = document.getElementById("local-video");
+                if (localVideo) localVideo.classList.add("hidden");
+            } else if (track.kind === "audio") {
+                console.warn("[WebRTC] Local audio track ended.");
+                showToast("Microphone disconnected.");
+            }
+        };
+    });
 
     // Dynamic bandwidth floor and balanced resolution degradation
     try {
@@ -1398,6 +1411,11 @@ function endCallCleanup() {
     activeCallTarget = null;
     pendingOffer = null;
     iceCandidatesQueue = [];
+
+    // The "Lost Focus Trap" Fix: When call UI closes, immediately restore focus to a live interactive element!
+    setTimeout(() => {
+        autoFocusFirstElement();
+    }, 120);
 }
 
 function endCall() {
@@ -1632,6 +1650,13 @@ function isElementVisibleAndFocusable(el) {
     if (!el) return false;
     if (el.closest('.hidden')) return false;
     if (el.disabled) return false;
+    if (el.getAttribute('tabindex') === '-1') return false;
+    if (window.getComputedStyle) {
+        const style = window.getComputedStyle(el);
+        if (style) {
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+        }
+    }
     if (el.offsetParent === null && el.tagName !== 'BODY') {
         const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
         if (!style || (style.position !== 'fixed' && !el.closest('.tv-modal-backdrop'))) {
@@ -2146,6 +2171,8 @@ function handleTabNavigation(isShift) {
 
 let backPressCount = 0;
 let backPressTimer = null;
+let callBackPressCount = 0;
+let callBackPressTimer = null;
 
 function handleBackKey(canGoBack) {
     const openModal = document.querySelector('.tv-modal-backdrop:not(.hidden)');
@@ -2155,7 +2182,18 @@ function handleBackKey(canGoBack) {
         return;
     }
 
+    // Call Cut Safety Double-Check (Prevents accidental call disconnect on Fire TV remote)
     if (!document.getElementById("full-call-screen")?.classList.contains("hidden")) {
+        callBackPressCount++;
+        if (callBackPressCount === 1) {
+            showToast("Press Back again to end call");
+            clearTimeout(callBackPressTimer);
+            callBackPressTimer = setTimeout(() => {
+                callBackPressCount = 0;
+            }, 2500);
+            return;
+        }
+        callBackPressCount = 0;
         endCall();
         return;
     }
@@ -2230,6 +2268,20 @@ window.addEventListener("keydown", (e) => {
 
     // BACK: Escape, GoBack, Back, Android KEYCODE_BACK (4), Samsung Tizen (10009), Backspace when not in input
     const isBack = e.key === "Escape" || e.code === "Escape" || e.key === "GoBack" || e.key === "Back" || e.keyCode === 27 || e.which === 27 || e.keyCode === 4 || e.which === 4 || e.keyCode === 10009 || (!isInput && (e.key === "Backspace" || e.keyCode === 8 || e.which === 8));
+
+    // MEDIA PLAY/PAUSE: Fire TV Remote dedicated Play/Pause key (KeyCode 85 / MediaPlayPause)
+    const isPlayPause = e.key === "MediaPlayPause" || e.code === "MediaPlayPause" || e.keyCode === 85 || e.which === 85 || e.key === "PlayPause";
+    if (isPlayPause) {
+        e.preventDefault();
+        // If in an active call, safely toggle microphone mute
+        if (!document.getElementById("full-call-screen")?.classList.contains("hidden")) {
+            document.getElementById("mute-mic-btn")?.click();
+        }
+        return;
+    }
+
+    // Long-Press Rapid-Fire Guard (Prevents accidental repeated calls or double clicks when remote button is held)
+    if (e.repeat && (isEnter || isBack)) return;
 
     // 1. Tab / Shift+Tab cycling across visible focusables
     if (isTab) {
