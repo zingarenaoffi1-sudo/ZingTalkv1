@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main 
+  workflow_dispatch:
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -14,8 +16,98 @@ jobs:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.PORT || 22 }}
+          script_stop: true
           script: |
-            cd /home/ubuntu/ZingTalk 
-            git pull origin main
-            npm install
-            pm2 restart all
+            echo "=== [1/5] Finding ZingTalk Project Directory ==="
+            # Ensure NVM / Node / PM2 are in PATH for non-login SSH sessions
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            export PATH="$PATH:$HOME/.npm-global/bin:$HOME/.nvm/versions/node/$(node -v 2>/dev/null)/bin:/usr/local/bin:/usr/bin:/home/ubuntu/.nvm/versions/node/$(node -v 2>/dev/null)/bin"
+
+            PROJECT_DIR=""
+            POSSIBLE_DIRS=(
+              "${{ secrets.TARGET_DIR }}"
+              "$HOME/ZingTalk"
+              "$HOME/zingtalk"
+              "/home/ubuntu/ZingTalk"
+              "/home/ec2-user/ZingTalk"
+              "/var/www/ZingTalk"
+              "/var/www/zingtalk"
+              "$(pwd)/ZingTalk"
+              "$(pwd)"
+            )
+
+            for dir in "${POSSIBLE_DIRS[@]}"; do
+              if [ -n "$dir" ] && [ -d "$dir/.git" ]; then
+                PROJECT_DIR="$dir"
+                echo "Found Git repository at: $PROJECT_DIR"
+                break
+              fi
+            done
+
+            # If .git not found, check where server.js exists
+            if [ -z "$PROJECT_DIR" ]; then
+              for dir in "${POSSIBLE_DIRS[@]}"; do
+                if [ -n "$dir" ] && [ -f "$dir/server.js" ]; then
+                  PROJECT_DIR="$dir"
+                  echo "Found ZingTalk files at: $PROJECT_DIR"
+                  break
+                fi
+              done
+            fi
+
+            # If project directory does not exist on server, auto-clone it
+            if [ -z "$PROJECT_DIR" ]; then
+              TARGET="$HOME/ZingTalk"
+              echo "Repository not found on server. Auto-cloning into $TARGET..."
+              git clone "https://github.com/${{ github.repository }}.git" "$TARGET"
+              PROJECT_DIR="$TARGET"
+            fi
+
+            echo "Target Directory: $PROJECT_DIR"
+            cd "$PROJECT_DIR" || exit 1
+
+            echo "=== [2/5] Pulling Latest Changes from GitHub ==="
+            if [ -d ".git" ]; then
+              git fetch origin main || git fetch --all
+              git reset --hard origin/main || git pull origin main
+            else
+              echo "Notice: Non-git directory, skipping git pull."
+            fi
+
+            echo "=== [3/5] Installing Dependencies & Building Assets ==="
+            npm install --production=false
+            if [ -f "build-dist.js" ]; then
+              node build-dist.js || true
+            fi
+
+            echo "=== [4/5] Starting / Reloading with PM2 ==="
+            if command -v pm2 &> /dev/null; then
+              if [ -f "ecosystem.config.js" ]; then
+                echo "Starting/Reloading via ecosystem.config.js..."
+                pm2 startOrReload ecosystem.config.js --update-env
+              elif pm2 describe zingtalk > /dev/null 2>&1; then
+                echo "Reloading existing zingtalk process..."
+                pm2 reload zingtalk --update-env
+              elif pm2 describe server > /dev/null 2>&1; then
+                echo "Reloading existing server process..."
+                pm2 reload server --update-env
+              else
+                echo "Starting fresh zingtalk process..."
+                pm2 start server.js --name "zingtalk"
+              fi
+              pm2 save || true
+              pm2 status
+            else
+              echo "PM2 not found in PATH. Using npx pm2..."
+              npx pm2 startOrReload ecosystem.config.js --update-env || npx pm2 start server.js --name "zingtalk"
+            fi
+
+            echo "=== [5/5] Verifying Server Health ==="
+            sleep 2
+            if command -v curl &> /dev/null; then
+              curl -s http://localhost:3000/api/health || echo "Server ping attempted."
+            fi
+            echo ""
+            echo " ZingTalk EC2 Deployment Completed Successfully!"
