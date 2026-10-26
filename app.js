@@ -1636,14 +1636,22 @@ function handleAlexaIncomingCommand(cmd) {
 
 // ----------------- Fire TV Remote Spatial Navigation Engine -----------------
 // ----------------- Fire TV Remote Spatial Navigation Engine -----------------
-export function focusElement(el) {
+export function focusElement(el, shouldScroll = true) {
     if (!el) return;
-    document.querySelectorAll('.tv-focused').forEach(node => node.classList.remove('tv-focused'));
+    document.querySelectorAll('.tv-focused').forEach(node => {
+        if (node !== el) node.classList.remove('tv-focused');
+    });
     el.classList.add('tv-focused');
-    el.focus();
     try {
-        el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-    } catch (_) {}
+        el.focus({ preventScroll: !shouldScroll });
+    } catch (_) {
+        el.focus();
+    }
+    if (shouldScroll) {
+        try {
+            el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        } catch (_) {}
+    }
 }
 
 function isElementVisibleAndFocusable(el) {
@@ -2407,24 +2415,18 @@ window.addEventListener("keydown", (e) => {
 // ----------------- Global Clicks & UI Triggers -----------------
 let isSignUpMode = false;
 
-// Fluid Focus & Touch Support (Syncs Cyan Glow and focus to focused/touched target)
+// Fluid Focus & Touch Support (Syncs Cyan Glow to focused target)
 document.addEventListener("focusin", (e) => {
-    if (e.target && e.target.classList && e.target.classList.contains("tv-focusable")) {
-        document.querySelectorAll('.tv-focused').forEach(node => node.classList.remove('tv-focused'));
-        e.target.classList.add('tv-focused');
+    const focusable = e.target?.closest ? e.target.closest(".tv-focusable") : null;
+    if (focusable) {
+        document.querySelectorAll('.tv-focused').forEach(node => {
+            if (node !== focusable) node.classList.remove('tv-focused');
+        });
+        focusable.classList.add('tv-focused');
     }
 });
 
-document.addEventListener("pointerdown", (e) => {
-    const focusable = e.target.closest(".tv-focusable");
-    if (focusable) {
-        focusElement(focusable);
-    }
-}, { passive: true });
-
 document.addEventListener("click", async (e) => {
-    if (e.target.tagName === "BUTTON") e.preventDefault();
-
     // 1. Login Tabs Switching (Email & Password / Guest Mode)
     if (e.target.id === "tab-btn-email" || e.target.closest("#tab-btn-email")) {
         document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
@@ -2433,7 +2435,7 @@ document.addEventListener("click", async (e) => {
         if (tabEl) tabEl.classList.add("active");
         document.getElementById("pane-email")?.classList.remove("hidden");
         const isSignUp = !document.getElementById("email-signup-name-group")?.classList.contains("hidden");
-        focusElement(isSignUp ? document.getElementById("login-name-input") : document.getElementById("login-email-input"));
+        focusElement(isSignUp ? document.getElementById("login-name-input") : document.getElementById("login-email-input"), false);
         return;
     }
 
@@ -2443,7 +2445,7 @@ document.addEventListener("click", async (e) => {
         const tabEl = document.getElementById("tab-btn-guest");
         if (tabEl) tabEl.classList.add("active");
         document.getElementById("pane-guest")?.classList.remove("hidden");
-        focusElement(document.getElementById("guest-name-input"));
+        focusElement(document.getElementById("guest-name-input"), false);
         return;
     }
 
@@ -2458,18 +2460,18 @@ document.addEventListener("click", async (e) => {
             nameGroup?.classList.remove("hidden");
             if (btnText) btnText.innerText = "Create Account";
             if (toggleBtn) toggleBtn.innerText = "Already have an account? Sign In";
-            focusElement(document.getElementById("login-name-input"));
+            focusElement(document.getElementById("login-name-input"), false);
         } else {
             nameGroup?.classList.add("hidden");
             if (btnText) btnText.innerText = "Sign In";
             if (toggleBtn) toggleBtn.innerText = "Don't have an account? Sign Up";
-            focusElement(document.getElementById("login-email-input"));
+            focusElement(document.getElementById("login-email-input"), false);
         }
         return;
     }
 
     // Forgot Password Link Click
-    if (e.target.id === "forgot-password-link") {
+    if (e.target.id === "forgot-password-link" || e.target.closest("#forgot-password-link")) {
         const loginEmail = document.getElementById("login-email-input")?.value.trim() || "";
         const resetInput = document.getElementById("reset-email-input");
         const statusEl = document.getElementById("reset-status-message");
@@ -2479,14 +2481,14 @@ document.addEventListener("click", async (e) => {
             statusEl.innerText = "";
         }
         document.getElementById("forgot-password-modal")?.classList.remove("hidden");
-        focusElement(resetInput);
+        focusElement(resetInput, false);
         return;
     }
 
     // Close Forgot Password Modal
-    if (e.target.id === "close-forgot-modal-btn" || e.target.id === "cancel-reset-btn") {
+    if (e.target.id === "close-forgot-modal-btn" || e.target.closest("#close-forgot-modal-btn") || e.target.id === "cancel-reset-btn" || e.target.closest("#cancel-reset-btn")) {
         document.getElementById("forgot-password-modal")?.classList.add("hidden");
-        focusElement(document.getElementById("login-password-input"));
+        focusElement(document.getElementById("login-password-input"), false);
         return;
     }
 
@@ -2880,11 +2882,11 @@ document.addEventListener("click", async (e) => {
 
     if (e.target.id === "close-profile-btn" || e.target.closest("#close-profile-btn")) {
         document.getElementById("profile-modal")?.classList.add("hidden");
-        setTimeout(() => focusElement(document.getElementById("my-profile-chip")), 60);
+        setTimeout(() => focusElement(document.getElementById("my-profile-chip"), false), 60);
         return;
     }
 
-    if (e.target.id === "header-logout-btn" || e.target.closest("#header-logout-btn") || e.target.id === "modal-logout-btn") {
+    if (e.target.id === "header-logout-btn" || e.target.closest("#header-logout-btn") || e.target.id === "modal-logout-btn" || e.target.closest("#modal-logout-btn")) {
         logoutUserSession();
         return;
     }
@@ -2901,10 +2903,10 @@ document.addEventListener("click", async (e) => {
     }
 
     // Policy Modal
-    if (e.target.id === "open-policy-btn" || e.target.id === "sidebar-policy-btn" || e.target.id === "profile-policy-btn" || e.target.closest(".tv-policy-btn-trigger")) {
+    if (e.target.id === "open-policy-btn" || e.target.closest("#open-policy-btn") || e.target.id === "sidebar-policy-btn" || e.target.closest("#sidebar-policy-btn") || e.target.id === "profile-policy-btn" || e.target.closest("#profile-policy-btn") || e.target.closest(".tv-policy-btn-trigger")) {
         document.getElementById("profile-modal")?.classList.add("hidden");
         document.getElementById("policy-modal")?.classList.remove("hidden");
-        setTimeout(() => focusElement(document.getElementById("policy-ok-btn")), 60);
+        setTimeout(() => focusElement(document.getElementById("policy-ok-btn"), false), 60);
         return;
     }
 

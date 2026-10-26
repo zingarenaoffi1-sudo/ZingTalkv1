@@ -92,19 +92,28 @@ textarea.tv-focusable {
     scrollbar-width: thin;
 }
 
-.tv-focusable:active {
-    transform: scale(0.96) !important;
-    opacity: 0.92;
-}
-
 .tv-focusable:focus,
 .tv-focusable:focus-visible,
 .tv-focused {
     outline: 3.5px solid var(--tv-cyan-glow) !important;
     outline-offset: 4px !important;
     box-shadow: 0 0 28px rgba(0, 210, 157, 0.75) !important;
-    transform: scale(1.04) !important;
+    transform: scale(1.04);
     z-index: 100 !important;
+}
+
+.tv-focusable:active {
+    transform: scale(0.97) !important;
+    opacity: 0.92;
+}
+
+@media (hover: none) and (pointer: coarse) {
+    /* Touch screen tablet/mobile: Keep sharp cyan border and glow, avoid layout scale jitter */
+    .tv-focusable:focus,
+    .tv-focusable:focus-visible,
+    .tv-focused {
+        transform: none !important;
+    }
 }
 
 .tv-messages-scroll.tv-focusable:focus,
