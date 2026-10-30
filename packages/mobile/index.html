@@ -85,6 +85,9 @@
             <button type="button" id="copy-my-uid-btn" class="auth-submit-btn" style="margin-top: 16px;">
                 📋 Copy My 10-Digit UID
             </button>
+            <button type="button" id="open-mobile-policy-btn" class="auth-guest-btn" style="margin-top: 10px; width: 100%;">
+                🔒 Privacy Policy & Terms
+            </button>
         </main>
 
         <!-- Bottom Navigation Bar -->
@@ -155,6 +158,39 @@
             </div>
         </div>
 
+        <!-- Outgoing Call Overlay -->
+        <div id="mobile-outgoing-call-overlay" class="mobile-call-overlay hidden">
+            <div class="call-overlay-card">
+                <div class="call-overlay-avatar pulsing" id="outgoing-avatar">U</div>
+                <h3 id="outgoing-name" class="call-overlay-name">Contact Name</h3>
+                <p id="outgoing-status" class="call-overlay-status">Calling...</p>
+                <div class="call-overlay-actions">
+                    <button type="button" id="mobile-cancel-outgoing-btn" class="call-circle-btn decline" title="Cancel Call">
+                        <svg width="28" height="28" fill="currentColor" viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Incoming Call Overlay (Native Touch Screen) -->
+        <div id="mobile-incoming-call-overlay" class="mobile-call-overlay hidden">
+            <div class="call-overlay-card">
+                <div class="call-overlay-avatar pulsing" id="incoming-avatar">U</div>
+                <h3 id="incoming-name" class="call-overlay-name">Incoming Call</h3>
+                <p id="incoming-type" class="call-overlay-status">ZingTalk Audio Call</p>
+                <div class="call-overlay-actions double">
+                    <button type="button" id="mobile-decline-call-btn" class="call-circle-btn decline" title="Decline">
+                        <svg width="28" height="28" fill="currentColor" viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+                        <span>Decline</span>
+                    </button>
+                    <button type="button" id="mobile-accept-call-btn" class="call-circle-btn accept" title="Answer">
+                        <svg width="28" height="28" fill="currentColor" viewBox="0 0 24 24"><path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56-.35-.12-.74-.03-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/></svg>
+                        <span>Answer</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Add Contact Modal -->
         <div id="add-contact-modal" class="mobile-modal-overlay hidden">
             <div class="mobile-modal-card">
@@ -169,6 +205,20 @@
                 </div>
                 <button type="button" id="save-new-contact-btn" class="auth-submit-btn">Save Contact</button>
                 <button type="button" id="cancel-contact-btn" class="auth-guest-btn">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Mobile Privacy Policy Modal -->
+        <div id="mobile-policy-modal" class="mobile-modal-overlay hidden">
+            <div class="mobile-modal-card" style="max-height: 80vh; overflow-y: auto;">
+                <h3 class="mobile-modal-title">🔒 ZingTalk Privacy Policy</h3>
+                <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+                    <p style="margin-bottom: 8px;"><strong style="color: var(--accent-cyan);">Zero Server Storage:</strong> Text chats and call logs are never stored on any cloud database or server disk.</p>
+                    <p style="margin-bottom: 8px;"><strong style="color: var(--accent-cyan);">Encrypted P2P Calling:</strong> All audio and video streams flow directly peer-to-peer using WebRTC DTLS-SRTP encryption.</p>
+                    <p style="margin-bottom: 8px;"><strong style="color: var(--accent-cyan);">Anonymous 10-Digit UID:</strong> No mobile phone numbers, SIM cards, or personal identifiers are required.</p>
+                    <p><strong style="color: var(--accent-cyan);">Device Independence:</strong> Mobile apps use direct touch controls. Alexa voice integration is exclusively engineered for Amazon Fire TV living room remotes.</p>
+                </div>
+                <button type="button" id="close-policy-btn" class="auth-submit-btn" style="margin-top: 10px;">Close Policy</button>
             </div>
         </div>
 

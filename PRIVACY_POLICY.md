@@ -1,20 +1,25 @@
 # Privacy Policy for ZingTalk
 
-**Effective Date**: October 18, 2026  
+**Effective Date**: October 30, 2026  
 **Application Name**: ZingTalk (`com.zingtalk.com`)  
 **Developer Contact**: `zingarenaoffi1@gmail.com`  
-**Platform**: Android TV, Amazon Fire TV & Fire TV Stick (Leanback OS)  
-**Target Audience**: Families, Seniors, and Elderly Parents (Living Room TV Accessibility)
+**Founder & Lead Developer**: KM MAMATA / Sunny  
+**Platforms Supported**: 
+- **Amazon Fire TV & Fire TV Stick**: 10-Foot Living Room UI with D-Pad Remote & Alexa Voice Integration
+- **Android Mobile**: Handheld Touchscreen UI with Portrait Video Calling & Camera Flip Controls
+**Signaling Domain**: `https://zingtalk.duckdns.org` (WSS & HTTPS Port 3000 / 443 SSL Proxy)  
+**STUN / TURN Relays**: `zingtalk.duckdns.org:3478`
 
 ---
 
-## 1. Introduction, Core Philosophy & Intended Purpose
+## 1. Introduction & Multi-Platform Architecture
 
-Welcome to **ZingTalk**. ZingTalk is an accessible, 10-foot living-room communication platform engineered primarily to bridge the digital divide for **elderly parents, senior citizens, and families**. By pairing a high-contrast Smart TV interface with Amazon Alexa hands-free voice control, ZingTalk empowers older adults to initiate video and audio calls with their loved ones directly from their living room sofa without the physical strain of small smartphone touchscreens, SIM cards, or complex password menus.
+Welcome to **ZingTalk**. ZingTalk is a privacy-first, decentralized real-time communication platform built with two distinct client experiences sharing a unified high-performance signaling engine:
 
-We believe that personal family communication must remain strictly private, decentralized, and ephemeral. ZingTalk is built on an uncompromising **Zero Server Storage Architecture**: we do not store, archive, or monetize your private text chats, audio recordings, video streams, or contacts on any central cloud database or persistent disk.
+1. **Amazon Fire TV Client (`packages/tv`)**: Designed specifically for the living room sofa experience, elderly parents, and families. Features high-contrast oversized leanback elements, physical D-Pad remote spatial navigation, and hands-free Amazon Alexa Voice Skills control.
+2. **Android Mobile Client (`packages/mobile`)**: Designed for modern handheld smartphones. Features a touch-first interface, bottom navigation, native incoming/outgoing call overlays, floating local video PIP, and front/rear camera switching without TV remote or Alexa requirements.
 
-Your communications belong exclusively to you and the family members you connect with.
+We believe that personal communication must remain strictly private, decentralized, and ephemeral. ZingTalk operates on an uncompromising **Zero Server Storage Architecture**: we do not store, archive, or monetize your private text chats, audio recordings, video streams, or contacts on any central cloud database or persistent server disk.
 
 ---
 
@@ -33,22 +38,24 @@ Your communications belong exclusively to you and the family members you connect
 
 ## 3. Information We Collect & How It Is Used
 
-### A. Authentication & User Profile
+### A. Authentication & Anonymous 10-Digit Identity
 - **Randomized 10-Digit Unique Identifier (UID)**: Each user is allocated an anonymous 10-digit numeric ID (e.g., `2156774755`). This replaces phone numbers, SIM card telemetry, and hardware IMEI identifiers, protecting user anonymity.
 - **Contacts Directory (100% Local Device Storage)**: Saved contacts (Name and 10-Digit UID) reside **strictly inside your local device memory** (`localStorage` / local device preferences). Contacts are **NEVER saved to Firebase Firestore, nor backed up to any cloud database**. During an active TV session, local contacts are mirrored solely in volatile in-memory RAM for real-time Alexa voice intent matching (e.g. *"Alexa, call Rahul"*), and are instantly purged from RAM upon sign out or disconnection. Contacts remain completely private to your device.
 
-### B. Device Permissions
+### B. Device Hardware Permissions
 - **Microphone**: Required exclusively during active audio and video calls. The microphone is active only while a call is in progress.
-- **Camera**: Required exclusively during active video calls. Camera video is transmitted directly peer-to-peer and is immediately terminated when the call ends.
+- **Camera**: Required exclusively during active video calls. Camera video is transmitted directly peer-to-peer and is immediately terminated when the call ends. Mobile users have a one-tap flip camera feature to switch between front and back cameras.
 - **Network / Internet**: Required for WebSocket signaling, STUN NAT traversal, and peer connectivity.
 
 ---
 
-## 4. Amazon Alexa Voice Integration Privacy
+## 4. Amazon Alexa Voice Integration Privacy (Exclusively for Fire TV)
 
-ZingTalk integrates with Amazon Alexa skills to provide hands-free voice dialing for senior citizens and elderly parents:
-- **Voice Intents Only**: Alexa interactions send high-level intent commands (e.g., `call Rahul` or `end call`) via a secure HTTPS webhook (`/api/alexa`).
-- **No Voice Audio Transferred**: Spoken audio is processed by Amazon's Alexa hardware; ZingTalk never receives, records, or stores any raw audio recordings or spoken transcripts.
+ZingTalk integrates with Amazon Alexa Skills to provide hands-free voice dialing for senior citizens and elderly parents **exclusively on Amazon Fire TV**:
+
+- **Strictly for Fire TV (Not Mobile)**: Alexa voice skill integration is engineered exclusively for Fire TV remotes and living-room screens. The mobile app operates independently via standard touch gestures.
+- **Voice Intents Only**: Alexa interactions send high-level intent commands (e.g., `call Rahul`, `answer call`, `mute microphone`, `hang up`, `toggle camera`, `redial`, or `pair UID`) via a secure HTTPS webhook (`/alexa` or `/api/alexa`).
+- **No Spoken Audio Transferred to ZingTalk**: Spoken audio is processed by Amazon's Alexa platform according to Amazon's privacy standards; ZingTalk never receives, records, or stores any raw audio recordings or spoken transcripts.
 - **Device-Specific Pairing**: Alexa commands are routed strictly to your specific paired 10-digit UID room, preventing cross-device interference.
 
 ---
@@ -70,7 +77,7 @@ ZingTalk integrates with Amazon Alexa skills to provide hands-free voice dialing
 
 ## 7. Age Restriction & Audience Intent (Not for Children Under 13)
 
-- **Audience Focus**: ZingTalk is explicitly designed and marketed as an assistive living-room communication tool for **elderly parents, senior citizens, and adult family caregivers**.
+- **Audience Focus**: ZingTalk is explicitly designed and marketed as an assistive communication tool for **elderly parents, senior citizens, and adult family caregivers**.
 - **Not for Children**: ZingTalk is **NOT designed for, marketed to, or intended for use by unsupervised children under the age of 13**.
 - **COPPA & GDPR-K Compliance**: ZingTalk does not knowingly harvest, collect, or solicit personal information from children under 13. If you believe a child under 13 has registered or provided personal information without parental consent, please contact us immediately at `zingarenaoffi1@gmail.com` and we will promptly terminate the account and purge any associated identifiers.
 

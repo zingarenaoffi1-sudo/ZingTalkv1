@@ -1,8 +1,11 @@
 # Terms of Service for ZingTalk
 
-**Last Updated**: October 18, 2026  
+**Last Updated**: October 30, 2026  
 **Application Name**: ZingTalk (`com.zingtalk.com`)  
-**Platform**: Android TV, Amazon Fire TV & Fire TV Stick (Leanback OS)  
+**Platforms Supported**:
+- **Amazon Fire TV & Fire TV Stick**: 10-Foot Living Room UI with D-Pad Remote & Alexa Voice Integration
+- **Android Mobile**: Handheld Touchscreen UI with Portrait Video Calling & Camera Flip Controls  
+**Signaling Host**: `https://zingtalk.duckdns.org`  
 **Developer / Account Owner**: KM MAMATA / Sunny (Founder of ZingTalk)  
 **Contact Email**: `zingarenaoffi1@gmail.com`
 
@@ -14,9 +17,12 @@ By downloading, installing, launching, or using the **ZingTalk** application, yo
 
 ---
 
-## 2. Intended Purpose & Target Audience
+## 2. Intended Purpose & Dual Platform Experience
 
-ZingTalk is engineered as an assistive, large-screen living-room communication platform primarily intended for **elderly parents, senior citizens, and families**. Its purpose is to bridge the digital gap by offering high-contrast, remote-free voice-activated calling (via Amazon Alexa skills) and physical Fire TV remote D-Pad navigation, eliminating the complications of mobile keyboards, SIM cards, or complex password workflows.
+ZingTalk is engineered to provide private, reliable, and accessible real-time communication across multiple form factors:
+
+1. **Fire TV Edition (`packages/tv`)**: Tailored for **elderly parents, senior citizens, and living room families**. It pairs physical Fire TV remote D-Pad navigation with Amazon Alexa hands-free voice control so users can call family members from their couch without smartphone strain.
+2. **Android Mobile Edition (`packages/mobile`)**: Tailored for **smartphones and tablets**, featuring direct touch navigation, bottom navigation bars, front/rear camera flip controls, and dedicated mobile in-call screens without remote or Alexa voice requirements.
 
 ---
 
@@ -44,9 +50,10 @@ In accordance with our Privacy Policy:
 
 ---
 
-## 6. Amazon Alexa Voice Integration
+## 6. Amazon Alexa Voice Integration (Exclusively on Fire TV)
 
-- Voice commands sent via the ZingTalk Alexa skill (e.g., *"Alexa, call Rahul"*) transmit high-level text intent signals via encrypted HTTPS webhooks solely to coordinate calling actions with your paired Smart TV.
+- Voice commands sent via the ZingTalk Alexa skill (e.g., *"Alexa, ask ZingTalk to call [Name]"*, *"Alexa, tell ZingTalk to answer"*, *"Alexa, tell ZingTalk to mute"*, *"Alexa, tell ZingTalk to hang up"*, *"Alexa, ask ZingTalk to pair UID [10-digits]"*) transmit high-level text intent signals via encrypted HTTPS webhooks (`/alexa`) solely to coordinate calling actions with your paired Smart TV.
+- Alexa Voice features are **strictly and exclusively for Amazon Fire TV clients**. The mobile application operates independently via touch controls and does not require Alexa.
 - ZingTalk does not record, process, or store raw microphone voice audio. Spoken processing is handled by Amazon's Alexa platform according to Amazon's privacy standards.
 
 ---
@@ -61,23 +68,15 @@ You agree to use ZingTalk only for lawful, personal family communications. You a
 
 ---
 
-## 8. Limitation of Liability & Warranty Disclaimer
+## 8. Disclaimer of Warranties & Limitation of Liability
 
-- ZingTalk is provided on an **"AS IS"** and **"AS AVAILABLE"** basis without warranties of any kind, whether express or implied.
-- Because real-time media communication depends on third-party network providers, local home Wi-Fi, and public STUN/TURN relays, ZingTalk does not guarantee uninterrupted, latency-free, or 100% continuous call uptime.
-- In no event shall ZingTalk, its founder (Sunny), or its developers be liable for any direct, indirect, incidental, special, or consequential damages resulting from the use or inability to use the application, including dropped calls or lack of emergency dispatch capabilities.
+ZingTalk is provided on an **"AS IS"** and **"AS AVAILABLE"** basis without warranties of any kind, either express or implied, including but not limited to uptime, network latency, camera hardware compatibility, or audio fidelity. To the maximum extent permitted by law, the developer and founder (KM MAMATA / Sunny) shall not be liable for any indirect, incidental, special, or consequential damages resulting from the use or inability to use the service.
 
 ---
 
-## 9. Modifications to Terms
+## 9. Contact Developer
 
-We reserve the right to revise or update these Terms of Service at any time. Any changes will become effective upon being posted in the application or in the project repository with an updated "Last Updated" date. Continued use of ZingTalk following any revisions constitutes your binding acceptance of the updated terms.
-
----
-
-## 10. Contact Information
-
-For inquiries, support, or legal questions regarding ZingTalk, please contact:
-- **Developer / Account Owner**: KM MAMATA / Sunny (Founder of ZingTalk)  
-- **Email**: `zingarenaoffi1@gmail.com`  
-- **Package**: `com.zingtalk.com`
+For inquiries regarding these Terms of Service:
+- **Email**: `zingarenaoffi1@gmail.com`
+- **Application Package**: `com.zingtalk.com`
+- **Founder / Developer**: KM MAMATA / Sunny (ZingTalk)

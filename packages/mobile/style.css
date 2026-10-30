@@ -702,3 +702,110 @@ body.mobile-body {
     transition: opacity 0.25s ease;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
+
+/* Mobile Incoming and Outgoing Call Overlays */
+.mobile-call-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: radial-gradient(circle at center, #162032 0%, #080c14 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    z-index: 500;
+}
+
+.mobile-call-overlay.hidden {
+    display: none !important;
+}
+
+.call-overlay-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    width: 100%;
+    max-width: 320px;
+}
+
+.call-overlay-avatar {
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #00d29d, #0077ff);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 38px;
+    font-weight: 800;
+    margin-bottom: 20px;
+    box-shadow: 0 0 30px rgba(0, 210, 157, 0.4);
+}
+
+.call-overlay-avatar.pulsing {
+    animation: mobilePulse 1.8s infinite ease-in-out;
+}
+
+@keyframes mobilePulse {
+    0% { transform: scale(0.98); box-shadow: 0 0 20px rgba(0, 210, 157, 0.3); }
+    50% { transform: scale(1.05); box-shadow: 0 0 35px rgba(0, 210, 157, 0.65); }
+    100% { transform: scale(0.98); box-shadow: 0 0 20px rgba(0, 210, 157, 0.3); }
+}
+
+.call-overlay-name {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+}
+
+.call-overlay-status {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: 40px;
+}
+
+.call-overlay-actions {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+}
+
+.call-overlay-actions.double {
+    justify-content: space-around;
+}
+
+.call-circle-btn {
+    width: 68px;
+    height: 68px;
+    border-radius: 50%;
+    border: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+    font-size: 11px;
+    font-weight: 700;
+    gap: 4px;
+}
+
+.call-circle-btn.accept {
+    background: #00d29d;
+    color: #04120e;
+}
+
+.call-circle-btn.decline {
+    background: #ff4757;
+    color: #ffffff;
+}
+
+.call-circle-btn:active {
+    transform: scale(0.92);
+}

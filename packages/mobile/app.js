@@ -231,49 +231,141 @@ function connectSocket() {
         }
     });
 
+    let incomingCallerUid = null;
+    let incomingCallType = "video";
+    let pendingOffer = null;
+    let iceCandidatesQueue = [];
+
+    function playMobileChime() {
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return;
+            const ctx = new AudioCtx();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+            osc.frequency.setValueAtTime(880.00, ctx.currentTime + 0.15);
+            gain.gain.setValueAtTime(0.2, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.5);
+        } catch (_) {}
+    }
+
     socket.on("incoming_call", (data) => {
-        const accept = window.confirm(`Incoming ${data.type || 'video'} call from UID: ${data.callerUid}. Accept?`);
-        if (accept) {
-            currentTargetUid = data.callerUid;
-            answerCall(data.callerUid, data.type || "video");
+        incomingCallerUid = data.callerUid;
+        incomingCallType = data.type || "video";
+
+        const known = myContacts.find(c => c.uid === data.callerUid);
+        const nameToShow = known ? known.name : `UID: ${data.callerUid}`;
+        const avatarLetter = (known?.name || "U").charAt(0).toUpperCase();
+
+        const nameEl = document.getElementById("incoming-name");
+        const avatarEl = document.getElementById("incoming-avatar");
+        const typeEl = document.getElementById("incoming-type");
+
+        if (nameEl) nameEl.innerText = nameToShow;
+        if (avatarEl) avatarEl.innerText = avatarLetter;
+        if (typeEl) typeEl.innerText = `Incoming ${incomingCallType === 'video' ? 'HD Video' : 'Audio'} Call...`;
+
+        document.getElementById("mobile-incoming-call-overlay")?.classList.remove("hidden");
+        playMobileChime();
+    });
+
+    socket.on("call_cancelled", () => {
+        document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
+        document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
+        endCallCleanup();
+        showToast("Call cancelled.");
+    });
+
+    socket.on("call_error", (data) => {
+        document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
+        document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
+        endCallCleanup();
+        showToast("❌ " + (data?.message || "Call error"));
+    });
+
+    socket.on("call_response_received", async (data) => {
+        document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
+        if (data && data.status === "accepted") {
+            if (!peerConnection) {
+                await startMobileWebRTC(true);
+            }
         } else {
-            socket.emit("cancel_call", { targetUid: data.callerUid });
+            showToast("Call declined.");
+            endCallCleanup();
         }
     });
 
-    socket.on("call_accepted", async (data) => {
-        await setupPeerConnection();
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        socket.emit("webrtc_offer", { targetUid: currentTargetUid, offer: offer });
+    socket.on("call_accepted", async () => {
+        document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
+        if (!peerConnection) {
+            await startMobileWebRTC(true);
+        }
     });
 
-    socket.on("webrtc_offer", async (data) => {
-        await setupPeerConnection();
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-        socket.emit("webrtc_answer", { targetUid: data.callerUid, answer: answer });
-    });
+    const handleWebRtcOffer = async (data) => {
+        if (!data || !data.offer) return;
+        if (!peerConnection) {
+            pendingOffer = data.offer;
+            return;
+        }
+        try {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            socket.emit("webrtc_answer", { targetUid: currentTargetUid || data.callerUid, answer });
+            while (iceCandidatesQueue.length > 0) {
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidatesQueue.shift()));
+                } catch (_) {}
+            }
+        } catch (err) {
+            console.error("[Mobile WebRTC] Offer error:", err);
+        }
+    };
+    socket.on("webrtc_offer_received", handleWebRtcOffer);
+    socket.on("webrtc_offer", handleWebRtcOffer);
 
-    socket.on("webrtc_answer", async (data) => {
-        if (peerConnection) {
+    const handleWebRtcAnswer = async (data) => {
+        if (!peerConnection || !data || !data.answer) return;
+        try {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+            while (iceCandidatesQueue.length > 0) {
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidatesQueue.shift()));
+                } catch (_) {}
+            }
+        } catch (err) {
+            console.error("[Mobile WebRTC] Answer error:", err);
         }
-    });
+    };
+    socket.on("webrtc_answer_received", handleWebRtcAnswer);
+    socket.on("webrtc_answer", handleWebRtcAnswer);
 
-    socket.on("webrtc_ice_candidate", async (data) => {
-        if (peerConnection && data.candidate) {
+    const handleWebRtcIce = async (data) => {
+        if (!data || !data.candidate) return;
+        if (peerConnection && peerConnection.remoteDescription) {
             try {
                 await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
             } catch (_) {}
+        } else {
+            iceCandidatesQueue.push(data.candidate);
         }
-    });
+    };
+    socket.on("webrtc_ice_candidate_received", handleWebRtcIce);
+    socket.on("webrtc_ice_candidate", handleWebRtcIce);
 
-    socket.on("call_ended", () => {
+    const handleCallEnded = () => {
         endCallCleanup();
         showToast("Call ended.");
-    });
+    };
+    socket.on("webrtc_call_ended", handleCallEnded);
+    socket.on("call_ended", handleCallEnded);
 
     socket.on("receive_message", (data) => {
         const sender = data.senderUid;
@@ -294,7 +386,11 @@ async function setupLocalMedia(videoWanted = true) {
         audio: true,
         video: videoWanted ? { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } } : false
     };
-    localStream = await navigator.mediaDevices.getUserMedia(constraints);
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (_) {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    }
     const localVideo = document.getElementById("local-video");
     if (localVideo) localVideo.srcObject = localStream;
 }
@@ -304,19 +400,21 @@ async function switchCamera() {
     if (localStream) {
         const videoTrack = localStream.getVideoTracks()[0];
         if (videoTrack) videoTrack.stop();
-        const newStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: currentFacingMode }
-        });
-        const newVideoTrack = newStream.getVideoTracks()[0];
-        if (peerConnection) {
-            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === "video");
-            if (sender) sender.replaceTrack(newVideoTrack);
-        }
-        localStream.removeTrack(videoTrack);
-        localStream.addTrack(newVideoTrack);
-        const localVideo = document.getElementById("local-video");
-        if (localVideo) localVideo.srcObject = localStream;
-        showToast(`Switched to ${currentFacingMode === 'user' ? 'Front' : 'Back'} Camera`);
+        try {
+            const newStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: currentFacingMode }
+            });
+            const newVideoTrack = newStream.getVideoTracks()[0];
+            if (peerConnection) {
+                const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === "video");
+                if (sender) sender.replaceTrack(newVideoTrack);
+            }
+            localStream.removeTrack(videoTrack);
+            localStream.addTrack(newVideoTrack);
+            const localVideo = document.getElementById("local-video");
+            if (localVideo) localVideo.srcObject = localStream;
+            showToast(`Switched to ${currentFacingMode === 'user' ? 'Front' : 'Back'} Camera`);
+        } catch (_) {}
     }
 }
 
@@ -338,12 +436,77 @@ async function setupPeerConnection() {
     };
 }
 
-async function initiateCall(targetUid, type = "video") {
-    currentTargetUid = targetUid;
-    await setupLocalMedia(type === "video");
+async function startMobileWebRTC(isCaller) {
+    await setupLocalMedia(incomingCallType === "video");
+    document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
+    document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
     document.getElementById("mobile-call-screen")?.classList.remove("hidden");
-    document.getElementById("call-target-display").innerText = `Calling ${targetUid}...`;
+
+    const known = myContacts.find(c => c.uid === currentTargetUid);
+    const nameToShow = known ? known.name : `UID: ${currentTargetUid}`;
+    const displayEl = document.getElementById("call-target-display");
+    if (displayEl) displayEl.innerText = nameToShow;
+
     startTimer();
+    await setupPeerConnection();
+
+    if (isCaller) {
+        try {
+            const offer = await peerConnection.createOffer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: incomingCallType === "video"
+            });
+            await peerConnection.setLocalDescription(offer);
+            socket.emit("webrtc_offer", { targetUid: currentTargetUid, offer });
+        } catch (err) {
+            console.error("[Mobile WebRTC] Offer error:", err);
+        }
+    } else if (pendingOffer) {
+        try {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(pendingOffer));
+            pendingOffer = null;
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            socket.emit("webrtc_answer", { targetUid: currentTargetUid, answer });
+            while (iceCandidatesQueue.length > 0) {
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidatesQueue.shift()));
+                } catch (_) {}
+            }
+        } catch (err) {
+            console.error("[Mobile WebRTC] Pending offer execution error:", err);
+        }
+    }
+}
+
+async function initiateCall(targetUid, type = "video") {
+    if (!socket || !socket.connected) {
+        showToast("Connecting to server...");
+        connectSocket();
+        return;
+    }
+    if (targetUid === my10DigitUid) {
+        showToast("You cannot call your own UID");
+        return;
+    }
+
+    currentTargetUid = targetUid;
+    incomingCallType = type;
+
+    const known = myContacts.find(c => c.uid === targetUid);
+    const nameToShow = known ? known.name : `UID: ${targetUid}`;
+    const avatarLetter = (known?.name || "U").charAt(0).toUpperCase();
+
+    const outName = document.getElementById("outgoing-name");
+    const outAvatar = document.getElementById("outgoing-avatar");
+    const outStatus = document.getElementById("outgoing-status");
+
+    if (outName) outName.innerText = nameToShow;
+    if (outAvatar) outAvatar.innerText = avatarLetter;
+    if (outStatus) outStatus.innerText = `Calling (${type === 'video' ? 'HD Video' : 'Audio'})...`;
+
+    document.getElementById("mobile-outgoing-call-overlay")?.classList.remove("hidden");
+
     socket.emit("initiate_call", {
         callerUid: my10DigitUid,
         targetUid: targetUid,
@@ -354,11 +517,13 @@ async function initiateCall(targetUid, type = "video") {
 
 async function answerCall(targetUid, type = "video") {
     currentTargetUid = targetUid;
-    await setupLocalMedia(type === "video");
-    document.getElementById("mobile-call-screen")?.classList.remove("hidden");
-    document.getElementById("call-target-display").innerText = `In call with ${targetUid}`;
-    startTimer();
-    socket.emit("answer_call", { callerUid: targetUid, answererUid: my10DigitUid });
+    incomingCallType = type;
+    document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
+    if (socket) {
+        socket.emit("call_response", { targetUid: targetUid, status: "accepted" });
+        socket.emit("answer_call", { callerUid: targetUid, answererUid: my10DigitUid });
+    }
+    await startMobileWebRTC(false);
 }
 
 function startTimer() {
@@ -375,6 +540,7 @@ function startTimer() {
 
 function endCall() {
     if (socket && currentTargetUid) {
+        socket.emit("webrtc_end_call", { targetUid: currentTargetUid });
         socket.emit("end_call", { targetUid: currentTargetUid });
     }
     endCallCleanup();
@@ -384,15 +550,26 @@ function endCallCleanup() {
     if (callTimer) clearInterval(callTimer);
     callTimer = null;
     if (localStream) {
-        localStream.getTracks().forEach(t => t.stop());
+        localStream.getTracks().forEach(t => {
+            try { t.stop(); } catch (_) {}
+        });
         localStream = null;
     }
     if (peerConnection) {
-        peerConnection.close();
+        try { peerConnection.close(); } catch (_) {}
         peerConnection = null;
     }
+    const localVideo = document.getElementById("local-video");
+    const remoteVideo = document.getElementById("remote-video");
+    if (localVideo) localVideo.srcObject = null;
+    if (remoteVideo) remoteVideo.srcObject = null;
+
     document.getElementById("mobile-call-screen")?.classList.add("hidden");
+    document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
+    document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
     currentTargetUid = null;
+    pendingOffer = null;
+    iceCandidatesQueue = [];
 }
 
 function openChat(contact) {
@@ -553,6 +730,38 @@ document.addEventListener("DOMContentLoaded", () => {
                 showToast(isVideoDisabled ? "Camera off" : "Camera on");
             }
         }
+    });
+
+    // Mobile Incoming & Outgoing Call Overlay Buttons
+    document.getElementById("mobile-accept-call-btn")?.addEventListener("click", () => {
+        if (incomingCallerUid) {
+            answerCall(incomingCallerUid, incomingCallType);
+        }
+    });
+
+    document.getElementById("mobile-decline-call-btn")?.addEventListener("click", () => {
+        document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
+        if (socket && incomingCallerUid) {
+            socket.emit("call_response", { targetUid: incomingCallerUid, status: "rejected" });
+            socket.emit("cancel_call", { targetUid: incomingCallerUid });
+        }
+        incomingCallerUid = null;
+    });
+
+    document.getElementById("mobile-cancel-outgoing-btn")?.addEventListener("click", () => {
+        document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
+        if (socket && currentTargetUid) {
+            socket.emit("cancel_call", { targetUid: currentTargetUid });
+        }
+        endCallCleanup();
+    });
+
+    // Mobile Privacy Policy Modal
+    document.getElementById("open-mobile-policy-btn")?.addEventListener("click", () => {
+        document.getElementById("mobile-policy-modal")?.classList.remove("hidden");
+    });
+    document.getElementById("close-policy-btn")?.addEventListener("click", () => {
+        document.getElementById("mobile-policy-modal")?.classList.add("hidden");
     });
 
     // Profile & Logout

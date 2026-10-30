@@ -24,9 +24,13 @@
             </div>
 
             <div class="tv-header-user">
-                <button type="button" id="header-guide-btn" class="tv-guide-btn tv-focusable" tabindex="0" title="How to Use ZingTalk" style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; font-size: 13px; font-weight: 700; border-radius: 8px; margin-right: 12px; background: rgba(0, 210, 157, 0.15); border: 1px solid rgba(0, 210, 157, 0.4); color: #00d29d; cursor: pointer;">
-                    <span>📖 How to Use</span>
+                <button type="button" id="header-guide-btn" class="tv-guide-btn tv-focusable" tabindex="0" title="Alexa Voice & Remote Guide" style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; font-size: 13px; font-weight: 700; border-radius: 8px; margin-right: 12px; background: rgba(0, 168, 225, 0.2); border: 1px solid rgba(0, 168, 225, 0.5); color: #00d2ff; cursor: pointer;">
+                    <span>🎙️ Alexa Voice Guide</span>
                 </button>
+                <div class="alexa-status-pill" style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 20px; background: rgba(0,0,0,0.35); border: 1px solid rgba(0, 168, 225, 0.4); margin-right: 12px;">
+                    <span class="server-status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #00d2ff; box-shadow: 0 0 6px #00d2ff;"></span>
+                    <span style="color: #00d2ff;">Fire TV Voice Active</span>
+                </div>
                 <div class="server-status-pill" style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 20px; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,170,0,0.4); margin-right: 12px;">
                     <span class="server-status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #00d29d; box-shadow: 0 0 6px #00d29d;"></span>
                     <span class="server-status-text" style="color: #00d29d;">ZingTalk Cloud</span>
@@ -395,33 +399,64 @@
             </div>
         </div>
 
-        <!-- 9. HOW TO USE GUIDE MODAL -->
+        <!-- 9. ALEXA VOICE COMMANDS & FIRE TV REMOTE GUIDE MODAL -->
         <div id="guide-modal" class="tv-modal-backdrop hidden">
-            <div class="tv-dialog-card" style="max-width: 640px; width: 90%; text-align: left; max-height: 85vh; display: flex; flex-direction: column;">
+            <div class="tv-dialog-card" style="max-width: 680px; width: 92%; text-align: left; max-height: 85vh; display: flex; flex-direction: column;">
                 <div class="tv-dialog-header">
-                    <h3 class="tv-dialog-title">📖 How to Use ZingTalk</h3>
+                    <h3 class="tv-dialog-title" style="display: flex; align-items: center; gap: 8px;">
+                        <span>🎙️</span>
+                        <span>Alexa Voice Commands & Fire TV Remote Guide</span>
+                    </h3>
                     <button type="button" id="close-guide-modal-btn" class="tv-icon-btn tv-focusable" tabindex="0" title="Close">&times;</button>
                 </div>
-                <div class="tv-policy-content" style="max-height: 55vh; overflow-y: auto; font-size: 14px; line-height: 1.6; color: #d0d5dd; padding-right: 8px;">
-                    <h4 style="color: #00d29d; margin-top: 0;">🎮 Remote Control & D-Pad Navigation</h4>
-                    <p>• <strong>Arrow Keys (Up, Down, Left, Right):</strong> Navigate across buttons, dialpad, and contacts with high-contrast cyan highlight.<br>
-                    • <strong>Center OK / Select Button:</strong> Select or click any focused item.<br>
-                    • <strong>Back Button:</strong> Go back or close modals. During an active video/audio call, press Back twice to safely disconnect without accidental disconnects.</p>
+                <div id="guide-scroll-area" class="tv-policy-content tv-focusable" tabindex="0" style="max-height: 58vh; overflow-y: auto; font-size: 13.5px; line-height: 1.6; color: #d0d5dd; padding-right: 8px;">
+                    <div style="background: rgba(0, 168, 225, 0.12); border: 1px solid rgba(0, 168, 225, 0.4); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;">
+                        <strong style="color: #00d2ff; display: block; margin-bottom: 4px; font-size: 14px;">💡 Alexa Voice Control (Built Exclusively for Fire TV)</strong>
+                        <p style="margin: 0; font-size: 12.5px; color: #e0f2fe;">Press and hold the <strong>Microphone / Voice button</strong> on your Fire TV remote, speak any of the voice commands below, then release the button. Every action on ZingTalk can be operated 100% hands-free!</p>
+                    </div>
 
-                    <h4 style="color: #00d29d; margin-top: 14px;">👆 Touchscreen & Mouse Support</h4>
-                    <p>• Works 100% with touchscreens, air-mouse, or standard mouse clicks on Smart TVs, tablets, and mobile devices.</p>
+                    <h4 style="color: #00d29d; margin: 12px 0 6px;">📞 Making Calls by Voice</h4>
+                    <ul style="padding-left: 18px; margin: 0 0 10px;">
+                        <li><strong>Audio Call a Contact:</strong> <em>"Alexa, ask ZingTalk to call [Contact Name]"</em></li>
+                        <li><strong>HD Video Call a Contact:</strong> <em>"Alexa, ask ZingTalk to video call [Contact Name]"</em></li>
+                        <li><strong>Direct Dial 10-Digit UID:</strong> <em>"Alexa, ask ZingTalk to call UID [10-Digit Number]"</em></li>
+                        <li><strong>Redial Last Person:</strong> <em>"Alexa, ask ZingTalk to redial"</em> or <em>"call last"</em></li>
+                    </ul>
 
-                    <h4 style="color: #00d29d; margin-top: 14px;">📞 Making Calls with 10-Digit UID</h4>
-                    <p>• Every user has a unique 10-digit UID (shown at the top of the screen).<br>
-                    • Enter any contact's 10-digit UID in the Dialpad to start an instant HD Video or Audio call.<br>
-                    • Save frequent contacts in your TV address book for 1-click speed calling.</p>
+                    <h4 style="color: #00d29d; margin: 12px 0 6px;">🟢 Answering & In-Call Voice Controls</h4>
+                    <ul style="padding-left: 18px; margin: 0 0 10px;">
+                        <li><strong>Pick Up Incoming Call:</strong> <em>"Alexa, tell ZingTalk to answer call"</em></li>
+                        <li><strong>Decline Incoming Call:</strong> <em>"Alexa, tell ZingTalk to decline"</em> or <em>"reject call"</em></li>
+                        <li><strong>Mute Microphone:</strong> <em>"Alexa, tell ZingTalk to mute microphone"</em></li>
+                        <li><strong>Unmute Microphone:</strong> <em>"Alexa, tell ZingTalk to unmute"</em></li>
+                        <li><strong>Turn Camera Off:</strong> <em>"Alexa, tell ZingTalk to turn off camera"</em></li>
+                        <li><strong>Turn Camera On:</strong> <em>"Alexa, tell ZingTalk to turn on camera"</em></li>
+                        <li><strong>Hang Up Active Call:</strong> <em>"Alexa, tell ZingTalk to end call"</em> or <em>"hang up"</em></li>
+                    </ul>
 
-                    <h4 style="color: #00d29d; margin-top: 14px;">🔒 Privacy & Zero Server Retention</h4>
-                    <p>• All audio and video calls flow peer-to-peer (P2P) with WebRTC DTLS-SRTP encryption.<br>
-                    • No call recordings or private chats are ever saved to cloud disks.</p>
+                    <h4 style="color: #00d29d; margin: 12px 0 6px;">👥 Navigation & Address Book</h4>
+                    <ul style="padding-left: 18px; margin: 0 0 10px;">
+                        <li><strong>Check Contacts:</strong> <em>"Alexa, ask ZingTalk who can I call"</em> or <em>"list contacts"</em></li>
+                        <li><strong>Open Dialpad:</strong> <em>"Alexa, ask ZingTalk to open dialpad"</em></li>
+                        <li><strong>Check My UID:</strong> <em>"Alexa, ask ZingTalk what is my UID"</em></li>
+                        <li><strong>Return Home:</strong> <em>"Alexa, tell ZingTalk to go home"</em></li>
+                    </ul>
+
+                    <h4 style="color: #00d29d; margin: 12px 0 6px;">🔗 Pairing Alexa Device to your Fire TV Screen</h4>
+                    <p style="margin: 0 0 10px;">To ensure Alexa routes commands exclusively to this TV, say:<br>
+                    <strong><em>"Alexa, ask ZingTalk to pair UID [Your 10-Digit UID]"</em></strong><br>
+                    Your 10-digit UID is displayed at the top-right of your screen.</p>
+
+                    <h4 style="color: #00d29d; margin: 12px 0 6px;">🎮 Fire TV D-Pad Remote Navigation</h4>
+                    <ul style="padding-left: 18px; margin: 0 0 6px;">
+                        <li><strong>Directional Arrows (Up, Down, Left, Right):</strong> Smooth spatial navigation with glowing cyan focus indicators. Focused elements auto-scroll into view.</li>
+                        <li><strong>Center OK / Select:</strong> Activate focused button or initiate 1-click speed dial.</li>
+                        <li><strong>Back Button:</strong> Press once to close dialogs. During active calls, press Back twice to safely hang up (guards against accidental disconnects).</li>
+                        <li><strong>Menu Button (☰):</strong> Press the Menu key on your Fire TV remote anytime to instantly summon this Voice Guide!</li>
+                    </ul>
                 </div>
                 <div class="tv-dialog-buttons" style="margin-top: 16px;">
-                    <button type="button" id="guide-ok-btn" class="tv-primary-btn tv-focusable" tabindex="0">Got It</button>
+                    <button type="button" id="guide-ok-btn" class="tv-primary-btn tv-focusable" tabindex="0">Got It, Start Calling</button>
                 </div>
             </div>
         </div>

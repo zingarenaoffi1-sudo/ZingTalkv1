@@ -1584,6 +1584,32 @@ function handleAlexaIncomingCommand(cmd) {
                 showToast("Camera active");
             }
         }
+    } else if (action === 'toggle_camera') {
+        if (localStream) {
+            const track = localStream.getVideoTracks()[0];
+            if (track) {
+                track.enabled = !track.enabled;
+                showToast(track.enabled ? "Camera active" : "Camera turned off");
+            }
+        }
+    } else if (action === 'toggle_mic') {
+        if (localStream) {
+            const track = localStream.getAudioTracks()[0];
+            if (track) {
+                isMicMuted = !isMicMuted;
+                track.enabled = !isMicMuted;
+                showToast(isMicMuted ? "Microphone muted" : "Microphone active");
+            }
+        }
+    } else if (action === 'open_guide' || action === 'show_guide') {
+        const guideModal = document.getElementById("guide-modal");
+        if (guideModal) {
+            guideModal.classList.remove("hidden");
+            const scrollArea = document.getElementById("guide-scroll-area");
+            if (scrollArea) focusElement(scrollArea);
+        }
+    } else if (action === 'device_paired') {
+        showToast(`🎙️ Alexa Paired (UID: ${cmd.pairedUid || my10DigitUid})`);
     } else if (action === 'open_chat') {
         const targetUid = cmd.targetUid;
         if (targetUid) {
@@ -2061,7 +2087,7 @@ function handleDpadNavigation(direction) {
     }
 
     // Special scroll handling for TV remote on scrollable areas
-    if (current.id === "policy-scroll-area" || current.id === "messages-area") {
+    if (current.id === "policy-scroll-area" || current.id === "messages-area" || current.id === "guide-scroll-area") {
         if (direction === 'down') {
             const canScrollDown = current.scrollTop < (current.scrollHeight - current.clientHeight - 8);
             if (canScrollDown) {
@@ -2279,6 +2305,24 @@ window.addEventListener("keydown", (e) => {
         // If in an active call, safely toggle microphone mute
         if (!document.getElementById("full-call-screen")?.classList.contains("hidden")) {
             document.getElementById("mute-mic-btn")?.click();
+        }
+        return;
+    }
+
+    // MENU KEY: Fire TV Remote dedicated Menu button (KeyCode 82, KeyCode 118, "Menu")
+    const isMenu = e.key === "Menu" || e.code === "ContextMenu" || e.keyCode === 82 || e.which === 82 || e.keyCode === 118 || e.which === 118;
+    if (isMenu) {
+        e.preventDefault();
+        const guideModal = document.getElementById("guide-modal");
+        if (guideModal) {
+            if (guideModal.classList.contains("hidden")) {
+                guideModal.classList.remove("hidden");
+                const scrollArea = document.getElementById("guide-scroll-area");
+                if (scrollArea) focusElement(scrollArea);
+            } else {
+                guideModal.classList.add("hidden");
+                autoFocusFirstElement();
+            }
         }
         return;
     }
