@@ -1,26 +1,33 @@
-name: Build Android APK (ZingTalk)
+name: Build Fire TV APK (ZingTalk TV)
 
 on:
   push:
+    paths:
+      - 'packages/tv/**'
+      - 'index.html'
+      - 'app.js'
+      - 'style.css'
+      - 'scripts/**'
+      - '.github/workflows/build-tv.yml'
     branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
-  build-apk:
-    name: Build Official Signed ZingTalk APK
+  build-tv-apk:
+    name: Build Signed ZingTalk Fire TV APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 21 (Required for Capacitor 7/8 & AGP 8+)
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '21'
 
-      - name: Set up Node.js (Node 22)
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -33,22 +40,20 @@ jobs:
 
       - name: Configure Capacitor & Add Android Platform
         run: |
-          if [ ! -f "capacitor.config.json" ]; then
-            npx cap init ZingTalk com.zingtalk.com --web-dir dist
+          if [ -f "packages/tv/capacitor.config.json" ]; then
+            cp packages/tv/capacitor.config.json capacitor.config.json
           fi
           if [ ! -f "android/build.gradle" ]; then
-            echo "Android platform not initialized or incomplete. Running fresh cap add android..."
             rm -rf android
             npx cap add android
           fi
           mkdir -p android/app
           if [ -f "google-services.json" ]; then
             cp google-services.json android/app/google-services.json
-            echo "google-services.json copied to android/app/ before sync"
           fi
           npx cap sync android
 
-      - name: Inject ZingTalk App Icons & Fire TV Banner into Android Resources
+      - name: Inject Fire TV Icons & Leanback Banner
         run: |
           mkdir -p android/app/src/main/res/drawable
           if [ -f "assets/icon.png" ]; then
@@ -63,52 +68,41 @@ jobs:
               cp "assets/mipmap-${d}/ic_launcher_foreground.png" "$res_dir/ic_launcher_foreground.png"
             fi
           done
-          echo "ZingTalk custom brand launcher icons & Fire TV banner injected into Android resources."
 
-      - name: Inject google-services.json & Release Keystore
+      - name: Inject google-services.json & TV Keystore
         run: |
           mkdir -p android/app
           if [ -f "google-services.json" ]; then
             cp google-services.json android/app/google-services.json
-            echo "google-services.json successfully copied to android/app/"
           fi
-          if [ -f "zingtalk-release.keystore" ]; then
-            cp zingtalk-release.keystore android/app/zingtalk-release.keystore
-            echo "zingtalk-release.keystore successfully copied to android/app/"
+          if [ -f "zingtalk-tv-release.keystore" ]; then
+            cp zingtalk-tv-release.keystore android/app/zingtalk-tv-release.keystore
           else
-            echo "Generating 70-year release keystore fallback..."
-            keytool -genkeypair -v -keystore android/app/zingtalk-release.keystore \
-              -alias zingtalk -keyalg RSA -keysize 2048 -validity 25550 \
+            keytool -genkeypair -v -keystore android/app/zingtalk-tv-release.keystore \
+              -alias zingtalk-tv -keyalg RSA -keysize 2048 -validity 25550 \
               -storepass zingtalk123456 -keypass zingtalk123456 \
-              -dname "CN=ZingTalk, OU=Mobile, O=ZingTalk, L=Delhi, ST=Delhi, C=IN"
-            echo "70-year release keystore generated successfully."
+              -dname "CN=ZingTalk TV, OU=FireTV, O=ZingTalk, L=Delhi, ST=Delhi, C=IN"
           fi
 
-      - name: Configure Android Project, Manifest, WebView, ProGuard & Release Signing
-        run: node scripts/prepare-android.js
+      - name: Configure Android Project for TV
+        run: node scripts/prepare-android.js tv
 
-      - name: Build Official Signed Android APK
+      - name: Build Official Signed Fire TV APK
         working-directory: android
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug --stacktrace
-          # Copy official signed release APK to ZingTalk.apk in root
           APK_FILE=$(find app/build/outputs/apk/release -name "*release*.apk" ! -name "*-unsigned.apk" -type f 2>/dev/null | head -n 1)
           if [ -z "$APK_FILE" ]; then
             APK_FILE=$(find app/build/outputs/apk -name "*.apk" -type f | head -n 1)
           fi
           if [ -n "$APK_FILE" ]; then
-            cp "$APK_FILE" ../ZingTalk.apk
-            echo "Found APK: $APK_FILE -> copied to ZingTalk.apk"
-          else
-            echo "Error: No APK file generated!"
-            exit 1
+            cp "$APK_FILE" ../ZingTalk-FireTV.apk
           fi
-          ls -lh ../ZingTalk.apk
 
-      - name: Upload Official ZingTalk APK
+      - name: Upload Official ZingTalk Fire TV APK
         uses: actions/upload-artifact@v4
         with:
-          name: ZingTalk-APK
-          path: ZingTalk.apk
+          name: ZingTalk-FireTV-Release-APK
+          path: ZingTalk-FireTV.apk
           if-no-files-found: error

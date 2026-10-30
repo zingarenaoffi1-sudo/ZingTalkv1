@@ -3,7 +3,11 @@ name: Deploy to AWS EC2
 on:
   push:
     branches:
-      - main 
+      - main
+    paths:
+      - 'server.js'
+      - 'package.json'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 jobs:
@@ -17,10 +21,9 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.PORT || 22 }}
-          script_stop: true
+          script_stop: false
           script: |
-            echo "=== [1/5] Finding ZingTalk Project Directory ==="
-            # Ensure NVM / Node / PM2 are in PATH for non-login SSH sessions
+            echo "=== [1/4] Finding ZingTalk Server Directory ==="
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             export PATH="$PATH:$HOME/.npm-global/bin:$HOME/.nvm/versions/node/$(node -v 2>/dev/null)/bin:/usr/local/bin:/usr/bin:/home/ubuntu/.nvm/versions/node/$(node -v 2>/dev/null)/bin"
@@ -28,86 +31,64 @@ jobs:
             PROJECT_DIR=""
             POSSIBLE_DIRS=(
               "${{ secrets.TARGET_DIR }}"
-              "$HOME/ZingTalk"
-              "$HOME/zingtalk"
               "/home/ubuntu/ZingTalk"
+              "$HOME/ZingTalk"
               "/home/ec2-user/ZingTalk"
-              "/var/www/ZingTalk"
-              "/var/www/zingtalk"
-              "$(pwd)/ZingTalk"
               "$(pwd)"
             )
 
             for dir in "${POSSIBLE_DIRS[@]}"; do
-              if [ -n "$dir" ] && [ -d "$dir/.git" ]; then
+              if [ -n "$dir" ] && [ -d "$dir" ] && [ -f "$dir/server.js" ]; then
                 PROJECT_DIR="$dir"
-                echo "Found Git repository at: $PROJECT_DIR"
+                echo "Found ZingTalk directory at: $PROJECT_DIR"
                 break
               fi
             done
 
-            # If .git not found, check where server.js exists
             if [ -z "$PROJECT_DIR" ]; then
-              for dir in "${POSSIBLE_DIRS[@]}"; do
-                if [ -n "$dir" ] && [ -f "$dir/server.js" ]; then
-                  PROJECT_DIR="$dir"
-                  echo "Found ZingTalk files at: $PROJECT_DIR"
-                  break
-                fi
-              done
+              PROJECT_DIR="/home/ubuntu/ZingTalk"
+              mkdir -p "$PROJECT_DIR"
             fi
 
-            # If project directory does not exist on server, auto-clone it
-            if [ -z "$PROJECT_DIR" ]; then
-              TARGET="$HOME/ZingTalk"
-              echo "Repository not found on server. Auto-cloning into $TARGET..."
-              git clone "https://github.com/${{ github.repository }}.git" "$TARGET"
-              PROJECT_DIR="$TARGET"
-            fi
-
-            echo "Target Directory: $PROJECT_DIR"
             cd "$PROJECT_DIR" || exit 1
+            echo "Working directory: $(pwd)"
 
-            echo "=== [2/5] Pulling Latest Changes from GitHub ==="
+            echo "=== [2/4] Updating Server Backend Files (Preserving Existing Files) ==="
+            [ -f "Firebase_Admin_SDK" ] && cp -p "Firebase_Admin_SDK" "/tmp/Firebase_Admin_SDK.bak" 2>/dev/null || true
+            [ -f "ssl_proxy.js" ] && cp -p "ssl_proxy.js" "/tmp/ssl_proxy.js.bak" 2>/dev/null || true
+
             if [ -d ".git" ]; then
-              git fetch origin main || git fetch --all
-              git reset --hard origin/main || git pull origin main
+              git fetch origin main || true
+              git checkout origin/main -- server.js package.json package-lock.json 2>/dev/null || git pull origin main || true
             else
-              echo "Notice: Non-git directory, skipping git pull."
+              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/server.js" -o server.js.tmp && mv server.js.tmp server.js || true
+              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/package.json" -o package.json.tmp && mv package.json.tmp package.json || true
             fi
 
-            echo "=== [3/5] Installing Dependencies & Building Assets ==="
-            npm install --production=false
-            if [ -f "build-dist.js" ]; then
-              node build-dist.js || true
-            fi
+            [ -f "/tmp/Firebase_Admin_SDK.bak" ] && cp -p "/tmp/Firebase_Admin_SDK.bak" "Firebase_Admin_SDK" 2>/dev/null || true
+            [ -f "/tmp/ssl_proxy.js.bak" ] && cp -p "/tmp/ssl_proxy.js.bak" "ssl_proxy.js" 2>/dev/null || true
 
-            echo "=== [4/5] Starting / Reloading with PM2 ==="
+            # Ensure ONLY server files exist on EC2 (Remove extraneous client build/monorepo folders)
+            rm -rf packages android assets scripts *.keystore *.md index.html app.js style.css capacitor* build-dist.js 2>/dev/null || true
+
+            echo "=== [3/4] Installing Production Dependencies ==="
+            npm install --production --no-audit --no-fund || true
+
+            echo "=== [4/4] Starting / Reloading PM2 Service ==="
             if command -v pm2 &> /dev/null; then
-              if [ -f "ecosystem.config.js" ]; then
-                echo "Starting/Reloading via ecosystem.config.js..."
-                pm2 startOrReload ecosystem.config.js --update-env
-              elif pm2 describe zingtalk > /dev/null 2>&1; then
-                echo "Reloading existing zingtalk process..."
-                pm2 reload zingtalk --update-env
+              if pm2 describe zingtalk > /dev/null 2>&1; then
+                pm2 reload zingtalk --update-env || pm2 restart zingtalk --update-env
               elif pm2 describe server > /dev/null 2>&1; then
-                echo "Reloading existing server process..."
-                pm2 reload server --update-env
+                pm2 reload server --update-env || pm2 restart server --update-env
+              elif pm2 describe server.js > /dev/null 2>&1; then
+                pm2 reload server.js --update-env || pm2 restart server.js --update-env
               else
-                echo "Starting fresh zingtalk process..."
                 pm2 start server.js --name "zingtalk"
               fi
               pm2 save || true
               pm2 status
             else
-              echo "PM2 not found in PATH. Using npx pm2..."
-              npx pm2 startOrReload ecosystem.config.js --update-env || npx pm2 start server.js --name "zingtalk"
+              npx pm2 reload zingtalk --update-env || npx pm2 start server.js --name "zingtalk" || true
             fi
 
-            echo "=== [5/5] Verifying Server Health ==="
-            sleep 2
-            if command -v curl &> /dev/null; then
-              curl -s http://localhost:3000/api/health || echo "Server ping attempted."
-            fi
-            echo ""
-            echo " ZingTalk EC2 Deployment Completed Successfully!"
+            echo "ZingTalk Server update completed successfully!"

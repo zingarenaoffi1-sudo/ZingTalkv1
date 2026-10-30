@@ -1,0 +1,704 @@
+:root {
+    --bg-primary: #0a0e17;
+    --bg-secondary: #121826;
+    --bg-card: #1a2234;
+    --bg-card-hover: #222d44;
+    --accent-cyan: #00d29d;
+    --accent-cyan-hover: #00b887;
+    --accent-red: #ff4757;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --border-color: rgba(255, 255, 255, 0.08);
+    --safe-bottom: env(safe-area-inset-bottom, 16px);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    user-select: none;
+}
+
+body.mobile-body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+}
+
+#mobile-app-root {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Header */
+.mobile-header {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 20;
+}
+
+.mobile-header-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mobile-brand-logo {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+}
+
+.mobile-brand-name {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--text-primary);
+    letter-spacing: -0.3px;
+}
+
+.mobile-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mobile-uid-badge {
+    background: rgba(0, 210, 157, 0.12);
+    border: 1px solid rgba(0, 210, 157, 0.35);
+    color: var(--accent-cyan);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 12px;
+}
+
+.mobile-icon-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.mobile-icon-btn:active {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+/* Main Content Views */
+.mobile-view {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    padding-bottom: 90px;
+    display: flex;
+    flex-direction: column;
+}
+
+.mobile-view.hidden {
+    display: none !important;
+}
+
+/* Bottom Navigation Bar */
+.mobile-bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: calc(60px + var(--safe-bottom));
+    padding-bottom: var(--safe-bottom);
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    z-index: 30;
+}
+
+.mobile-nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    gap: 4px;
+    cursor: pointer;
+    flex: 1;
+    height: 100%;
+}
+
+.mobile-nav-item svg {
+    width: 22px;
+    height: 22px;
+    fill: currentColor;
+}
+
+.mobile-nav-item.active {
+    color: var(--accent-cyan);
+}
+
+/* Contacts List */
+.contacts-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+}
+
+.section-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.mobile-add-btn {
+    background: var(--accent-cyan);
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.contact-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+    cursor: pointer;
+}
+
+.contact-card:active {
+    background: var(--bg-card-hover);
+}
+
+.contact-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #00d29d, #0084ff);
+    color: #fff;
+    font-size: 18px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.contact-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.contact-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.contact-uid {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.contact-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.action-icon-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.action-icon-btn.call-video {
+    background: rgba(0, 210, 157, 0.15);
+    color: var(--accent-cyan);
+}
+
+.action-icon-btn.call-audio {
+    background: rgba(0, 132, 255, 0.15);
+    color: #0084ff;
+}
+
+/* Dialpad View */
+.dialpad-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    max-width: 320px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+.dialpad-display {
+    width: 100%;
+    font-size: 28px;
+    font-weight: 700;
+    text-align: center;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 12px;
+    padding: 12px;
+    letter-spacing: 2px;
+    margin-bottom: 20px;
+    outline: none;
+}
+
+.dialpad-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    width: 100%;
+    margin-bottom: 20px;
+}
+
+.dial-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 50%;
+    aspect-ratio: 1;
+    font-size: 22px;
+    font-weight: 600;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.dial-btn:active {
+    background: var(--accent-cyan);
+    color: #000;
+}
+
+.dialpad-actions {
+    display: flex;
+    gap: 16px;
+    width: 100%;
+}
+
+.dial-call-btn {
+    flex: 1;
+    height: 52px;
+    border-radius: 26px;
+    border: none;
+    font-size: 15px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.dial-call-btn.video {
+    background: var(--accent-cyan);
+    color: #000;
+}
+
+.dial-call-btn.audio {
+    background: #0084ff;
+    color: #fff;
+}
+
+/* Chat Drawer / Overlay */
+.mobile-chat-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-primary);
+    display: flex;
+    flex-direction: column;
+    z-index: 50;
+}
+
+.chat-header {
+    background: var(--bg-secondary);
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.chat-header-info {
+    flex: 1;
+}
+
+.chat-header-name {
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.chat-header-uid {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.message-bubble {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: 16px;
+    font-size: 14.5px;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.message-bubble.sent {
+    align-self: flex-end;
+    background: var(--accent-cyan);
+    color: #000;
+    border-bottom-right-radius: 4px;
+}
+
+.message-bubble.received {
+    align-self: flex-start;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border-bottom-left-radius: 4px;
+}
+
+.chat-input-row {
+    padding: 10px 14px;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.chat-input {
+    flex: 1;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    padding: 10px 16px;
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+}
+
+.chat-send-btn {
+    background: var(--accent-cyan);
+    color: #000;
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+/* Call Screen */
+.mobile-call-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    z-index: 100;
+}
+
+.call-video-container {
+    flex: 1;
+    position: relative;
+    background: #050810;
+    overflow: hidden;
+}
+
+.remote-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.local-video {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 100px;
+    height: 140px;
+    border-radius: 12px;
+    object-fit: cover;
+    border: 2px solid var(--accent-cyan);
+    background: #111;
+    z-index: 10;
+}
+
+.call-meta-bar {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    padding: 6px 14px;
+    border-radius: 20px;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    z-index: 10;
+}
+
+.call-controls-row {
+    position: absolute;
+    bottom: calc(24px + var(--safe-bottom));
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+    z-index: 20;
+}
+
+.call-ctl-btn {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+}
+
+.call-ctl-btn:active {
+    transform: scale(0.95);
+}
+
+.call-ctl-btn.end-call {
+    background: var(--accent-red);
+    width: 62px;
+    height: 62px;
+}
+
+/* Authentication Screen */
+.mobile-auth-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-primary);
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+    overflow-y: auto;
+    z-index: 200;
+}
+
+.auth-header {
+    text-align: center;
+    margin-top: 40px;
+    margin-bottom: 28px;
+}
+
+.auth-logo {
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
+    margin-bottom: 12px;
+}
+
+.auth-title {
+    font-size: 24px;
+    font-weight: 800;
+}
+
+.auth-subtitle {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-width: 380px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+.auth-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.auth-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.auth-input {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 15px;
+    color: var(--text-primary);
+    outline: none;
+}
+
+.auth-input:focus {
+    border-color: var(--accent-cyan);
+}
+
+.auth-submit-btn {
+    background: var(--accent-cyan);
+    color: #000;
+    border: none;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 16px;
+    font-weight: 700;
+    margin-top: 8px;
+    cursor: pointer;
+}
+
+.auth-guest-btn {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.auth-switch-text {
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 12px;
+}
+
+.auth-switch-btn {
+    background: none;
+    border: none;
+    color: var(--accent-cyan);
+    font-weight: 700;
+    cursor: pointer;
+}
+
+/* Modals & Dialogs */
+.mobile-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 150;
+}
+
+.mobile-modal-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 20px;
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.mobile-modal-title {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+/* Toast */
+.mobile-toast {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(20, 26, 40, 0.95);
+    border: 1px solid var(--accent-cyan);
+    color: #fff;
+    padding: 10px 18px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    z-index: 999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}

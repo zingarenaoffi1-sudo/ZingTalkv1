@@ -1,0 +1,10 @@
+{
+  "appId": "com.zingtalk.tv",
+  "appName": "ZingTalk TV",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "cleartext": true,
+    "androidScheme": "https"
+  }
+}

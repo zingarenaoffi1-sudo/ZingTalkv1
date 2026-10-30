@@ -1,0 +1,105 @@
+name: Build Mobile APK (ZingTalk Mobile)
+
+on:
+  push:
+    paths:
+      - 'packages/mobile/**'
+      - 'scripts/**'
+      - '.github/workflows/build-mobile.yml'
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-mobile-apk:
+    name: Build Signed ZingTalk Mobile APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Dependencies & Prepare Mobile Assets
+        run: |
+          npm install
+          npm install --save @capacitor/core @capacitor/cli @capacitor/android @capacitor-firebase/authentication
+          npm run build
+          # Ensure mobile dist is copied as primary for mobile build
+          rm -rf dist/*
+          cp -r packages/mobile/* dist/ 2>/dev/null || true
+          cp -r packages/mobile/dist/* dist/ 2>/dev/null || true
+
+      - name: Configure Capacitor for Mobile & Add Android Platform
+        run: |
+          if [ -f "packages/mobile/capacitor.config.json" ]; then
+            cp packages/mobile/capacitor.config.json capacitor.config.json
+          fi
+          if [ ! -f "android/build.gradle" ]; then
+            rm -rf android
+            npx cap add android
+          fi
+          mkdir -p android/app
+          if [ -f "google-services.json" ]; then
+            cp google-services.json android/app/google-services.json
+          fi
+          npx cap sync android
+
+      - name: Inject Mobile Brand Icons
+        run: |
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            res_dir="android/app/src/main/res/mipmap-${d}"
+            mkdir -p "$res_dir"
+            if [ -f "assets/mipmap-${d}/ic_launcher.png" ]; then
+              cp "assets/mipmap-${d}/ic_launcher.png" "$res_dir/ic_launcher.png"
+              cp "assets/mipmap-${d}/ic_launcher_round.png" "$res_dir/ic_launcher_round.png"
+              cp "assets/mipmap-${d}/ic_launcher_foreground.png" "$res_dir/ic_launcher_foreground.png"
+            fi
+          done
+
+      - name: Inject google-services.json & Mobile Keystore
+        run: |
+          mkdir -p android/app
+          if [ -f "google-services.json" ]; then
+            cp google-services.json android/app/google-services.json
+          fi
+          if [ -f "zingtalk-mobile-release.keystore" ]; then
+            cp zingtalk-mobile-release.keystore android/app/zingtalk-mobile-release.keystore
+          else
+            keytool -genkeypair -v -keystore android/app/zingtalk-mobile-release.keystore \
+              -alias zingtalk-mobile -keyalg RSA -keysize 2048 -validity 25550 \
+              -storepass zingtalk123456 -keypass zingtalk123456 \
+              -dname "CN=ZingTalk Mobile, OU=Mobile, O=ZingTalk, L=Delhi, ST=Delhi, C=IN"
+          fi
+
+      - name: Configure Android Project for Mobile
+        run: node scripts/prepare-android.js mobile
+
+      - name: Build Official Signed Mobile APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug --stacktrace
+          APK_FILE=$(find app/build/outputs/apk/release -name "*release*.apk" ! -name "*-unsigned.apk" -type f 2>/dev/null | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find app/build/outputs/apk -name "*.apk" -type f | head -n 1)
+          fi
+          if [ -n "$APK_FILE" ]; then
+            cp "$APK_FILE" ../ZingTalk-Mobile.apk
+          fi
+
+      - name: Upload Official ZingTalk Mobile APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZingTalk-Mobile-Release-APK
+          path: ZingTalk-Mobile.apk
+          if-no-files-found: error

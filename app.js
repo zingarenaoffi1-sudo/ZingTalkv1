@@ -179,28 +179,29 @@ export let currentTargetUid = null;
 export let socket = null;
 
 // Infrastructure Configuration (Always hosted directly on user's AWS EC2 server)
-const AWS_SIGNALING_URL = "http://18.234.224.25:3000";
-const PRIMARY_STUN = "stun:stun.l.google.com:19302"; // Google STUN 1st Priority
-const SECONDARY_STUN = "stun:18.234.224.25:3478";
+const DUCKDNS_SIGNALING_URL = "https://zingtalk.duckdns.org";
+const PRIMARY_STUN = "stun:stun.l.google.com:19302";
+const SECONDARY_STUN = "stun:zingtalk.duckdns.org:3478";
 let isStunFailoverActive = false;
 
-// Resolve backend signaling URL: ALWAYS routes 100% directly to user's AWS EC2 server (http://18.234.224.25:3000)
 export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
     if (saved && saved.trim()) return saved.trim();
 
-    // ALWAYS CONNECT DIRECTLY TO USER'S AWS EC2 SERVER:
-    // http://18.234.224.25:3000
-    // Handles all WebSocket signaling, real-time messaging, and Alexa commands.
-    return AWS_SIGNALING_URL;
+    if (typeof window !== "undefined" && window.location) {
+        if (window.location.protocol.startsWith("http") && (window.location.host.includes("duckdns") || window.location.host.includes("localhost"))) {
+            return window.location.origin;
+        }
+    }
+    return DUCKDNS_SIGNALING_URL;
 }
 
-// Compute deterministic 10-digit UID
 export function computeDeterministic10DigitUid(idStr) {
     if (!idStr) return "1000000001";
     let hash = 5381;
-    for (let i = 0; i < idStr.length; i++) {
-        hash = ((hash << 5) + hash) + idStr.charCodeAt(i);
+    const clean = String(idStr).trim().toLowerCase();
+    for (let i = 0; i < clean.length; i++) {
+        hash = ((hash << 5) + hash) + clean.charCodeAt(i);
         hash |= 0;
     }
     const num = (Math.abs(hash) % 9000000000) + 1000000000;
@@ -221,11 +222,6 @@ export function updateUidDisplays(uid) {
     if (modalUid) modalUid.innerText = my10DigitUid;
 }
 
-// WebRTC ICE Configuration:
-// 1st Priority: Google Public STUN Cluster (Instant global NAT traversal)
-// 2nd Priority: User AWS EC2 Dedicated STUN Server (18.234.224.25:3478)
-// 3rd Priority: User AWS EC2 Dedicated TURN Server (coturn relay with credential fallback)
-// 4th Priority: Twilio Global Public STUN Fallback
 const rtcConfig = {
     iceServers: [
         { 
@@ -239,14 +235,13 @@ const rtcConfig = {
         },
         { 
             urls: [
-                "stun:18.234.224.25:3478",
-                "stun:18.234.224.25:5349"
+                "stun:zingtalk.duckdns.org:3478"
             ] 
         },
         {
             urls: [
-                "turn:18.234.224.25:3478?transport=udp",
-                "turn:18.234.224.25:3478?transport=tcp"
+                "turn:zingtalk.duckdns.org:3478?transport=udp",
+                "turn:zingtalk.duckdns.org:3478?transport=tcp"
             ],
             username: "zingtalk",
             credential: "zingtalkpassword"
@@ -2574,21 +2569,45 @@ document.addEventListener("click", async (e) => {
                     if (name) {
                         try { await updateProfile(cred.user, { displayName: name }); } catch (_) {}
                     }
+                    let resolvedUid = null;
+                    try {
+                        resolvedUid = await lookupUserUidFromFirestore(cred.user.email, cred.user.uid);
+                    } catch (_) {}
+                    if (!resolvedUid) {
+                        resolvedUid = computeDeterministic10DigitUid(cred.user.email || cred.user.uid);
+                    }
                     const user = {
                         displayName: name || cred.user.displayName || email.split("@")[0],
                         email: cred.user.email,
-                        uid: cred.user.uid
+                        uid: cred.user.uid,
+                        zingUid: resolvedUid
                     };
+                    my10DigitUid = resolvedUid;
+                    updateUidDisplays(resolvedUid);
+                    loadUserStorageData(resolvedUid);
+                    saveUserUidToFirestore(user, resolvedUid);
                     localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
                     loginUserSession(user);
                     showToast("Account created successfully!");
                 } else {
                     const cred = await signInWithEmailAndPassword(auth, email, password);
+                    let resolvedUid = null;
+                    try {
+                        resolvedUid = await lookupUserUidFromFirestore(cred.user.email, cred.user.uid);
+                    } catch (_) {}
+                    if (!resolvedUid) {
+                        resolvedUid = computeDeterministic10DigitUid(cred.user.email || cred.user.uid);
+                    }
                     const user = {
                         displayName: cred.user.displayName || email.split("@")[0],
                         email: cred.user.email,
-                        uid: cred.user.uid
+                        uid: cred.user.uid,
+                        zingUid: resolvedUid
                     };
+                    my10DigitUid = resolvedUid;
+                    updateUidDisplays(resolvedUid);
+                    loadUserStorageData(resolvedUid);
+                    saveUserUidToFirestore(user, resolvedUid);
                     localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
                     loginUserSession(user);
                     showToast("Signed in successfully!");
@@ -2899,6 +2918,19 @@ document.addEventListener("click", async (e) => {
                 showToast("UID: " + my10DigitUid);
             });
         }
+        return;
+    }
+
+    // How to Use Guide Modal
+    if (e.target.id === "header-guide-btn" || e.target.closest("#header-guide-btn")) {
+        document.getElementById("guide-modal")?.classList.remove("hidden");
+        setTimeout(() => focusElement(document.getElementById("guide-ok-btn"), false), 60);
+        return;
+    }
+
+    if (e.target.id === "close-guide-modal-btn" || e.target.closest("#close-guide-modal-btn") || e.target.id === "guide-ok-btn" || e.target.closest("#guide-ok-btn")) {
+        document.getElementById("guide-modal")?.classList.add("hidden");
+        autoFocusFirstElement();
         return;
     }
 

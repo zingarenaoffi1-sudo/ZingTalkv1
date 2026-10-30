@@ -24,11 +24,25 @@ filesToCopy.forEach(file => {
     const destPath = path.join(distDir, file);
     if (fs.existsSync(srcPath)) {
         fs.copyFileSync(srcPath, destPath);
-        console.log(`[build-dist] Copied ${file} -> dist/${file}`);
         const androidDest = path.join(androidPublicDir, file);
         fs.copyFileSync(srcPath, androidDest);
-        console.log(`[build-dist] Synced ${file} -> android/.../public/${file}`);
     }
+});
+
+// Sync Packages (TV and Mobile)
+const packages = ['tv', 'mobile'];
+packages.forEach(pkg => {
+    const pkgDir = path.join(__dirname, 'packages', pkg);
+    const pkgDist = path.join(pkgDir, 'dist');
+    if (!fs.existsSync(pkgDist)) {
+        fs.mkdirSync(pkgDist, { recursive: true });
+    }
+    ['index.html', 'style.css', 'app.js'].forEach(f => {
+        const src = path.join(pkgDir, f);
+        if (fs.existsSync(src)) {
+            fs.copyFileSync(src, path.join(pkgDist, f));
+        }
+    });
 });
 
 // Copy Capacitor runtime bundle
@@ -37,10 +51,13 @@ if (fs.existsSync(capCorePath)) {
     fs.copyFileSync(capCorePath, path.join(distDir, 'capacitor.js'));
     fs.copyFileSync(capCorePath, path.join(__dirname, 'capacitor.js'));
     fs.copyFileSync(capCorePath, path.join(androidPublicDir, 'capacitor.js'));
-    console.log('[build-dist] Copied capacitor.js -> dist, root & android public');
+    packages.forEach(pkg => {
+        fs.copyFileSync(capCorePath, path.join(__dirname, 'packages', pkg, 'dist', 'capacitor.js'));
+        fs.copyFileSync(capCorePath, path.join(__dirname, 'packages', pkg, 'capacitor.js'));
+    });
 }
 
-// Copy Socket.IO client runtime bundle (offline native guarantee)
+// Copy Socket.IO client runtime bundle
 const socketIoPaths = [
     path.join(__dirname, 'node_modules/socket.io/client-dist/socket.io.min.js'),
     path.join(__dirname, 'node_modules/socket.io-client/dist/socket.io.min.js')
@@ -50,12 +67,15 @@ for (const sPath of socketIoPaths) {
         fs.copyFileSync(sPath, path.join(distDir, 'socket.io.min.js'));
         fs.copyFileSync(sPath, path.join(__dirname, 'socket.io.min.js'));
         fs.copyFileSync(sPath, path.join(androidPublicDir, 'socket.io.min.js'));
-        console.log('[build-dist] Copied socket.io.min.js -> dist, root & android public');
+        packages.forEach(pkg => {
+            fs.copyFileSync(sPath, path.join(__dirname, 'packages', pkg, 'dist', 'socket.io.min.js'));
+            fs.copyFileSync(sPath, path.join(__dirname, 'packages', pkg, 'socket.io.min.js'));
+        });
         break;
     }
 }
 
-// Copy assets folder (icons, logos)
+// Copy assets folder
 function copyDirSync(src, dest) {
     if (!fs.existsSync(src)) return;
     if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
@@ -73,9 +93,12 @@ function copyDirSync(src, dest) {
 
 copyDirSync(path.join(__dirname, 'assets'), path.join(distDir, 'assets'));
 copyDirSync(path.join(__dirname, 'assets'), path.join(androidPublicDir, 'assets'));
-console.log('[build-dist] Copied assets -> dist/assets & android public/assets');
+packages.forEach(pkg => {
+    copyDirSync(path.join(__dirname, 'assets'), path.join(__dirname, 'packages', pkg, 'dist', 'assets'));
+    copyDirSync(path.join(__dirname, 'assets'), path.join(__dirname, 'packages', pkg, 'assets'));
+});
 
-// Ensure standard Capacitor Cordova stub files exist
+// Ensure Cordova stubs
 const cordovaStubPath = path.join(androidPublicDir, 'cordova.js');
 if (!fs.existsSync(cordovaStubPath)) {
     fs.writeFileSync(cordovaStubPath, '// Capacitor Cordova Stub\n', 'utf8');
@@ -85,4 +108,4 @@ if (!fs.existsSync(cordovaPluginsStubPath)) {
     fs.writeFileSync(cordovaPluginsStubPath, 'cordova.define("cordova/plugin_list", function(require, exports, module) {\n  module.exports = [];\n  module.exports.metadata = {};\n});\n', 'utf8');
 }
 
-console.log('[build-dist] Distribution bundle built and synced successfully to dist/ and android/app/src/main/assets/public/');
+console.log('[build-dist] Distribution bundle built successfully for TV, Mobile, and Web.');

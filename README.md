@@ -1,190 +1,108 @@
-# ZingTalk 📺⚡
+# ZingTalk 📺📱⚡
 
-> **Next-Generation Real-Time Communication Platform Built Exclusively for Amazon Fire TV**  
-> *Engineered for Amazon Fire TV & Alexa Voice Control*  
-> **Confidential & Proprietary Submission for Amazon Hackathon**
+> **High-Definition Real-Time Communication Platform for Smart TVs & Mobile Devices**  
+> *Private, Ephemeral, Voice-Enabled Video Calling & Messaging*
 
 [![Node.js](https://img.shields.io/badge/Node.js-22.x-green.svg)](https://nodejs.org/)
 [![WebRTC](https://img.shields.io/badge/WebRTC-Peer--to--Peer-blue.svg)](https://webrtc.org/)
 [![Socket.IO](https://img.shields.io/badge/Socket.IO-v4-black.svg)](https://socket.io/)
-[![Capacitor](https://img.shields.io/badge/Capacitor-Fire%20TV-blueviolet.svg)](https://capacitorjs.com/)
-[![Judges Guide](https://img.shields.io/badge/Judges%20Guide-Interactive%20Testing%20Manual-brightgreen.svg)](TESTING_GUIDE.md)
+[![Capacitor](https://img.shields.io/badge/Capacitor-Android%20TV%20%26%20Mobile-blueviolet.svg)](https://capacitorjs.com/)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](#license)
 
 ---
 
 ## 🌟 Overview
 
-**ZingTalk** turns any Amazon Fire TV into an instant, private, voice-activated video calling and messaging hub. Traditional communication apps require mobile phone numbers, SIM cards, and invasive account tracking, storing gigabytes of personal chats on centralized disks. 
+**ZingTalk** connects Living Room Smart TVs (Amazon Fire TV / Android TV) and Smartphones into a unified, zero-friction communication network.
 
-ZingTalk re-engineers communication from first principles with **Zero Server Retention**, **10-Digit Anonymous UIDs**, and a native **10-Foot Leanback UI** navigable with Amazon Fire TV remotes (D-Pad navigation) and Alexa voice commands.
+Traditional messaging applications require mobile phone numbers, invasive SIM telemetry, and store gigabytes of private chat records on central cloud disks. ZingTalk re-engineers calling from first principles:
+- **Zero Server Retention**: Video and audio streams flow peer-to-peer (P2P) via WebRTC DTLS-SRTP encryption. Real-time messages are relayed purely through volatile server RAM and purged upon delivery.
+- **10-Digit Anonymous UIDs**: No phone numbers or invasive tracking required. Every account is assigned a persistent 10-digit ID.
+- **Dual-Client Experience**:
+  - **Fire TV (`packages/tv`)**: 10-foot leanback user interface navigable with physical remote D-Pad controls (Up/Down/Left/Right/Select/Back) and Alexa voice control.
+  - **Mobile (`packages/mobile`)**: Sleek touch-first smartphone interface with front/back camera flipping, dialpad, and bottom tab navigation.
 
 ---
 
 ## 🚀 Key Features
 
-* **🔑 10-Digit Anonymous UIDs**: No phone numbers, no SIM cards, and no personal credentials required. Each Fire TV receives a clean 10-digit ID in seconds.
-* **🛡️ Zero Server Retention (Ephemeral Privacy)**:
+* **🔑 Persistent 10-Digit UIDs**: Clean 10-digit numeric identifiers mapped securely to your account.
+* **🛡️ Zero Server Retention (Ephemeral Messaging)**:
   * Audio and video streams flow directly peer-to-peer via **WebRTC DTLS-SRTP** encryption.
-  * Chat messages are relayed exclusively through volatile server RAM and permanently purged upon delivery. No persistent chat logs on server storage.
-* **🎮 10-Foot Leanback UI (Fire TV Remote & D-Pad Optimized)**: Complete directional navigation (D-Pad Up, Down, Left, Right, Select/Enter, Back) engineered specifically for big-screen television viewing distances.
-* **🎙️ Amazon Alexa Voice Integration**: Dedicated Alexa Skill webhook integration (`/api/alexa`) enabling hands-free voice commands:
-  * *"Alexa, call Rahul on ZingTalk"*
-  * *"Alexa, answer call"*
-  * *"Alexa, mute microphone"*
-  * *"Alexa, end call"*
-* **⚡ Sub-Second Latency Architecture**: Lightweight WebSocket signaling pipeline hosted on the user's dedicated AWS EC2 instance paired with multi-tier STUN/TURN failover for rapid NAT traversal.
-* **📦 Lightweight Native 4MB Fire TV APK**: Dedicated Android TV / Fire TV native application bundle running on Amazon Fire TV devices with zero bloat.
+  * Chat messages are relayed in volatile memory and purged immediately upon receipt.
+* **🎮 Smart TV & Fire TV Remote Navigation**: Directional D-Pad spatial navigation engine with high-contrast focus rings and overscan safe margins.
+* **👆 Front/Rear Camera Switching on Mobile**: Easily toggle between front and rear cameras during live video calls on smartphones and tablets.
+* **🎙️ Amazon Alexa Voice Integration**: Dedicated webhook integration (`/api/alexa`) enabling hands-free voice commands (*"Alexa, call Rahul"*, *"Alexa, answer call"*, *"Alexa, end call"*).
+* **⚡ Production Signaling & STUN/TURN**: High-speed WebSocket signaling hosted at `https://zingtalk.duckdns.org` with dedicated Coturn STUN/TURN traversal on port `3478`.
 
 ---
 
-## 🏗️ Architecture & Technology Stack
+## 🏗️ Architecture & Monorepo Structure
 
 ```
-   ┌────────────────────────────────────────────────────────────────────────┐
-   │                        ZingTalk Fire TV Client                         │
-   │      (Vanilla ES Modules + HTML5 Leanback UI + Capacitor Bridge)       │
-   └───────────────┬────────────────────────────────────────┬───────────────┘
-                   │                                        │
-         WebSocket Signaling                        WebRTC P2P Stream
-       (ICE, SDP, Real-Time Messages)             (DTLS-SRTP Video/Audio)
-                   │                                        │
-                   ▼                                        ▼
-   ┌────────────────────────────────┐        ┌─────────────────────────────┐
-   │    User Dedicated AWS EC2      │        │    Multi-Tier ICE Traversal │
-   │      Signaling Server          │        │                             │
-   │   (18.234.224.25:3000)         │        │ 1. Google Public STUN       │
-   │  • Node.js & Socket.IO v4      │        │    (stun.l.google.com:19302)│
-   │  • Sub-second RAM message relay│        │                             │
-   │  • Zero disk storage           │        │ 2. Dedicated AWS EC2 STUN   │
-   └───────────────┬────────────────┘        │    (18.234.224.25:3478)     │
-                   │                         │                             │
-           Alexa Skill Hook                  │ 3. Dedicated AWS EC2 TURN   │
-            (/api/alexa)                     │    (coturn relay fallback)  │
-                   │                         └─────────────────────────────┘
-                   ▼
-   ┌────────────────────────────────┐
-   │      Amazon Alexa Devices      │
-   │  (Echo, Fire TV Voice Remote)  │
-   └────────────────────────────────┘
+ZingTalk/
+├── server.js                          # Universal Signaling Backend (Socket.IO + Alexa)
+├── ecosystem.config.js                # Production PM2 deployment config
+├── index.html                         # Web / TV entry point
+├── app.js                             # Web / TV application logic
+├── style.css                          # Big-screen high-contrast TV stylesheet
+│
+├── packages/
+│   ├── tv/                            # Amazon Fire TV / Android TV Client
+│   │   ├── index.html                 # 10-foot TV UI with D-Pad focus & "How to Use" guide
+│   │   ├── app.js                     # TV Remote D-Pad Navigation + WebRTC
+│   │   ├── style.css                  # TV overscan margins & focus ring CSS
+│   │   └── capacitor.config.json      # TV Capacitor App Config (com.zingtalk.tv)
+│   │
+│   └── mobile/                        # Android Mobile Client
+│       ├── index.html                 # Touch-first smartphone layout with bottom nav
+│       ├── app.js                     # Mobile gestures & front/back camera flipping
+│       ├── style.css                  # Modern smartphone responsive stylesheet
+│       └── capacitor.config.json      # Mobile Capacitor App Config (com.zingtalk.mobile)
+│
+└── .github/workflows/
+    ├── build-tv.yml                   # Builds signed ZingTalk-FireTV.apk
+    ├── build-mobile.yml               # Builds signed ZingTalk-Mobile.apk
+    └── deploy.yml                     # Auto-deploys server to AWS EC2
 ```
 
-* **Frontend**: Vanilla ES Modules, CSS3 responsive grid with TV-safe boundaries, Web Audio API synthetic chimes.
-* **Fire TV Container**: Capacitor 8 with custom WebChromeClient permissions and Leanback launcher intent (`android.intent.category.LEANBACK_LAUNCHER`).
-* **Signaling Backend**: Hosted on user's AWS EC2 server (`18.234.224.25:3000`), Node.js, Express, Socket.IO v4.
-* **Media & NAT Traversal**:
-  * **Primary (1st Priority)**: Google Public STUN (`stun:stun.l.google.com:19302`)
-  * **Secondary (2nd Priority)**: User AWS EC2 STUN Server (`stun:18.234.224.25:3478`)
-  * **Relay Fallback**: User AWS EC2 TURN Server (`turn:18.234.224.25:3478`)
-* **CI/CD Pipeline**: GitHub Actions automated compilation with release keystore signing.
+---
+
+## 🔑 Release Signing & Keystores
+
+Both client APKs are built and signed independently using dedicated production keystores:
+
+| Target | APK Name | Keystore File | Key Alias | Password |
+|---|---|---|---|---|
+| **Fire TV** | `ZingTalk-FireTV.apk` | `zingtalk-tv-release.keystore` | `zingtalk-tv` | `zingtalk123456` |
+| **Mobile** | `ZingTalk-Mobile.apk` | `zingtalk-mobile-release.keystore` | `zingtalk-mobile` | `zingtalk123456` |
 
 ---
 
-## 🧪 Judges & Evaluation Guide (How to Test ZingTalk)
+## 🌐 Production Infrastructure
 
-> **For the Amazon Hackathon Judging Panel**:  
-> For the complete exhaustive testing manual with exact curl payloads, WebRTC inspection steps, and Alexa Skill simulator inputs, please refer to the dedicated guide:  
-> 👉 **[TESTING_GUIDE.md — Official Hackathon Evaluation & Testing Manual](TESTING_GUIDE.md)**
-
-### ⚠️ Critical Architecture Note for Judges: Native Fire TV APK vs. HTTPS Web Browser
-
-> **IMPORTANT**: ZingTalk is built strictly as a **Native Amazon Fire TV Application (APK)**, not a public browser website.
-> 
-> * **AWS EC2 Production Signaling**: The production signaling server runs on our dedicated AWS EC2 instance at `http://18.234.224.25:3000`.
-> * **Browser Mixed-Content Policy**: If you attempt to open an HTTPS web preview URL in a desktop browser (Chrome, Edge, Safari), the browser will **block the WebSocket signaling connection** due to the browser's standard **Mixed Content Security Policy** (blocking unencrypted HTTP/WebSocket requests initiated from HTTPS pages).
-> * **Native Fire TV APK Compatibility**: In the **Real Fire TV APK (`ZingTalk.apk`)**, native Android cleartext traffic permissions (`android:usesCleartextTraffic="true"`) and network security configurations (`network_security_config.xml`) allow direct, high-speed, sub-second communication with the AWS EC2 server.
+* **Signaling Server**: `https://zingtalk.duckdns.org` (Port 443 / 3000)
+* **Dedicated STUN**: `stun:zingtalk.duckdns.org:3478`
+* **Dedicated TURN**: `turn:zingtalk.duckdns.org:3478?transport=udp` & `?transport=tcp`
+* **Public Fallback STUN**: `stun:stun.l.google.com:19302`
 
 ---
 
-### 📱 Official Evaluation Method: Sideload & Test the Native Fire TV APK
+## 🛠️ Local Development
 
-This is the primary and recommended method for the Amazon Hackathon Judging Panel:
-
-1. **Obtain the APK**: Download the pre-built `ZingTalk.apk` from GitHub Actions Release Artifacts or build locally (`./gradlew assembleRelease`).
-2. **Enable Fire TV Developer Options**:
-   * On Fire TV: **Settings** > **My Fire TV** > **About** > Click device name 7 times.
-   * Go to **Developer Options** > Enable **ADB Debugging** and **Apps from Unknown Sources**.
-3. **Connect and Install via ADB**:
-   ```bash
-   adb connect <FIRE_TV_IP_ADDRESS>:5555
-   adb install -r ZingTalk.apk
-   ```
-4. **Launch the Native Leanback App**:
-   ```bash
-   adb shell monkey -p com.zingtalk.com -c android.intent.category.LEANBACK_LAUNCHER 1
-   ```
-5. **Evaluate Live Calling & Ephemeral Chat**:
-   * Launch `ZingTalk.apk` on two Fire TV devices (or one physical Fire TV and one Android TV/Fire OS Emulator).
-   * Click **Guest Mode**, enter a TV Name (e.g., `Living Room TV` on Device A, `Bedroom TV` on Device B), and click **Start as Guest**.
-   * Note the unique **10-Digit Anonymous UIDs** generated on each device.
-   * Enter Device B's UID in Quick Connect on Device A and press **💬 Chat** or **🎥 Video Call**.
-   * Instant sub-second WebRTC audio/video and RAM-only messaging is established!
-
----
-
-### 💻 Local HTTP Developer Simulation (Without Mixed Content)
-
-If an evaluator wishes to inspect the interface and signaling quickly on a computer without a physical Fire TV:
-
-1. Clone the repository and run the local Node server:
-   ```bash
-   npm install
-   npm start
-   ```
-2. Open **`http://localhost:3000`** in your browser.  
-   *(Because `http://localhost:3000` is pure HTTP, the browser does NOT enforce HTTPS mixed-content blocking against `http://18.234.224.25:3000`, allowing live signaling simulation).*
-3. Use keyboard navigation (`Arrow` keys, `Enter`, `Escape`) to simulate Fire TV Remote D-Pad controls.
-
----
-
-### 🎮 Amazon Fire TV Remote & D-Pad Keyboard Controls
-ZingTalk replaces mobile touch with a certified 10-foot TV directional navigation model:
-* **D-Pad Directional Arrows**: `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight` (Spatial focus traversal with neon cyan halo glow `#00d29d`).
-* **Select / Enter**: `Enter` (Activate buttons, open inputs, select tabs).
-* **Back**: `Escape` / `Backspace` (Close modals, dismiss calls, exit chat).
-
-### 🎙️ Alexa Voice Control & Webhook Testing
-ZingTalk provides a live Alexa Skill webhook at `POST /api/alexa`. Judges can test hands-free voice control via the **Alexa Developer Console Simulator** or terminal curl commands:
-* *"Alexa, open ZingTalk"* — Greets user and lists saved contacts.
-* *"Alexa, pair UID 4819203841"* — Binds your Alexa device exclusively to your TV screen.
-* *"Alexa, call Rahul on ZingTalk"* — Looks up saved contact and triggers outgoing call.
-* *"Alexa, call UID 4819203841"* — Direct 10-digit voice dialing.
-* *"Alexa, answer call"* — Answers incoming call hands-free.
-* *"Alexa, mute microphone"* / *"Alexa, unmute"* — Toggles hardware microphone track.
-* *"Alexa, end call"* — Terminates active peer connection.
-
-*(See [TESTING_GUIDE.md](TESTING_GUIDE.md) for full JSON payloads and curl commands).*
-
----
-
-## 📦 Building the Fire TV APK
-
-### Via GitHub Actions (Recommended)
-1. Push your changes to the `main` branch or trigger the **Build Official Signed ZingTalk APK** workflow under the **Actions** tab.
-2. The workflow will automatically compile the project with Java 21 and output `ZingTalk.apk`.
-
-### Manual Build
 ```bash
+# 1. Install dependencies
+npm install
+
+# 2. Start the local signaling server
+npm run dev
+
+# 3. Build distribution assets for TV and Mobile
 npm run build
-npx cap sync android
-node scripts/prepare-android.js
-cd android && ./gradlew assembleRelease
 ```
 
 ---
 
-## 🔒 Security & Privacy
+## 📄 License & Support
 
-For full details on our zero-retention data architecture, please consult:
-* [Privacy Policy](PRIVACY_POLICY.md)
-* [Terms of Service](TERMS_OF_SERVICE.md)
-* [Testing & Evaluation Guide](TESTING_GUIDE.md)
-
----
-
-## 📄 License & Confidentiality
-
-**PROPRIETARY AND CONFIDENTIAL**  
-Copyright (c) 2026 KM MAMATA / Sunny (zingarenaoffi1@gmail.com). All Rights Reserved.
-
-This software, source code, and associated materials are proprietary, private, and confidential. Prepared and submitted exclusively for evaluation by the **Amazon Hackathon Judging Committee**.
+Proprietary Software. Developed by **KM MAMATA / Sunny** (`zingarenaoffi1@gmail.com`). All rights reserved.

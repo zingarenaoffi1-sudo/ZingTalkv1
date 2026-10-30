@@ -28,8 +28,10 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// Serve static frontend assets
+// Serve static frontend assets for TV, Mobile, and Web
 app.use(express.static(__dirname));
+app.use('/tv', express.static(path.join(__dirname, 'packages', 'tv')));
+app.use('/mobile', express.static(path.join(__dirname, 'packages', 'mobile')));
 
 // In-Memory Database Fallback for users and contacts
 const inMemoryUsers = new Map();
@@ -131,13 +133,28 @@ function loadAdminCredentials() {
         }
     }
 
-    const files = ['serviceAccountKey.json', 'firebase-adminsdk.json', 'firebase-admin.json', 'admin.json'];
+    const files = [
+        'Firebase_Admin_SDK',
+        'Firebase_Admin_SDK.json',
+        'firebase-admin-sdk.json',
+        'serviceAccountKey.json',
+        'firebase-adminsdk.json',
+        'firebase-admin.json',
+        'admin.json'
+    ];
     for (const f of files) {
-        const p = path.join(__dirname, f);
-        if (fs.existsSync(p)) {
-            try {
-                return JSON.parse(fs.readFileSync(p, 'utf-8'));
-            } catch (_) {}
+        const candidatePaths = [
+            path.join(__dirname, f),
+            path.join(process.cwd(), f),
+            path.join('/home/ubuntu/ZingTalk', f),
+            path.join('/home/ec2-user/ZingTalk', f)
+        ];
+        for (const p of candidatePaths) {
+            if (fs.existsSync(p)) {
+                try {
+                    return JSON.parse(fs.readFileSync(p, 'utf-8'));
+                } catch (_) {}
+            }
         }
     }
     return null;
@@ -180,9 +197,20 @@ if (loadedServiceAccount) {
     console.log("[ZingTalk] Using High-Performance In-Memory DB (No Firebase Admin credentials provided)");
 }
 
-// Unique 10-digit UID generator
 function generate10DigitUid() {
     return Math.floor(1000000000 + Math.random() * 9000000000).toString();
+}
+
+function computeDeterministic10DigitUid(idStr) {
+    if (!idStr) return generate10DigitUid();
+    let hash = 5381;
+    const str = String(idStr).trim().toLowerCase();
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) + hash) + str.charCodeAt(i);
+        hash |= 0;
+    }
+    const num = (Math.abs(hash) % 9000000000) + 1000000000;
+    return num.toString();
 }
 
 const connectedUsers = new Map();
@@ -242,9 +270,10 @@ io.on('connection', (socket) => {
 
             // 1. Look up existing user record by email or Firebase authUid in Firestore
             let snapshot = { empty: true, docs: [] };
+            const cleanEmail = data.email ? String(data.email).trim().toLowerCase() : "";
             try {
-                if (data.email) {
-                    snapshot = await usersRef.where('email', '==', data.email).get();
+                if (cleanEmail) {
+                    snapshot = await usersRef.where('email', '==', cleanEmail).get();
                 } else if (data.authUid && !data.isAnonymous && !data.isGuest) {
                     snapshot = await usersRef.where('authUid', '==', data.authUid).get();
                 }
@@ -260,10 +289,12 @@ io.on('connection', (socket) => {
             if (existingUid && existingUid.length === 10) {
                 uid = existingUid;
             } else if (data.uid && String(data.uid).replace(/\D/g, '').length === 10) {
-                // Preserve valid 10-digit session UID on page refresh / socket reconnect
                 uid = String(data.uid).replace(/\D/g, '');
+            } else if (cleanEmail) {
+                uid = computeDeterministic10DigitUid(cleanEmail);
+            } else if (data.authUid && !data.isAnonymous && !data.isGuest) {
+                uid = computeDeterministic10DigitUid(data.authUid);
             } else {
-                // Server generates brand new unique 10-digit UID
                 uid = generate10DigitUid();
             }
 
@@ -273,20 +304,23 @@ io.on('connection', (socket) => {
             const existingName = (existingDoc && existingDoc.name && existingDoc.name !== "TV User" && existingDoc.name !== "Guest User")
                 ? existingDoc.name
                 : "";
-            const finalName = clientName || existingName || (data.email ? data.email.split('@')[0] : "Guest");
+            const finalName = clientName || existingName || (cleanEmail ? cleanEmail.split('@')[0] : "Guest");
 
             const userObj = {
                 uid: uid,
                 authUid: data.authUid || (existingDoc ? existingDoc.authUid : null),
-                email: data.email || (existingDoc ? existingDoc.email : (data.isGuest ? `guest_${uid}@zingtalk.local` : `user_${uid}@zingtalk.local`)),
+                email: cleanEmail || (existingDoc ? existingDoc.email : (data.isGuest ? `guest_${uid}@zingtalk.local` : `user_${uid}@zingtalk.local`)),
                 name: finalName,
                 displayName: finalName,
                 updatedAt: Date.now()
             };
-            // Overwrite without merge: guarantees ZERO contacts field and saves exact user feed name
             await usersRef.doc(uid).set(userObj);
+            if (userObj.authUid) {
+                try {
+                    await db.collection('user_profiles').doc(userObj.authUid).set(userObj);
+                } catch (_) {}
+            }
 
-            // Guarantee socket joins private room for this exact 10-digit UID
             connectedUsers.set(uid, socket.id);
             lastActiveTvUid = uid;
             socket.join(uid);
@@ -1241,23 +1275,176 @@ app.post('/api/alexa', async (req, res) => {
     }
 });
 
-// SPA fallback & Server Status
-app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/socket.io')) return next();
-    const indexPath = path.join(__dirname, 'index.html');
-    const distIndexPath = path.join(__dirname, 'dist', 'index.html');
-    if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
-    } else if (fs.existsSync(distIndexPath)) {
-        res.sendFile(distIndexPath);
-    } else {
-        res.json({
+// Self-contained Server Status & Health Display (Zero external file dependencies)
+function renderServerStatus(req, res) {
+    if (req.headers.accept && req.headers.accept.includes('application/json')) {
+        return res.json({
             status: "online",
-            server: "ZingTalk Backend Signaling Server",
+            server: "ZingTalk Universal Signaling Server",
+            domain: "zingtalk.duckdns.org",
             port: PORT,
             connectedUsers: connectedUsers.size,
+            webrtc: {
+                stun: "zingtalk.duckdns.org:3478",
+                turn: "zingtalk.duckdns.org:3478"
+            },
+            alexaWebhook: "/alexa",
+            health: "/api/health",
+            mode: "headless-signaling-server",
             message: "ZingTalk server is 100% active and listening for Socket.IO connections."
         });
+    }
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZingTalk Universal Server</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0b0f19;
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 16px;
+      padding: 32px;
+      max-width: 500px;
+      width: 100%;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+      text-align: center;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid #059669;
+      padding: 6px 16px;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      margin-bottom: 20px;
+    }
+    .pulse {
+      width: 8px;
+      height: 8px;
+      background: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 12px #10b981;
+    }
+    h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 8px;
+    }
+    p.sub {
+      color: #9ca3af;
+      font-size: 0.95rem;
+      margin-bottom: 24px;
+    }
+    .grid {
+      background: #0b0f19;
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      padding: 16px;
+      text-align: left;
+      font-size: 0.9rem;
+      margin-bottom: 24px;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #1f2937;
+    }
+    .row:last-child {
+      border-bottom: none;
+    }
+    .label {
+      color: #6b7280;
+    }
+    .val {
+      font-family: monospace;
+      color: #e5e7eb;
+      font-weight: 600;
+    }
+    .val.green {
+      color: #34d399;
+    }
+    .footer {
+      color: #6b7280;
+      font-size: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge"><span class="pulse"></span> ONLINE & ACTIVE</div>
+    <h1>ZingTalk Universal Server</h1>
+    <p class="sub">High-Performance WebRTC Signaling & Alexa Voice Node</p>
+    <div class="grid">
+      <div class="row"><span class="label">Domain:</span><span class="val">zingtalk.duckdns.org</span></div>
+      <div class="row"><span class="label">Signaling (Port):</span><span class="val">3000 / 443 (SSL)</span></div>
+      <div class="row"><span class="label">STUN / TURN:</span><span class="val">zingtalk.duckdns.org:3478</span></div>
+      <div class="row"><span class="label">Socket.IO:</span><span class="val green">Ready</span></div>
+      <div class="row"><span class="label">Alexa Webhook:</span><span class="val">/alexa</span></div>
+      <div class="row"><span class="label">Connected Users:</span><span class="val">${connectedUsers.size}</span></div>
+    </div>
+    <div class="footer">Client Apps (Fire TV & Mobile) connect remotely over WSS/HTTPS.</div>
+  </div>
+</body>
+</html>`;
+    return res.status(200).type('html').send(html);
+}
+
+// Multi-Client SPA & Route Fallback
+app.get('/tv*', (req, res) => {
+    const tvPath = path.join(__dirname, 'packages', 'tv', 'index.html');
+    if (fs.existsSync(tvPath)) return res.sendFile(tvPath);
+    const rootPath = path.join(__dirname, 'index.html');
+    if (fs.existsSync(rootPath)) return res.sendFile(rootPath);
+    return renderServerStatus(req, res);
+});
+
+app.get('/mobile*', (req, res) => {
+    const mobPath = path.join(__dirname, 'packages', 'mobile', 'index.html');
+    if (fs.existsSync(mobPath)) return res.sendFile(mobPath);
+    const rootPath = path.join(__dirname, 'index.html');
+    if (fs.existsSync(rootPath)) return res.sendFile(rootPath);
+    return renderServerStatus(req, res);
+});
+
+app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/socket.io') || req.path.startsWith('/api') || req.path === '/alexa') return next();
+    const candidatePaths = [
+        path.join(__dirname, 'index.html'),
+        path.join(__dirname, 'packages', 'tv', 'index.html'),
+        path.join(__dirname, 'dist', 'index.html')
+    ];
+    for (const p of candidatePaths) {
+        if (fs.existsSync(p)) return res.sendFile(p);
+    }
+    return renderServerStatus(req, res);
+});
+
+// Express error handling middleware to catch any stream or routing errors cleanly
+app.use((err, req, res, next) => {
+    console.error('[ZingTalk Server Error]', err);
+    if (!res.headersSent) {
+        res.status(500).json({ status: "error", message: err.message || "Internal Server Error" });
     }
 });
 

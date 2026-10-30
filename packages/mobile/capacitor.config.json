@@ -1,0 +1,10 @@
+{
+  "appId": "com.zingtalk.mobile",
+  "appName": "ZingTalk",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "cleartext": true,
+    "androidScheme": "https"
+  }
+}

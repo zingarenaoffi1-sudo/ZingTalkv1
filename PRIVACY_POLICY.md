@@ -56,7 +56,7 @@ ZingTalk integrates with Amazon Alexa skills to provide hands-free voice dialing
 ## 5. Security & Network Traversal (STUN / TURN)
 
 - **Primary STUN**: Industry-standard Google STUN endpoints (`stun.l.google.com:19302`) are queried initially to discover public IP addresses for direct peer routing.
-- **Failover Relay**: If both devices are behind symmetric firewalls or restricted NAT, encrypted fallback traversal via secure STUN/TURN (`18.234.224.25:3478`) is engaged. All relayed packets remain end-to-end encrypted.
+- **Failover Relay**: If both devices are behind symmetric firewalls or restricted NAT, encrypted fallback traversal via secure STUN/TURN (`zingtalk.duckdns.org:3478`) is engaged. All relayed packets remain end-to-end encrypted.
 
 ---
 
