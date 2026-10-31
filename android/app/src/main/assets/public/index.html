@@ -16,6 +16,38 @@
 
     <div id="app-root">
 
+        <!-- WEB PORTAL QUICK UTILITY BAR (Web & Desktop Environments) -->
+        <div id="web-portal-bar" class="web-top-portal-bar hidden">
+            <div class="web-portal-links">
+                <span style="font-weight: 700; color: #ffffff; display: flex; align-items: center; gap: 6px;">
+                    <img src="assets/icon.png" style="width: 18px; height: 18px; border-radius: 4px;" alt="ZingTalk">
+                    ZingTalk Web Portal
+                </span>
+                <span style="opacity: 0.4;">|</span>
+                <a href="./packages/tv/index.html" class="web-portal-pill-btn active" title="Switch to Fire TV Edition">
+                    <span>📺 Fire TV Mode</span>
+                </a>
+                <a href="./packages/mobile/index.html" class="web-portal-pill-btn" title="Switch to Mobile Smartphone Edition">
+                    <span>📱 Mobile Mode</span>
+                </a>
+            </div>
+            <div class="web-portal-links">
+                <button type="button" id="web-ping-pill" class="web-portal-pill-btn" title="Network Latency to AWS">
+                    <span style="width: 7px; height: 7px; border-radius: 50%; background: #00d29d; display: inline-block;"></span>
+                    <span id="web-ping-text">DuckDNS Active</span>
+                </button>
+                <button type="button" id="web-av-test-btn" class="web-portal-pill-btn" title="Microphone & Webcam Diagnostic Test">
+                    <span>🎙️ AV Diagnostics</span>
+                </button>
+                <button type="button" id="web-apk-hub-btn" class="web-portal-pill-btn" title="Download Official APKs">
+                    <span>📥 APK Hub</span>
+                </button>
+                <button type="button" id="web-relock-btn" class="web-portal-pill-btn" title="Lock Security Gate" style="color: #f87171; border-color: rgba(248, 113, 113, 0.3);">
+                    <span>🔒 Lock Gate</span>
+                </button>
+            </div>
+        </div>
+
         <!-- TV TOP PERSISTENT NAVIGATION BAR -->
         <header id="tv-top-bar" class="tv-header hidden">
             <div class="tv-header-brand">
@@ -24,9 +56,16 @@
             </div>
 
             <div class="tv-header-user">
+                <button type="button" id="header-guide-btn" class="tv-guide-btn tv-focusable" tabindex="0" title="Alexa Voice & Remote Guide" style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; font-size: 13px; font-weight: 700; border-radius: 8px; margin-right: 12px; background: rgba(0, 168, 225, 0.2); border: 1px solid rgba(0, 168, 225, 0.5); color: #00d2ff; cursor: pointer;">
+                    <span>🎙️ Alexa Voice Guide</span>
+                </button>
+                <div class="alexa-status-pill" style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 20px; background: rgba(0,0,0,0.35); border: 1px solid rgba(0, 168, 225, 0.4); margin-right: 12px;">
+                    <span class="server-status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #00d2ff; box-shadow: 0 0 6px #00d2ff;"></span>
+                    <span style="color: #00d2ff;">Fire TV Voice Active</span>
+                </div>
                 <div class="server-status-pill" style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 20px; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,170,0,0.4); margin-right: 12px;">
-                    <span class="server-status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #ffaa00; box-shadow: 0 0 6px #ffaa00;"></span>
-                    <span class="server-status-text" style="color: #ffcc66;">Connecting to AWS...</span>
+                    <span class="server-status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #00d29d; box-shadow: 0 0 6px #00d29d;"></span>
+                    <span class="server-status-text" style="color: #00d29d;">ZingTalk Cloud</span>
                 </div>
                 <div id="my-profile-chip" class="tv-user-chip tv-focusable" tabindex="0" title="View Profile">
                     <div id="my-avatar" class="tv-user-avatar">U</div>
@@ -53,10 +92,6 @@
                             <span class="server-status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #ffaa00; box-shadow: 0 0 6px #ffaa00;"></span>
                             <span class="server-status-text" style="color: #ffcc66;">Connecting to AWS Cloud...</span>
                         </div>
-                    </div>
-                    <div id="mixed-content-banner" class="hidden" style="margin: 12px auto 6px; max-width: 520px; padding: 10px 14px; border-radius: 10px; background: rgba(255, 170, 0, 0.12); border: 1px solid rgba(255, 170, 0, 0.45); color: #ffe6a3; font-size: 11px; line-height: 1.5; text-align: left;">
-                        <strong style="color: #ffcc00; display: block; margin-bottom: 2px;">⚠️ Fire TV APK Environment Notice:</strong>
-                        Desktop browsers loading this URL over HTTPS block unencrypted HTTP WebSockets (Mixed Content restriction to AWS EC2: <code>http://18.234.224.25:3000</code>). ZingTalk is engineered as a <strong>Native Fire TV APK (<code>ZingTalk.apk</code>)</strong> where cleartext traffic is enabled. Sideload the APK onto Fire TV via ADB or test via local HTTP (<code>http://localhost:3000</code>).
                     </div>
                 </div>
 
@@ -357,7 +392,7 @@
                     <h3>7. User Data Rights & Account Control</h3>
                     <ul>
                         <li><strong>Right to Erasure:</strong> You can completely erase your local session, contacts, and chat cache at any time via the Sign Out button or device Settings.</li>
-                        <li><strong>Contact Developer:</strong> Developer & Founder: KM MAMATA / Sunny (<code>zingarenaoffi1@gmail.com</code>).</li>
+                        <li><strong>Contact Developer:</strong> Developer & Publisher: ZingTalk Developer Team (<code>zingarenaoffi1@gmail.com</code>).</li>
                     </ul>
                 </div>
                 <div class="tv-dialog-buttons" style="margin-top: 16px;">
@@ -388,6 +423,182 @@
                     <button type="button" id="cancel-reset-btn" class="tv-dialog-btn tv-focusable" tabindex="0">
                         Cancel
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 9. ALEXA VOICE COMMANDS & FIRE TV REMOTE GUIDE MODAL -->
+        <div id="guide-modal" class="tv-modal-backdrop hidden">
+            <div class="tv-dialog-card" style="max-width: 680px; width: 92%; text-align: left; max-height: 85vh; display: flex; flex-direction: column;">
+                <div class="tv-dialog-header">
+                    <h3 class="tv-dialog-title" style="display: flex; align-items: center; gap: 8px;">
+                        <span>🎙️</span>
+                        <span>Alexa Voice Commands & Fire TV Remote Guide</span>
+                    </h3>
+                    <button type="button" id="close-guide-modal-btn" class="tv-icon-btn tv-focusable" tabindex="0" title="Close">&times;</button>
+                </div>
+                <div id="guide-scroll-area" class="tv-policy-content tv-focusable" tabindex="0" style="max-height: 58vh; overflow-y: auto; font-size: 13.5px; line-height: 1.6; color: #d0d5dd; padding-right: 8px;">
+                    <div style="background: rgba(0, 168, 225, 0.12); border: 1px solid rgba(0, 168, 225, 0.4); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;">
+                        <strong style="color: #00d2ff; display: block; margin-bottom: 4px; font-size: 14px;">💡 Alexa Voice Control (Built Exclusively for Fire TV)</strong>
+                        <p style="margin: 0; font-size: 12.5px; color: #e0f2fe;">Press and hold the <strong>Microphone / Voice button</strong> on your Fire TV remote, speak any of the voice commands below, then release the button. Every action on ZingTalk can be operated 100% hands-free!</p>
+                    </div>
+
+                    <h4 style="color: #00d29d; margin: 12px 0 6px;">📞 Making Calls by Voice</h4>
+                    <ul style="padding-left: 18px; margin: 0 0 10px;">
+                        <li><strong>Audio Call a Contact:</strong> <em>"Alexa, ask ZingTalk to call [Contact Name]"</em></li>
+                        <li><strong>HD Video Call a Contact:</strong> <em>"Alexa, ask ZingTalk to video call [Contact Name]"</em></li>
+                        <li><strong>Direct Dial 10-Digit UID:</strong> <em>"Alexa, ask ZingTalk to call UID [10-Digit Number]"</em></li>
+                        <li><strong>Redial Last Person:</strong> <em>"Alexa, ask ZingTalk to redial"</em> or <em>"call last"</em></li>
+                    </ul>
+
+                    <h4 style="color: #00d29d; margin: 12px 0 6px;">🟢 Answering & In-Call Voice Controls</h4>
+                    <ul style="padding-left: 18px; margin: 0 0 10px;">
+                        <li><strong>Pick Up Incoming Call:</strong> <em>"Alexa, tell ZingTalk to answer call"</em></li>
+                        <li><strong>Decline Incoming Call:</strong> <em>"Alexa, tell ZingTalk to decline"</em> or <em>"reject call"</em></li>
+                        <li><strong>Mute Microphone:</strong> <em>"Alexa, tell ZingTalk to mute microphone"</em></li>
+                        <li><strong>Unmute Microphone:</strong> <em>"Alexa, tell ZingTalk to unmute"</em></li>
+                        <li><strong>Turn Camera Off:</strong> <em>"Alexa, tell ZingTalk to turn off camera"</em></li>
+                        <li><strong>Turn Camera On:</strong> <em>"Alexa, tell ZingTalk to turn on camera"</em></li>
+                        <li><strong>Hang Up Active Call:</strong> <em>"Alexa, tell ZingTalk to end call"</em> or <em>"hang up"</em></li>
+                    </ul>
+
+                    <h4 style="color: #00d29d; margin: 12px 0 6px;">👥 Navigation & Address Book</h4>
+                    <ul style="padding-left: 18px; margin: 0 0 10px;">
+                        <li><strong>Check Contacts:</strong> <em>"Alexa, ask ZingTalk who can I call"</em> or <em>"list contacts"</em></li>
+                        <li><strong>Open Dialpad:</strong> <em>"Alexa, ask ZingTalk to open dialpad"</em></li>
+                        <li><strong>Check My UID:</strong> <em>"Alexa, ask ZingTalk what is my UID"</em></li>
+                        <li><strong>Return Home:</strong> <em>"Alexa, tell ZingTalk to go home"</em></li>
+                    </ul>
+
+                    <h4 style="color: #00d29d; margin: 12px 0 6px;">🔗 Pairing Alexa Device to your Fire TV Screen</h4>
+                    <p style="margin: 0 0 10px;">To ensure Alexa routes commands exclusively to this TV, say:<br>
+                    <strong><em>"Alexa, ask ZingTalk to pair UID [Your 10-Digit UID]"</em></strong><br>
+                    Your 10-digit UID is displayed at the top-right of your screen.</p>
+
+                    <h4 style="color: #00d29d; margin: 12px 0 6px;">🎮 Fire TV D-Pad Remote Navigation</h4>
+                    <ul style="padding-left: 18px; margin: 0 0 6px;">
+                        <li><strong>Directional Arrows (Up, Down, Left, Right):</strong> Smooth spatial navigation with glowing cyan focus indicators. Focused elements auto-scroll into view.</li>
+                        <li><strong>Center OK / Select:</strong> Activate focused button or initiate 1-click speed dial.</li>
+                        <li><strong>Back Button:</strong> Press once to close dialogs. During active calls, press Back twice to safely hang up (guards against accidental disconnects).</li>
+                        <li><strong>Menu Button (☰):</strong> Press the Menu key on your Fire TV remote anytime to instantly summon this Voice Guide!</li>
+                    </ul>
+                </div>
+                <div class="tv-dialog-buttons" style="margin-top: 16px;">
+                    <button type="button" id="guide-ok-btn" class="tv-primary-btn tv-focusable" tabindex="0">Got It, Start Calling</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 10. WEB THREE-LEVEL SECURITY GATE (Developer & Web Access Clearance) -->
+        <div id="web-security-gate-overlay" class="security-gate-backdrop hidden">
+            <div class="security-gate-card" id="security-card">
+                <div class="security-shield-icon">🛡️</div>
+                <h2 class="security-gate-title">ZingTalk Security Gate</h2>
+                <p class="security-gate-subtitle">Three-Level Developer Clearance Required to Unlock Web Application</p>
+
+                <div class="security-levels-tracker">
+                    <div class="security-step-item active" id="sec-step-1">
+                        <span class="security-step-number">Level 1</span>
+                        <span class="security-step-label" id="sec-label-1">Primary Key</span>
+                    </div>
+                    <div class="security-step-item" id="sec-step-2">
+                        <span class="security-step-number">Level 2</span>
+                        <span class="security-step-label" id="sec-label-2">Clearance Key</span>
+                    </div>
+                    <div class="security-step-item" id="sec-step-3">
+                        <span class="security-step-number">Level 3</span>
+                        <span class="security-step-label" id="sec-label-3">Developer Token</span>
+                    </div>
+                </div>
+
+                <div style="text-align: left; margin-bottom: 8px;">
+                    <label id="security-prompt-label" style="font-size: 13px; font-weight: 700; color: #00d2ff;">
+                        Level 1 Verification: Enter Primary Authentication Key
+                    </label>
+                </div>
+
+                <div class="security-input-box-wrapper">
+                    <input type="password" id="security-key-input" class="security-key-input" placeholder="Enter Level 1 Password..." autocomplete="off">
+                    <button type="button" id="security-toggle-eye" class="security-toggle-eye" title="Toggle visibility">👁️</button>
+                </div>
+
+                <button type="button" id="security-submit-btn" class="security-action-btn">
+                    <span>Authorize Level 1 Key</span>
+                </button>
+
+                <div id="security-error-msg" class="security-error-text">❌ Invalid Key. Access Denied.</div>
+                
+                <div style="margin-top: 18px; font-size: 11.5px; color: #64748b;">
+                    Protected with SHA-256 Multi-Factor Cryptographic Hashing • ZingTalk Developer Team
+                </div>
+            </div>
+        </div>
+
+        <!-- 11. APK DOWNLOAD HUB MODAL -->
+        <div id="apk-download-modal" class="tv-modal-backdrop hidden">
+            <div class="tv-dialog-card" style="max-width: 580px; width: 92%; text-align: left;">
+                <div class="tv-dialog-header">
+                    <h3 class="tv-dialog-title">📥 ZingTalk APK Download Hub</h3>
+                    <button type="button" id="close-apk-modal-btn" class="tv-icon-btn tv-focusable" tabindex="0" title="Close">&times;</button>
+                </div>
+                <p style="font-size: 14px; color: #94a3b8; line-height: 1.5; margin-bottom: 18px;">
+                    Official release APK packages for Amazon Fire TV and Android Mobile smartphones.
+                </p>
+                <div style="display: flex; flex-direction: column; gap: 14px; margin-bottom: 20px;">
+                    <div style="background: rgba(0, 168, 225, 0.12); border: 1px solid rgba(0, 168, 225, 0.4); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                        <div>
+                            <strong style="color: #00d2ff; font-size: 15px; display: block;">📺 Fire TV Edition APK</strong>
+                            <span style="font-size: 12px; color: #cbd5e1;">Target: Fire OS 6+, Fire TV Sticks, 4K Max, Cube • D-Pad & Alexa Voice</span>
+                        </div>
+                        <a href="android/app/build/outputs/apk/release/app-release-unsigned.apk" download="ZingTalk-FireTV.apk" class="web-portal-pill-btn active" style="padding: 8px 14px; font-size: 13px;">Download</a>
+                    </div>
+                    <div style="background: rgba(0, 210, 157, 0.12); border: 1px solid rgba(0, 210, 157, 0.4); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                        <div>
+                            <strong style="color: #00d29d; font-size: 15px; display: block;">📱 Android Mobile Edition APK</strong>
+                            <span style="font-size: 12px; color: #cbd5e1;">Target: Android 7.0 - 14+ Smartphones • Touchscreen, Portrait, Flip Camera</span>
+                        </div>
+                        <a href="android/app/build/outputs/apk/release/app-release-unsigned.apk" download="ZingTalk-Mobile.apk" class="web-portal-pill-btn active" style="padding: 8px 14px; font-size: 13px;">Download</a>
+                    </div>
+                </div>
+                <div class="tv-dialog-buttons">
+                    <button type="button" id="close-apk-modal-btn2" class="tv-dialog-btn tv-focusable" tabindex="0">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 12. AV DIAGNOSTIC STUDIO MODAL -->
+        <div id="av-diagnostic-modal" class="tv-modal-backdrop hidden">
+            <div class="tv-dialog-card" style="max-width: 620px; width: 92%; text-align: left;">
+                <div class="tv-dialog-header">
+                    <h3 class="tv-dialog-title">🎙️ Audio & Video Diagnostic Studio</h3>
+                    <button type="button" id="close-diag-modal-btn" class="tv-icon-btn tv-focusable" tabindex="0" title="Close">&times;</button>
+                </div>
+                <p style="font-size: 13.5px; color: #94a3b8; margin-bottom: 16px;">
+                    Verify camera video feed, microphone decibel levels, and signaling server latency.
+                </p>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
+                    <div style="background: #080d1a; border: 1px solid #222f46; border-radius: 12px; padding: 10px; text-align: center;">
+                        <span style="font-size: 12px; font-weight: 700; color: #94a3b8; display: block; margin-bottom: 8px;">CAMERA PREVIEW</span>
+                        <video id="diag-video-preview" autoplay playsinline muted style="width: 100%; height: 140px; object-fit: cover; border-radius: 8px; background: #000;"></video>
+                        <div id="diag-camera-status" style="font-size: 11px; color: #00d29d; margin-top: 6px;">Camera Idle</div>
+                    </div>
+                    <div style="background: #080d1a; border: 1px solid #222f46; border-radius: 12px; padding: 10px; display: flex; flex-direction: column; justify-content: space-between;">
+                        <div>
+                            <span style="font-size: 12px; font-weight: 700; color: #94a3b8; display: block; margin-bottom: 8px;">MICROPHONE LEVEL</span>
+                            <div style="background: #111a2e; height: 18px; border-radius: 9px; overflow: hidden; border: 1px solid #233454; margin: 12px 0;">
+                                <div id="diag-mic-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #00d29d, #ffaa00, #ff4444); transition: width 0.08s ease;"></div>
+                            </div>
+                            <div id="diag-mic-status" style="font-size: 11px; color: #94a3b8;">Click Test to monitor mic</div>
+                        </div>
+                        <div style="border-top: 1px solid #1c273c; padding-top: 8px;">
+                            <span style="font-size: 11px; color: #94a3b8;">Signaling Latency:</span>
+                            <span id="diag-latency-val" style="font-size: 12px; font-weight: 700; color: #00d2ff; margin-left: 6px;">Testing...</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="tv-dialog-buttons" style="gap: 10px;">
+                    <button type="button" id="start-av-diag-btn" class="tv-primary-btn tv-focusable" tabindex="0">Start Hardware Test</button>
+                    <button type="button" id="stop-av-diag-btn" class="tv-dialog-btn tv-focusable" tabindex="0">Stop Test & Close</button>
                 </div>
             </div>
         </div>

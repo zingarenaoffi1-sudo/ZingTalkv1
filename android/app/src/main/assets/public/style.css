@@ -1385,3 +1385,247 @@ textarea.tv-focusable {
         padding: 12px 16px;
     }
 }
+
+/* ==========================================================================
+   WEB 3-LEVEL SECURITY GATE & PORTAL ENHANCEMENTS
+   ========================================================================== */
+.security-gate-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: radial-gradient(circle at 50% 20%, #0d1527 0%, #060911 100%);
+    backdrop-filter: blur(24px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 99999;
+}
+
+.security-gate-card {
+    background: rgba(17, 24, 39, 0.94);
+    border: 1px solid rgba(0, 210, 157, 0.4);
+    box-shadow: 0 25px 80px rgba(0, 0, 0, 0.9), 0 0 50px rgba(0, 210, 157, 0.15);
+    border-radius: 28px;
+    padding: 38px 34px;
+    max-width: 540px;
+    width: 92%;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.security-gate-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #00d29d, #00d2ff, #7928ca, #00d29d);
+    background-size: 300% 100%;
+    animation: securityGlowScan 3s linear infinite;
+}
+
+@keyframes securityGlowScan {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 100% 50%; }
+}
+
+.security-shield-icon {
+    font-size: 46px;
+    margin-bottom: 12px;
+    display: inline-block;
+    filter: drop-shadow(0 0 16px rgba(0, 210, 157, 0.6));
+}
+
+.security-gate-title {
+    font-size: 24px;
+    font-weight: 800;
+    color: #ffffff;
+    margin-bottom: 6px;
+    letter-spacing: -0.3px;
+}
+
+.security-gate-subtitle {
+    font-size: 13.5px;
+    color: #94a3b8;
+    line-height: 1.5;
+    margin-bottom: 24px;
+}
+
+.security-levels-tracker {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 24px;
+}
+
+.security-step-item {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 10px 6px;
+    transition: all 0.25s ease;
+}
+
+.security-step-item.active {
+    background: rgba(0, 210, 157, 0.12);
+    border-color: #00d29d;
+    box-shadow: 0 0 14px rgba(0, 210, 157, 0.3);
+}
+
+.security-step-item.completed {
+    background: rgba(0, 210, 157, 0.2);
+    border-color: #00d29d;
+    color: #00d29d;
+}
+
+.security-step-number {
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: block;
+    margin-bottom: 2px;
+    color: #94a3b8;
+}
+
+.security-step-item.active .security-step-number {
+    color: #00d29d;
+}
+
+.security-step-item.completed .security-step-number {
+    color: #34d399;
+}
+
+.security-step-label {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #e2e8f0;
+}
+
+.security-input-box-wrapper {
+    position: relative;
+    margin-bottom: 16px;
+}
+
+.security-key-input {
+    width: 100%;
+    height: 52px;
+    background: #080d19;
+    border: 1.5px solid #2d3b55;
+    border-radius: 14px;
+    color: #ffffff;
+    font-size: 15px;
+    padding: 0 46px 0 16px;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.security-key-input:focus {
+    border-color: #00d29d;
+    box-shadow: 0 0 20px rgba(0, 210, 157, 0.35);
+}
+
+.security-toggle-eye {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 4px;
+}
+
+.security-action-btn {
+    width: 100%;
+    height: 50px;
+    background: linear-gradient(135deg, #00d29d 0%, #00a8e8 100%);
+    border: none;
+    border-radius: 14px;
+    color: #050b14;
+    font-weight: 800;
+    font-size: 15px;
+    cursor: pointer;
+    box-shadow: 0 8px 25px rgba(0, 210, 157, 0.4);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.security-action-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 30px rgba(0, 210, 157, 0.55);
+}
+
+.security-action-btn:active {
+    transform: translateY(1px);
+}
+
+.security-error-text {
+    color: #f87171;
+    font-size: 12.5px;
+    font-weight: 600;
+    margin-top: 10px;
+    display: none;
+}
+
+.security-shake {
+    animation: securityCardShake 0.4s ease-in-out;
+}
+
+@keyframes securityCardShake {
+    0%, 100% { transform: translateX(0); }
+    20%, 60% { transform: translateX(-10px); }
+    40%, 80% { transform: translateX(10px); }
+}
+
+/* Web Portal Top Utility Bar */
+.web-top-portal-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    background: rgba(11, 16, 28, 0.85);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.web-portal-links {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.web-portal-pill-btn {
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #cbd5e1;
+    font-size: 11.5px;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.2s ease;
+}
+
+.web-portal-pill-btn:hover {
+    background: rgba(0, 210, 157, 0.15);
+    border-color: #00d29d;
+    color: #00d29d;
+}
+
+.web-portal-pill-btn.active {
+    background: rgba(0, 210, 157, 0.25);
+    border-color: #00d29d;
+    color: #00d29d;
+}
+

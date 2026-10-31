@@ -6,7 +6,7 @@
 - **Amazon Fire TV & Fire TV Stick**: 10-Foot Living Room UI with D-Pad Remote & Alexa Voice Integration
 - **Android Mobile**: Handheld Touchscreen UI with Portrait Video Calling & Camera Flip Controls  
 **Signaling Host**: `https://zingtalk.duckdns.org`  
-**Developer / Account Owner**: KM MAMATA / Sunny (Founder of ZingTalk)  
+**Developer / Organization**: ZingTalk Developer Team  
 **Contact Email**: `zingarenaoffi1@gmail.com`
 
 ---
@@ -70,7 +70,7 @@ You agree to use ZingTalk only for lawful, personal family communications. You a
 
 ## 8. Disclaimer of Warranties & Limitation of Liability
 
-ZingTalk is provided on an **"AS IS"** and **"AS AVAILABLE"** basis without warranties of any kind, either express or implied, including but not limited to uptime, network latency, camera hardware compatibility, or audio fidelity. To the maximum extent permitted by law, the developer and founder (KM MAMATA / Sunny) shall not be liable for any indirect, incidental, special, or consequential damages resulting from the use or inability to use the service.
+ZingTalk is provided on an **"AS IS"** and **"AS AVAILABLE"** basis without warranties of any kind, either express or implied, including but not limited to uptime, network latency, camera hardware compatibility, or audio fidelity. To the maximum extent permitted by law, the developer and publisher (ZingTalk Developer Team) shall not be liable for any indirect, incidental, special, or consequential damages resulting from the use or inability to use the service.
 
 ---
 
@@ -79,4 +79,5 @@ ZingTalk is provided on an **"AS IS"** and **"AS AVAILABLE"** basis without warr
 For inquiries regarding these Terms of Service:
 - **Email**: `zingarenaoffi1@gmail.com`
 - **Application Package**: `com.zingtalk.com`
-- **Founder / Developer**: KM MAMATA / Sunny (ZingTalk)
+- **Developer / Organization**: ZingTalk Developer Team
+

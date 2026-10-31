@@ -2,8 +2,8 @@
 
 **Effective Date**: October 30, 2026  
 **Application Name**: ZingTalk (`com.zingtalk.com`)  
-**Developer Contact**: `zingarenaoffi1@gmail.com`  
-**Founder & Lead Developer**: KM MAMATA / Sunny  
+**Developer / Organization**: ZingTalk Developer Team  
+**Support & Owner Contact**: `zingarenaoffi1@gmail.com`  
 **Platforms Supported**: 
 - **Amazon Fire TV & Fire TV Stick**: 10-Foot Living Room UI with D-Pad Remote & Alexa Voice Integration
 - **Android Mobile**: Handheld Touchscreen UI with Portrait Video Calling & Camera Flip Controls
@@ -100,4 +100,5 @@ We may periodically update this Privacy Policy to reflect technical enhancements
 If you have any questions, suggestions, or privacy requests regarding ZingTalk, please contact:
 - **Email**: `zingarenaoffi1@gmail.com`
 - **Application Package**: `com.zingtalk.com`
-- **Developer / Account Owner**: KM MAMATA / Sunny (Founder of ZingTalk)
+- **Developer / Organization**: ZingTalk Developer Team
+- **Owner Contact**: `zingarenaoffi1@gmail.com`

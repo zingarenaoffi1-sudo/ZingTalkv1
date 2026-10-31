@@ -179,28 +179,29 @@ export let currentTargetUid = null;
 export let socket = null;
 
 // Infrastructure Configuration (Always hosted directly on user's AWS EC2 server)
-const AWS_SIGNALING_URL = "http://18.234.224.25:3000";
-const PRIMARY_STUN = "stun:stun.l.google.com:19302"; // Google STUN 1st Priority
-const SECONDARY_STUN = "stun:18.234.224.25:3478";
+const DUCKDNS_SIGNALING_URL = "https://zingtalk.duckdns.org";
+const PRIMARY_STUN = "stun:stun.l.google.com:19302";
+const SECONDARY_STUN = "stun:zingtalk.duckdns.org:3478";
 let isStunFailoverActive = false;
 
-// Resolve backend signaling URL: ALWAYS routes 100% directly to user's AWS EC2 server (http://18.234.224.25:3000)
 export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
     if (saved && saved.trim()) return saved.trim();
 
-    // ALWAYS CONNECT DIRECTLY TO USER'S AWS EC2 SERVER:
-    // http://18.234.224.25:3000
-    // Handles all WebSocket signaling, real-time messaging, and Alexa commands.
-    return AWS_SIGNALING_URL;
+    if (typeof window !== "undefined" && window.location) {
+        if (window.location.protocol.startsWith("http") && (window.location.host.includes("duckdns") || window.location.host.includes("localhost"))) {
+            return window.location.origin;
+        }
+    }
+    return DUCKDNS_SIGNALING_URL;
 }
 
-// Compute deterministic 10-digit UID
 export function computeDeterministic10DigitUid(idStr) {
     if (!idStr) return "1000000001";
     let hash = 5381;
-    for (let i = 0; i < idStr.length; i++) {
-        hash = ((hash << 5) + hash) + idStr.charCodeAt(i);
+    const clean = String(idStr).trim().toLowerCase();
+    for (let i = 0; i < clean.length; i++) {
+        hash = ((hash << 5) + hash) + clean.charCodeAt(i);
         hash |= 0;
     }
     const num = (Math.abs(hash) % 9000000000) + 1000000000;
@@ -221,11 +222,6 @@ export function updateUidDisplays(uid) {
     if (modalUid) modalUid.innerText = my10DigitUid;
 }
 
-// WebRTC ICE Configuration:
-// 1st Priority: Google Public STUN Cluster (Instant global NAT traversal)
-// 2nd Priority: User AWS EC2 Dedicated STUN Server (18.234.224.25:3478)
-// 3rd Priority: User AWS EC2 Dedicated TURN Server (coturn relay with credential fallback)
-// 4th Priority: Twilio Global Public STUN Fallback
 const rtcConfig = {
     iceServers: [
         { 
@@ -239,14 +235,13 @@ const rtcConfig = {
         },
         { 
             urls: [
-                "stun:18.234.224.25:3478",
-                "stun:18.234.224.25:5349"
+                "stun:zingtalk.duckdns.org:3478"
             ] 
         },
         {
             urls: [
-                "turn:18.234.224.25:3478?transport=udp",
-                "turn:18.234.224.25:3478?transport=tcp"
+                "turn:zingtalk.duckdns.org:3478?transport=udp",
+                "turn:zingtalk.duckdns.org:3478?transport=tcp"
             ],
             username: "zingtalk",
             credential: "zingtalkpassword"
@@ -584,14 +579,7 @@ export function registerSocketListeners(s) {
 
     s.on("connect_error", (err) => {
         console.warn("[ZingTalk Socket] Connect error:", err.message);
-        const isHttpsWeb = typeof window !== "undefined" && window.location.protocol === "https:" && (!window.Capacitor || !window.Capacitor.isNativePlatform());
-        if (isHttpsWeb) {
-            updateServerStatusBadge(false, "Native APK Required (HTTPS Mixed Content)");
-            const banner = document.getElementById("mixed-content-banner");
-            if (banner) banner.classList.remove("hidden");
-        } else {
-            updateServerStatusBadge(false, "Connecting to AWS...");
-        }
+        updateServerStatusBadge(false, "Connecting to AWS...");
     });
 
     s.on("user_data", (data) => {
@@ -1589,6 +1577,32 @@ function handleAlexaIncomingCommand(cmd) {
                 showToast("Camera active");
             }
         }
+    } else if (action === 'toggle_camera') {
+        if (localStream) {
+            const track = localStream.getVideoTracks()[0];
+            if (track) {
+                track.enabled = !track.enabled;
+                showToast(track.enabled ? "Camera active" : "Camera turned off");
+            }
+        }
+    } else if (action === 'toggle_mic') {
+        if (localStream) {
+            const track = localStream.getAudioTracks()[0];
+            if (track) {
+                isMicMuted = !isMicMuted;
+                track.enabled = !isMicMuted;
+                showToast(isMicMuted ? "Microphone muted" : "Microphone active");
+            }
+        }
+    } else if (action === 'open_guide' || action === 'show_guide') {
+        const guideModal = document.getElementById("guide-modal");
+        if (guideModal) {
+            guideModal.classList.remove("hidden");
+            const scrollArea = document.getElementById("guide-scroll-area");
+            if (scrollArea) focusElement(scrollArea);
+        }
+    } else if (action === 'device_paired') {
+        showToast(`🎙️ Alexa Paired (UID: ${cmd.pairedUid || my10DigitUid})`);
     } else if (action === 'open_chat') {
         const targetUid = cmd.targetUid;
         if (targetUid) {
@@ -2052,6 +2066,18 @@ function getCustomNavigationTarget(current, direction) {
         if (direction === "up") return document.getElementById("policy-scroll-area");
     }
 
+    // --- 9. Alexa Guide Modal ---
+    if (id === "close-guide-modal-btn") {
+        if (direction === "down") return document.getElementById("guide-scroll-area");
+    }
+    if (id === "guide-scroll-area") {
+        if (direction === "up") return document.getElementById("close-guide-modal-btn");
+        if (direction === "down") return document.getElementById("guide-ok-btn");
+    }
+    if (id === "guide-ok-btn") {
+        if (direction === "up") return document.getElementById("guide-scroll-area");
+    }
+
     return null;
 }
 
@@ -2066,7 +2092,7 @@ function handleDpadNavigation(direction) {
     }
 
     // Special scroll handling for TV remote on scrollable areas
-    if (current.id === "policy-scroll-area" || current.id === "messages-area") {
+    if (current.id === "policy-scroll-area" || current.id === "guide-scroll-area" || current.id === "messages-area") {
         if (direction === 'down') {
             const canScrollDown = current.scrollTop < (current.scrollHeight - current.clientHeight - 8);
             if (canScrollDown) {
@@ -2284,6 +2310,24 @@ window.addEventListener("keydown", (e) => {
         // If in an active call, safely toggle microphone mute
         if (!document.getElementById("full-call-screen")?.classList.contains("hidden")) {
             document.getElementById("mute-mic-btn")?.click();
+        }
+        return;
+    }
+
+    // MENU KEY: Fire TV Remote dedicated Menu button (KeyCode 82, KeyCode 118, "Menu")
+    const isMenu = e.key === "Menu" || e.code === "ContextMenu" || e.keyCode === 82 || e.which === 82 || e.keyCode === 118 || e.which === 118;
+    if (isMenu) {
+        e.preventDefault();
+        const guideModal = document.getElementById("guide-modal");
+        if (guideModal) {
+            if (guideModal.classList.contains("hidden")) {
+                guideModal.classList.remove("hidden");
+                const scrollArea = document.getElementById("guide-scroll-area");
+                if (scrollArea) focusElement(scrollArea);
+            } else {
+                guideModal.classList.add("hidden");
+                autoFocusFirstElement();
+            }
         }
         return;
     }
@@ -2574,21 +2618,45 @@ document.addEventListener("click", async (e) => {
                     if (name) {
                         try { await updateProfile(cred.user, { displayName: name }); } catch (_) {}
                     }
+                    let resolvedUid = null;
+                    try {
+                        resolvedUid = await lookupUserUidFromFirestore(cred.user.email, cred.user.uid);
+                    } catch (_) {}
+                    if (!resolvedUid) {
+                        resolvedUid = computeDeterministic10DigitUid(cred.user.email || cred.user.uid);
+                    }
                     const user = {
                         displayName: name || cred.user.displayName || email.split("@")[0],
                         email: cred.user.email,
-                        uid: cred.user.uid
+                        uid: cred.user.uid,
+                        zingUid: resolvedUid
                     };
+                    my10DigitUid = resolvedUid;
+                    updateUidDisplays(resolvedUid);
+                    loadUserStorageData(resolvedUid);
+                    saveUserUidToFirestore(user, resolvedUid);
                     localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
                     loginUserSession(user);
                     showToast("Account created successfully!");
                 } else {
                     const cred = await signInWithEmailAndPassword(auth, email, password);
+                    let resolvedUid = null;
+                    try {
+                        resolvedUid = await lookupUserUidFromFirestore(cred.user.email, cred.user.uid);
+                    } catch (_) {}
+                    if (!resolvedUid) {
+                        resolvedUid = computeDeterministic10DigitUid(cred.user.email || cred.user.uid);
+                    }
                     const user = {
                         displayName: cred.user.displayName || email.split("@")[0],
                         email: cred.user.email,
-                        uid: cred.user.uid
+                        uid: cred.user.uid,
+                        zingUid: resolvedUid
                     };
+                    my10DigitUid = resolvedUid;
+                    updateUidDisplays(resolvedUid);
+                    loadUserStorageData(resolvedUid);
+                    saveUserUidToFirestore(user, resolvedUid);
                     localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
                     loginUserSession(user);
                     showToast("Signed in successfully!");
@@ -2902,6 +2970,19 @@ document.addEventListener("click", async (e) => {
         return;
     }
 
+    // How to Use Guide Modal
+    if (e.target.id === "header-guide-btn" || e.target.closest("#header-guide-btn")) {
+        document.getElementById("guide-modal")?.classList.remove("hidden");
+        setTimeout(() => focusElement(document.getElementById("guide-ok-btn"), false), 60);
+        return;
+    }
+
+    if (e.target.id === "close-guide-modal-btn" || e.target.closest("#close-guide-modal-btn") || e.target.id === "guide-ok-btn" || e.target.closest("#guide-ok-btn")) {
+        document.getElementById("guide-modal")?.classList.add("hidden");
+        autoFocusFirstElement();
+        return;
+    }
+
     // Policy Modal
     if (e.target.id === "open-policy-btn" || e.target.closest("#open-policy-btn") || e.target.id === "sidebar-policy-btn" || e.target.closest("#sidebar-policy-btn") || e.target.id === "profile-policy-btn" || e.target.closest("#profile-policy-btn") || e.target.closest(".tv-policy-btn-trigger")) {
         document.getElementById("profile-modal")?.classList.add("hidden");
@@ -2926,19 +3007,358 @@ document.getElementById("contact-uid-input")?.addEventListener("input", (e) => {
     e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
 });
 
-// Environment Runtime Check: If loaded on HTTPS web browser, show informational notice
-(function checkEnvironmentRuntime() {
-    try {
-        const isHttpsWeb = typeof window !== "undefined" && window.location.protocol === "https:" && (!window.Capacitor || !window.Capacitor.isNativePlatform());
-        if (isHttpsWeb) {
-            const banner = document.getElementById("mixed-content-banner");
-            if (banner) banner.classList.remove("hidden");
-        }
-    } catch (_) {}
-})();
+// ==========================================================================
+// WEB THREE-LEVEL SECURITY GATE & DEVELOPER ACCESS CLEARANCE
+// Level 1: Primary Authentication Key
+// Level 2: Secondary Clearance Key
+// Level 3: Master Developer Token
+// Stored strictly via irreversible SHA-256 cryptographic hashes (No plain text passwords)
+// ==========================================================================
+const SECURITY_LEVEL_HASHES = [
+    "a252a4f2e3595682ddcd540785bdb2002158211ebb0cfbbed9f0fefad04c1a65", // Level 1 Hash
+    "80f0e1cab6a0c35d342a0a1c2e0f79b0511dcb3eeeeac5740cc0295b3c243e5b", // Level 2 Hash
+    "3678bc91dbe8d15525ca2ef34828bcedfdaf0128b4746333d0caa16dc79a5ed6"  // Level 3 Hash
+];
 
-// Initial Fire TV Leanback D-Pad Auto-Focus
+const SECURITY_STEP_CONFIG = [
+    {
+        level: 1,
+        stepId: "sec-step-1",
+        labelId: "sec-label-1",
+        prompt: "Level 1 Verification: Enter Primary Authentication Key",
+        placeholder: "Enter Level 1 Password...",
+        btnText: "Authorize Level 1 Key"
+    },
+    {
+        level: 2,
+        stepId: "sec-step-2",
+        labelId: "sec-label-2",
+        prompt: "Level 2 Verification: Enter Secondary Security Clearance",
+        placeholder: "Enter Level 2 Password...",
+        btnText: "Authorize Level 2 Key"
+    },
+    {
+        level: 3,
+        stepId: "sec-step-3",
+        labelId: "sec-label-3",
+        prompt: "Level 3 Verification: Enter Master Developer Access Token",
+        placeholder: "Enter Level 3 Password...",
+        btnText: "Authorize Master Token"
+    }
+];
+
+let currentSecurityLevel = 1;
+
+async function computeSha256Hex(plainText) {
+    if (!window.crypto || !window.crypto.subtle) return "";
+    try {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(plainText);
+        const hashBuffer = await window.crypto.subtle.digest("SHA-256", data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+    } catch (_) {
+        return "";
+    }
+}
+
+function updateSecurityGateUI() {
+    const config = SECURITY_STEP_CONFIG[currentSecurityLevel - 1];
+    if (!config) return;
+
+    const promptEl = document.getElementById("security-prompt-label");
+    const inputEl = document.getElementById("security-key-input");
+    const btnEl = document.getElementById("security-submit-btn");
+    const errorEl = document.getElementById("security-error-msg");
+
+    if (promptEl) promptEl.innerText = config.prompt;
+    if (inputEl) {
+        inputEl.placeholder = config.placeholder;
+        inputEl.value = "";
+        inputEl.focus();
+    }
+    if (btnEl) btnEl.innerHTML = `<span>${config.btnText}</span>`;
+    if (errorEl) errorEl.style.display = "none";
+
+    for (let i = 1; i <= 3; i++) {
+        const stepEl = document.getElementById(`sec-step-${i}`);
+        const labelEl = document.getElementById(`sec-label-${i}`);
+        if (!stepEl) continue;
+
+        if (i < currentSecurityLevel) {
+            stepEl.className = "security-step-item completed";
+            if (labelEl) labelEl.innerText = "Verified ✓";
+        } else if (i === currentSecurityLevel) {
+            stepEl.className = "security-step-item active";
+            if (labelEl) {
+                if (i === 1) labelEl.innerText = "Primary Key";
+                if (i === 2) labelEl.innerText = "Clearance Key";
+                if (i === 3) labelEl.innerText = "Master Token";
+            }
+        } else {
+            stepEl.className = "security-step-item";
+            if (labelEl) {
+                if (i === 2) labelEl.innerText = "Clearance Key";
+                if (i === 3) labelEl.innerText = "Developer Token";
+            }
+        }
+    }
+}
+
+async function handleSecuritySubmit() {
+    const inputEl = document.getElementById("security-key-input");
+    const errorEl = document.getElementById("security-error-msg");
+    const cardEl = document.getElementById("security-card");
+    const val = inputEl ? inputEl.value.trim() : "";
+
+    if (!val) {
+        if (errorEl) {
+            errorEl.innerText = "⚠️ Please enter the security key.";
+            errorEl.style.display = "block";
+        }
+        return;
+    }
+
+    const inputHash = await computeSha256Hex(val);
+    const expectedHash = SECURITY_LEVEL_HASHES[currentSecurityLevel - 1];
+
+    if (inputHash === expectedHash) {
+        if (errorEl) errorEl.style.display = "none";
+
+        if (currentSecurityLevel < 3) {
+            showToast(`✅ Level ${currentSecurityLevel} Verified!`);
+            currentSecurityLevel++;
+            updateSecurityGateUI();
+        } else {
+            // Level 3 Unlocked!
+            const step3 = document.getElementById("sec-step-3");
+            const label3 = document.getElementById("sec-label-3");
+            if (step3) step3.className = "security-step-item completed";
+            if (label3) label3.innerText = "Verified ✓";
+
+            showToast("🛡️ All 3 Security Levels Verified! Welcome Developer.");
+            sessionStorage.setItem("zingtalk_web_gate_cleared", "true");
+
+            const overlay = document.getElementById("web-security-gate-overlay");
+            if (overlay) {
+                overlay.style.transition = "opacity 0.3s ease";
+                overlay.style.opacity = "0";
+                setTimeout(() => {
+                    overlay.classList.add("hidden");
+                    overlay.style.opacity = "";
+                }, 300);
+            }
+
+            const portalBar = document.getElementById("web-portal-bar");
+            if (portalBar) portalBar.classList.remove("hidden");
+
+            setTimeout(autoFocusFirstElement, 150);
+        }
+    } else {
+        if (errorEl) {
+            errorEl.innerText = `❌ Invalid Level ${currentSecurityLevel} Key. Access Denied.`;
+            errorEl.style.display = "block";
+        }
+        if (cardEl) {
+            cardEl.classList.remove("security-shake");
+            void cardEl.offsetWidth; // trigger reflow
+            cardEl.classList.add("security-shake");
+        }
+        if (inputEl) {
+            inputEl.value = "";
+            inputEl.focus();
+        }
+    }
+}
+
+function initSecurityGate() {
+    const isNativeApk = typeof window !== "undefined" && Boolean(window.Capacitor?.isNativePlatform?.());
+    const isCleared = sessionStorage.getItem("zingtalk_web_gate_cleared") === "true";
+    const overlay = document.getElementById("web-security-gate-overlay");
+    const portalBar = document.getElementById("web-portal-bar");
+
+    if (isNativeApk) {
+        // Native APK (Fire TV or Android Mobile) runs directly without web password gate
+        if (overlay) overlay.classList.add("hidden");
+        return;
+    }
+
+    if (portalBar) portalBar.classList.remove("hidden");
+
+    if (isCleared) {
+        if (overlay) overlay.classList.add("hidden");
+    } else {
+        if (overlay) overlay.classList.remove("hidden");
+        currentSecurityLevel = 1;
+        updateSecurityGateUI();
+    }
+
+    // Toggle Eye Listener
+    document.getElementById("security-toggle-eye")?.addEventListener("click", () => {
+        const inp = document.getElementById("security-key-input");
+        if (inp) {
+            inp.type = inp.type === "password" ? "text" : "password";
+        }
+    });
+
+    // Enter Key Listener for Security Input
+    document.getElementById("security-key-input")?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            handleSecuritySubmit();
+        }
+    });
+
+    document.getElementById("security-submit-btn")?.addEventListener("click", handleSecuritySubmit);
+
+    // Re-Lock Button Listener
+    document.getElementById("web-relock-btn")?.addEventListener("click", () => {
+        sessionStorage.removeItem("zingtalk_web_gate_cleared");
+        currentSecurityLevel = 1;
+        if (overlay) {
+            overlay.classList.remove("hidden");
+            overlay.style.opacity = "1";
+        }
+        updateSecurityGateUI();
+        showToast("🔒 Security Gate Re-Locked.");
+    });
+}
+
+// ==========================================================================
+// WEB PORTAL FEATURES: APK DOWNLOAD HUB & AV DIAGNOSTIC STUDIO
+// ==========================================================================
+let diagStream = null;
+let diagAudioCtx = null;
+let diagAnimFrame = null;
+
+async function measureServerPing() {
+    const start = performance.now();
+    try {
+        const resp = await fetch("https://zingtalk.duckdns.org/api/health", { cache: "no-store", mode: "cors" });
+        if (resp.ok) {
+            const latency = Math.round(performance.now() - start);
+            const pingText = document.getElementById("web-ping-text");
+            const diagLatency = document.getElementById("diag-latency-val");
+            if (pingText) pingText.innerText = `${latency}ms • AWS Live`;
+            if (diagLatency) diagLatency.innerText = `${latency} ms (Fast)`;
+        }
+    } catch (_) {
+        const pingText = document.getElementById("web-ping-text");
+        if (pingText) pingText.innerText = "DuckDNS Active";
+    }
+}
+
+function initWebPortalFeatures() {
+    // Measure initial ping and periodically refresh every 30s
+    measureServerPing();
+    setInterval(measureServerPing, 30000);
+
+    // APK Hub Modal Triggers
+    document.getElementById("web-apk-hub-btn")?.addEventListener("click", () => {
+        document.getElementById("apk-download-modal")?.classList.remove("hidden");
+    });
+    document.getElementById("close-apk-modal-btn")?.addEventListener("click", () => {
+        document.getElementById("apk-download-modal")?.classList.add("hidden");
+    });
+    document.getElementById("close-apk-modal-btn2")?.addEventListener("click", () => {
+        document.getElementById("apk-download-modal")?.classList.add("hidden");
+    });
+
+    // AV Diagnostic Studio Modal Triggers
+    document.getElementById("web-av-test-btn")?.addEventListener("click", () => {
+        document.getElementById("av-diagnostic-modal")?.classList.remove("hidden");
+        measureServerPing();
+    });
+
+    const stopDiagnosticTest = () => {
+        if (diagAnimFrame) cancelAnimationFrame(diagAnimFrame);
+        if (diagStream) {
+            diagStream.getTracks().forEach(t => t.stop());
+            diagStream = null;
+        }
+        if (diagAudioCtx) {
+            try { diagAudioCtx.close(); } catch (_) {}
+            diagAudioCtx = null;
+        }
+        const videoEl = document.getElementById("diag-video-preview");
+        if (videoEl) videoEl.srcObject = null;
+        const micBar = document.getElementById("diag-mic-bar");
+        if (micBar) micBar.style.width = "0%";
+        const camStatus = document.getElementById("diag-camera-status");
+        if (camStatus) camStatus.innerText = "Camera Idle";
+        const micStatus = document.getElementById("diag-mic-status");
+        if (micStatus) micStatus.innerText = "Click Test to monitor mic";
+    };
+
+    document.getElementById("close-diag-modal-btn")?.addEventListener("click", () => {
+        stopDiagnosticTest();
+        document.getElementById("av-diagnostic-modal")?.classList.add("hidden");
+    });
+
+    document.getElementById("stop-av-diag-btn")?.addEventListener("click", () => {
+        stopDiagnosticTest();
+        document.getElementById("av-diagnostic-modal")?.classList.add("hidden");
+    });
+
+    document.getElementById("start-av-diag-btn")?.addEventListener("click", async () => {
+        stopDiagnosticTest();
+        const camStatus = document.getElementById("diag-camera-status");
+        const micStatus = document.getElementById("diag-mic-status");
+        const videoEl = document.getElementById("diag-video-preview");
+        const micBar = document.getElementById("diag-mic-bar");
+
+        try {
+            if (camStatus) camStatus.innerText = "Requesting permissions...";
+            diagStream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+                audio: true
+            });
+
+            if (videoEl) {
+                videoEl.srcObject = diagStream;
+                videoEl.play().catch(() => {});
+            }
+            if (camStatus) camStatus.innerText = "🟢 Camera Active (HD Preview)";
+
+            // Audio Level Visualizer
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (AudioContextClass) {
+                diagAudioCtx = new AudioContextClass();
+                const source = diagAudioCtx.createMediaStreamSource(diagStream);
+                const analyser = diagAudioCtx.createAnalyser();
+                analyser.fftSize = 256;
+                source.connect(analyser);
+
+                const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                if (micStatus) micStatus.innerText = "🎙️ Mic Active • Speak into microphone";
+
+                const updateVolume = () => {
+                    if (!diagAudioCtx || diagAudioCtx.state === "closed") return;
+                    analyser.getByteFrequencyData(dataArray);
+                    let sum = 0;
+                    for (let i = 0; i < dataArray.length; i++) {
+                        sum += dataArray[i];
+                    }
+                    const avg = sum / dataArray.length;
+                    const pct = Math.min(100, Math.round((avg / 128) * 100));
+                    if (micBar) micBar.style.width = pct + "%";
+                    diagAnimFrame = requestAnimationFrame(updateVolume);
+                };
+                updateVolume();
+            }
+        } catch (err) {
+            console.error("[AV Diagnostic Error]", err);
+            if (camStatus) camStatus.innerText = "❌ Camera Error: " + err.message;
+            if (micStatus) micStatus.innerText = "❌ Mic Error: " + err.message;
+        }
+    });
+}
+
+// Initial Fire TV Leanback D-Pad Auto-Focus & Security Gate Initialization
 window.addEventListener("load", () => {
+    initSecurityGate();
+    initWebPortalFeatures();
     setTimeout(autoFocusFirstElement, 150);
 });
 setTimeout(autoFocusFirstElement, 300);
+

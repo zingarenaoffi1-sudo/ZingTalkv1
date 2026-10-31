@@ -1,6 +1,7 @@
 {
   "name": "zing-talk-backend",
   "version": "1.0.0",
+  "author": "ZingTalk Developer Team <zingarenaoffi1@gmail.com>",
   "main": "server.js",
   "scripts": {
     "dev": "node server.js",

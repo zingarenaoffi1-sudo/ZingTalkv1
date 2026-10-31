@@ -105,4 +105,4 @@ npm run build
 
 ## 📄 License & Support
 
-Proprietary Software. Developed by **KM MAMATA / Sunny** (`zingarenaoffi1@gmail.com`). All rights reserved.
+Proprietary Software. Developed by **ZingTalk Developer Team** (`zingarenaoffi1@gmail.com`). All rights reserved.

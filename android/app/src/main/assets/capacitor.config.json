@@ -7,8 +7,9 @@
 		"androidScheme": "http",
 		"cleartext": true,
 		"allowNavigation": [
-			"18.234.224.25:3000",
-			"18.234.224.25:*",
+			"zingtalk.duckdns.org",
+			"zingtalk.duckdns.org:*",
+			"*.duckdns.org",
 			"*.google.com",
 			"*.firebaseapp.com",
 			"*.googleapis.com"
