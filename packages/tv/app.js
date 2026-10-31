@@ -558,6 +558,7 @@ export function registerSocketListeners(s) {
             name: displayName,
             authUid: authUid,
             uid: my10DigitUid || currentUser?.zingUid,
+            platform: "Fire TV",
             isAnonymous: Boolean(currentUser?.isAnonymous),
             isGuest: Boolean(currentUser?.isAnonymous),
             contacts: myContacts

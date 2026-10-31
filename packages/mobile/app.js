@@ -215,7 +215,8 @@ function connectSocket() {
                 email: currentUser.email,
                 name: currentUser.displayName,
                 authUid: currentUser.uid,
-                uid: my10DigitUid
+                uid: my10DigitUid,
+                platform: "Mobile"
             });
         }
     });

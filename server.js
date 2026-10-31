@@ -1,6 +1,8 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 const { Server } = require('socket.io');
 const admin = require('firebase-admin');
 
@@ -18,6 +20,224 @@ const io = new Server(server, {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Global connected users registry (UID -> socket.id)
+const connectedUsers = new Map();
+
+// ==========================================================================
+// SERVER ADMIN & ANALYTICS PERSISTENCE ENGINE
+// Tracks: Daily New Users, Daily Returning Users, Platform Breakdown
+// ==========================================================================
+const ANALYTICS_FILE_PATH = path.join(__dirname, 'analytics_store.json');
+let analyticsStore = {
+    allUsers: {},    // uid -> { uid, name, platform, firstSeenDate, lastSeenDate, firstSeenTime, lastSeenTime, totalConnections }
+    dailyStats: {}   // YYYY-MM-DD -> { newUsers: [uid, ...], returningUsers: [uid, ...], totalConnections: 0 }
+};
+
+function loadAnalyticsFromDisk() {
+    try {
+        if (fs.existsSync(ANALYTICS_FILE_PATH)) {
+            const raw = fs.readFileSync(ANALYTICS_FILE_PATH, 'utf-8');
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') {
+                analyticsStore.allUsers = parsed.allUsers || {};
+                analyticsStore.dailyStats = parsed.dailyStats || {};
+            }
+        }
+    } catch (e) {
+        console.warn('[Analytics] Failed to load store, using fresh in-memory store:', e.message);
+    }
+}
+loadAnalyticsFromDisk();
+
+let saveAnalyticsTimer = null;
+function saveAnalyticsDebounced() {
+    if (saveAnalyticsTimer) clearTimeout(saveAnalyticsTimer);
+    saveAnalyticsTimer = setTimeout(() => {
+        try {
+            fs.writeFileSync(ANALYTICS_FILE_PATH, JSON.stringify(analyticsStore, null, 2), 'utf-8');
+        } catch (_) {}
+    }, 1500);
+}
+
+function getTodayDateStr() {
+    const now = new Date();
+    return now.toISOString().split('T')[0];
+}
+
+function recordUserConnection(uid, name, platform = 'Fire TV') {
+    if (!uid) return;
+    const cleanUid = String(uid).trim().replace(/\D/g, '');
+    if (cleanUid.length !== 10) return;
+
+    const today = getTodayDateStr();
+    const nowIso = new Date().toISOString();
+
+    if (!analyticsStore.dailyStats[today]) {
+        analyticsStore.dailyStats[today] = { newUsers: [], returningUsers: [], totalConnections: 0 };
+    }
+    const todayLog = analyticsStore.dailyStats[today];
+    todayLog.totalConnections++;
+
+    if (!analyticsStore.allUsers[cleanUid]) {
+        // Brand New User! First time ever recorded on ZingTalk
+        analyticsStore.allUsers[cleanUid] = {
+            uid: cleanUid,
+            name: name || `User ${cleanUid}`,
+            platform: platform || 'Fire TV',
+            firstSeenDate: today,
+            lastSeenDate: today,
+            firstSeenTime: nowIso,
+            lastSeenTime: nowIso,
+            totalConnections: 1
+        };
+        if (!todayLog.newUsers.includes(cleanUid)) {
+            todayLog.newUsers.push(cleanUid);
+        }
+    } else {
+        // Existing / Returning User
+        const existing = analyticsStore.allUsers[cleanUid];
+        existing.lastSeenDate = today;
+        existing.lastSeenTime = nowIso;
+        existing.totalConnections = (existing.totalConnections || 0) + 1;
+        if (name && name !== `User ${cleanUid}`) existing.name = name;
+        if (platform) existing.platform = platform;
+
+        if (existing.firstSeenDate !== today) {
+            // User registered on a previous day and is returning today!
+            if (!todayLog.returningUsers.includes(cleanUid)) {
+                todayLog.returningUsers.push(cleanUid);
+            }
+        } else {
+            // User registered earlier today
+            if (!todayLog.newUsers.includes(cleanUid)) {
+                todayLog.newUsers.push(cleanUid);
+            }
+        }
+    }
+    saveAnalyticsDebounced();
+}
+
+function getAnalyticsSummary() {
+    const today = getTodayDateStr();
+    const todayLog = analyticsStore.dailyStats[today] || { newUsers: [], returningUsers: [], totalConnections: 0 };
+
+    let fireTvCount = 0;
+    let mobileCount = 0;
+    let otherCount = 0;
+
+    for (const u of Object.values(analyticsStore.allUsers)) {
+        const p = (u.platform || '').toLowerCase();
+        if (p.includes('tv') || p.includes('fire')) fireTvCount++;
+        else if (p.includes('mobile') || p.includes('phone') || p.includes('android')) mobileCount++;
+        else otherCount++;
+    }
+
+    const totalLifetime = Object.keys(analyticsStore.allUsers).length;
+
+    return {
+        today,
+        newUsersTodayCount: todayLog.newUsers.length,
+        returningUsersTodayCount: todayLog.returningUsers.length,
+        totalActiveTodayCount: todayLog.newUsers.length + todayLog.returningUsers.length,
+        totalLifetimeUsersCount: totalLifetime,
+        liveConnectedNowCount: connectedUsers.size,
+        platformBreakdown: {
+            fireTv: fireTvCount,
+            mobile: mobileCount,
+            other: otherCount
+        },
+        system: {
+            uptimeSeconds: Math.floor(process.uptime()),
+            memoryUsageMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+            domain: "zingtalk.duckdns.org",
+            port: process.env.PORT || 3000,
+            stunTurn: "zingtalk.duckdns.org:3478",
+            alexaWebhook: "/alexa & /api/alexa"
+        }
+    };
+}
+
+function getRecentUsersList() {
+    const today = getTodayDateStr();
+    const list = Object.values(analyticsStore.allUsers).map(u => {
+        const isNewToday = (u.firstSeenDate === today);
+        return {
+            uid: u.uid,
+            name: u.name,
+            platform: u.platform,
+            type: isNewToday ? 'New User (Today)' : 'Returning User',
+            isNewToday,
+            firstSeenTime: u.firstSeenTime,
+            lastSeenTime: u.lastSeenTime,
+            totalConnections: u.totalConnections || 1
+        };
+    });
+
+    list.sort((a, b) => new Date(b.lastSeenTime) - new Date(a.lastSeenTime));
+    return list.slice(0, 30); // Top 30 recent users
+}
+
+// ==========================================================================
+// SERVER ADMIN THREE-LEVEL SECURITY GATE
+// Level 1: Primary Authentication Key
+// Level 2: Secondary Clearance Key
+// Level 3: Master Developer Token
+// Stored strictly via irreversible SHA-256 cryptographic hashes (No plain text passwords in code)
+// ==========================================================================
+const ADMIN_LEVEL_HASHES = [
+    "a252a4f2e3595682ddcd540785bdb2002158211ebb0cfbbed9f0fefad04c1a65", // Level 1 Hash
+    "80f0e1cab6a0c35d342a0a1c2e0f79b0511dcb3eeeeac5740cc0295b3c243e5b", // Level 2 Hash
+    "3678bc91dbe8d15525ca2ef34828bcedfdaf0128b4746333d0caa16dc79a5ed6"  // Level 3 Hash
+];
+
+const adminSessions = new Map(); // token -> { expires: timestamp }
+
+app.post('/api/admin/verify-gate', (req, res) => {
+    try {
+        const { level, key } = req.body;
+        const lvl = parseInt(level, 10);
+        if (!lvl || lvl < 1 || lvl > 3 || !key) {
+            return res.status(400).json({ success: false, message: 'Invalid verification parameters' });
+        }
+
+        const inputHash = crypto.createHash('sha256').update(String(key).trim()).digest('hex');
+        const expectedHash = ADMIN_LEVEL_HASHES[lvl - 1];
+
+        if (inputHash !== expectedHash) {
+            return res.status(401).json({ success: false, message: `Invalid security key for Level ${lvl}` });
+        }
+
+        if (lvl < 3) {
+            return res.json({ success: true, nextLevel: lvl + 1 });
+        } else {
+            // Level 3 Verified! Generate secure 24-hour admin session token
+            const token = crypto.randomBytes(32).toString('hex');
+            adminSessions.set(token, { expires: Date.now() + 24 * 60 * 60 * 1000 });
+            return res.json({ success: true, authorized: true, token });
+        }
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+app.get('/api/admin/analytics', (req, res) => {
+    const token = req.query.token || req.headers['x-admin-token'];
+    if (!token || !adminSessions.has(token) || adminSessions.get(token).expires < Date.now()) {
+        return res.status(401).json({ success: false, message: 'Unauthorized. Security gate clearance required.' });
+    }
+    return res.json({
+        success: true,
+        summary: getAnalyticsSummary(),
+        recentUsers: getRecentUsersList()
+    });
+});
+
+app.post('/api/admin/logout', (req, res) => {
+    const token = req.body.token || req.headers['x-admin-token'];
+    if (token) adminSessions.delete(token);
+    return res.json({ success: true, message: 'Admin session closed' });
+});
+
 // Health check endpoint for AWS EC2 & load balancer monitoring
 app.get('/api/health', (req, res) => {
     res.json({
@@ -28,8 +248,8 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// Serve static frontend assets for TV, Mobile, and Web
-app.use(express.static(__dirname));
+// Serve static frontend assets for TV, Mobile, and Web (Disable auto-index so root / renders Server Status Panel)
+app.use(express.static(__dirname, { index: false }));
 app.use('/tv', express.static(path.join(__dirname, 'packages', 'tv')));
 app.use('/mobile', express.static(path.join(__dirname, 'packages', 'mobile')));
 
@@ -93,8 +313,6 @@ function createMemoryDb() {
 
 const memoryDb = createMemoryDb();
 let db = memoryDb;
-
-const fs = require('fs');
 
 // Initialize Firebase Admin with Firestore if credentials are provided in environment or local file
 function loadAdminCredentials() {
@@ -213,7 +431,6 @@ function computeDeterministic10DigitUid(idStr) {
     return num.toString();
 }
 
-const connectedUsers = new Map();
 let lastActiveTvUid = null;
 const userContactsRegistry = new Map();
 
@@ -325,7 +542,10 @@ io.on('connection', (socket) => {
             lastActiveTvUid = uid;
             socket.join(uid);
 
-            console.log(`[ZingTalk] Server authenticated UID: ${uid} for user: ${userObj.name} (${userObj.email})`);
+            const platformDetected = data.platform || (data.isTv ? 'Fire TV' : (data.isMobile ? 'Mobile' : 'Fire TV'));
+            recordUserConnection(uid, userObj.name, platformDetected);
+
+            console.log(`[ZingTalk] Server authenticated UID: ${uid} for user: ${userObj.name} (${userObj.email}) [Platform: ${platformDetected}]`);
 
             // Auto-join existing in-memory group rooms
             for (const [groupId, group] of inMemoryGroups.entries()) {
@@ -1388,117 +1608,986 @@ function renderServerStatus(req, res) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ZingTalk Universal Server</title>
+  <title>ZingTalk Universal Server | Admin & Analytics</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background: #0b0f19;
+      background: #070a13;
       color: #f1f5f9;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       min-height: 100vh;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 20px;
+      padding: 24px;
+      position: relative;
+      overflow-x: hidden;
     }
-    .card {
-      background: #111827;
-      border: 1px solid #1f2937;
-      border-radius: 16px;
-      padding: 32px;
-      max-width: 500px;
+    .ambient-glow {
+      position: fixed;
+      top: -20%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 700px;
+      height: 400px;
+      background: radial-gradient(ellipse at center, rgba(0, 210, 255, 0.12) 0%, rgba(16, 185, 129, 0.08) 50%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .hidden { display: none !important; }
+
+    /* GATE VIEW */
+    #gate-view {
+      position: relative;
+      z-index: 1;
       width: 100%;
-      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+      max-width: 480px;
+      background: #0d1322;
+      border: 1px solid #1e293b;
+      border-radius: 20px;
+      padding: 36px 32px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
       text-align: center;
+      transition: all 0.3s ease;
     }
-    .badge {
+    .gate-icon {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 16px;
+      background: rgba(0, 210, 255, 0.1);
+      border: 1px solid rgba(0, 210, 255, 0.3);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #00d2ff;
+    }
+    .gate-title {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: #ffffff;
+      margin-bottom: 6px;
+      letter-spacing: -0.5px;
+    }
+    .gate-subtitle {
+      color: #94a3b8;
+      font-size: 0.9rem;
+      margin-bottom: 24px;
+    }
+    .level-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+    .level-tab {
+      padding: 10px 6px;
+      background: #131b2e;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #64748b;
+      text-align: center;
+      transition: all 0.25s ease;
+    }
+    .level-tab.active {
+      background: rgba(0, 210, 255, 0.12);
+      border-color: #00d2ff;
+      color: #00d2ff;
+      box-shadow: 0 0 14px rgba(0, 210, 255, 0.2);
+    }
+    .level-tab.done {
+      background: rgba(16, 185, 129, 0.12);
+      border-color: #10b981;
+      color: #34d399;
+    }
+    .gate-instruction {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #00d2ff;
+      text-align: left;
+      margin-bottom: 10px;
+    }
+    .input-wrapper {
+      position: relative;
+      margin-bottom: 16px;
+    }
+    .gate-input {
+      width: 100%;
+      background: #131b2e;
+      border: 1.5px solid #1e293b;
+      border-radius: 12px;
+      padding: 14px 46px 14px 16px;
+      color: #ffffff;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .gate-input:focus {
+      border-color: #00d2ff;
+      box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.2);
+    }
+    .toggle-eye {
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: #64748b;
+      cursor: pointer;
+      padding: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .toggle-eye:hover { color: #cbd5e1; }
+    .gate-error {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #f87171;
+      font-size: 0.85rem;
+      padding: 10px 14px;
+      border-radius: 10px;
+      margin-bottom: 16px;
+      text-align: left;
+    }
+    .gate-btn {
+      width: 100%;
+      background: linear-gradient(135deg, #00d2ff 0%, #0099ff 100%);
+      color: #050b14;
+      font-weight: 800;
+      font-size: 0.95rem;
+      padding: 14px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(0, 210, 255, 0.35);
+      transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+    }
+    .gate-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(0, 210, 255, 0.5);
+    }
+    .gate-btn:active {
+      transform: translateY(1px);
+    }
+    .gate-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .gate-footer {
+      color: #64748b;
+      font-size: 0.75rem;
+      margin-top: 24px;
+      line-height: 1.4;
+    }
+
+    /* DASHBOARD VIEW */
+    #dashboard-view {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .dash-topbar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      background: #0d1322;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 16px 24px;
+      margin-bottom: 24px;
+    }
+    .dash-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .dash-logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: rgba(0, 210, 255, 0.15);
+      border: 1px solid rgba(0, 210, 255, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #00d2ff;
+      font-weight: 900;
+      font-size: 1.1rem;
+    }
+    .dash-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #ffffff;
+    }
+    .dash-subtitle {
+      font-size: 0.8rem;
+      color: #94a3b8;
+    }
+    .dash-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .badge-status {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       background: rgba(16, 185, 129, 0.15);
       color: #34d399;
       border: 1px solid #059669;
-      padding: 6px 16px;
+      padding: 6px 14px;
       border-radius: 9999px;
-      font-size: 0.85rem;
-      font-weight: 600;
-      letter-spacing: 0.5px;
-      margin-bottom: 20px;
+      font-size: 0.8rem;
+      font-weight: 700;
     }
-    .pulse {
+    .pulse-dot {
       width: 8px;
       height: 8px;
       background: #10b981;
       border-radius: 50%;
-      box-shadow: 0 0 12px #10b981;
+      box-shadow: 0 0 10px #10b981;
+      animation: pulseAnim 2s infinite;
     }
-    h1 {
-      font-size: 1.6rem;
-      font-weight: 700;
+    @keyframes pulseAnim {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.2); }
+    }
+    .btn-secondary {
+      background: #131b2e;
+      border: 1px solid #1e293b;
+      color: #cbd5e1;
+      padding: 8px 16px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-secondary:hover {
+      background: #1e293b;
       color: #ffffff;
-      margin-bottom: 8px;
     }
-    p.sub {
-      color: #9ca3af;
-      font-size: 0.95rem;
+    .btn-lock {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #f87171;
+      padding: 8px 16px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-lock:hover {
+      background: rgba(239, 68, 68, 0.3);
+      color: #ffffff;
+    }
+
+    /* STATS GRID */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
       margin-bottom: 24px;
     }
-    .grid {
-      background: #0b0f19;
-      border: 1px solid #1f2937;
-      border-radius: 12px;
-      padding: 16px;
-      text-align: left;
-      font-size: 0.9rem;
-      margin-bottom: 24px;
+    .stat-card {
+      background: #0d1322;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      overflow: hidden;
     }
-    .row {
+    .stat-card::after {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+    }
+    .card-new::after { background: linear-gradient(90deg, #10b981, #34d399); }
+    .card-returning::after { background: linear-gradient(90deg, #00d2ff, #0099ff); }
+    .card-live::after { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .card-total::after { background: linear-gradient(90deg, #8b5cf6, #a855f7); }
+
+    .stat-top {
       display: flex;
       justify-content: space-between;
-      padding: 8px 0;
-      border-bottom: 1px solid #1f2937;
+      align-items: center;
+      margin-bottom: 12px;
     }
-    .row:last-child {
-      border-bottom: none;
+    .stat-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #94a3b8;
     }
-    .label {
-      color: #6b7280;
+    .stat-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
     }
-    .val {
+    .badge-green { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-cyan { background: rgba(0, 210, 255, 0.15); color: #00d2ff; border: 1px solid rgba(0, 210, 255, 0.3); }
+    .badge-yellow { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-purple { background: rgba(139, 92, 246, 0.15); color: #c084fc; border: 1px solid rgba(139, 92, 246, 0.3); }
+
+    .stat-num {
+      font-size: 2.4rem;
+      font-weight: 800;
+      color: #ffffff;
       font-family: monospace;
-      color: #e5e7eb;
+      letter-spacing: -1px;
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+    .stat-desc {
+      font-size: 0.78rem;
+      color: #64748b;
+    }
+
+    /* MIDDLE ROW */
+    .middle-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 800px) {
+      .middle-grid { grid-template-columns: 1fr; }
+    }
+    .panel {
+      background: #0d1322;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 20px;
+    }
+    .panel-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .diag-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid #131b2e;
+      font-size: 0.85rem;
+    }
+    .diag-row:last-child { border-bottom: none; }
+    .diag-label { color: #94a3b8; }
+    .diag-val {
+      font-family: monospace;
+      color: #e2e8f0;
       font-weight: 600;
     }
-    .val.green {
-      color: #34d399;
+    .bar-item {
+      margin-bottom: 14px;
     }
-    .footer {
-      color: #6b7280;
-      font-size: 0.8rem;
+    .bar-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.82rem;
+      margin-bottom: 6px;
+    }
+    .bar-label { color: #cbd5e1; font-weight: 600; }
+    .bar-count { color: #94a3b8; font-family: monospace; }
+    .progress-track {
+      background: #131b2e;
+      border-radius: 9999px;
+      height: 8px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      border-radius: 9999px;
+      transition: width 0.5s ease;
+    }
+    .fill-tv { background: linear-gradient(90deg, #ff9900, #ffb84d); }
+    .fill-mobile { background: linear-gradient(90deg, #00d2ff, #0099ff); }
+    .fill-web { background: linear-gradient(90deg, #10b981, #34d399); }
+
+    /* TABLE SECTION */
+    .table-container {
+      background: #0d1322;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 20px;
+      overflow-x: auto;
+    }
+    .table-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .search-input {
+      background: #131b2e;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 8px 14px;
+      color: #ffffff;
+      font-size: 0.85rem;
+      outline: none;
+      min-width: 220px;
+    }
+    .search-input:focus { border-color: #00d2ff; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.85rem;
+    }
+    th {
+      color: #64748b;
+      font-weight: 600;
+      padding: 10px 12px;
+      border-bottom: 1px solid #1e293b;
+    }
+    td {
+      padding: 12px;
+      border-bottom: 1px solid #131b2e;
+      color: #cbd5e1;
+    }
+    tr:last-child td { border-bottom: none; }
+    .user-uid-cell {
+      font-family: monospace;
+      color: #00d2ff;
+      font-weight: 700;
+    }
+    .tag-new {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      display: inline-block;
+    }
+    .tag-returning {
+      background: rgba(0, 210, 255, 0.15);
+      color: #00d2ff;
+      border: 1px solid rgba(0, 210, 255, 0.3);
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      display: inline-block;
+    }
+    .tag-platform {
+      background: #131b2e;
+      color: #cbd5e1;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      border: 1px solid #1e293b;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 36px 16px;
+      color: #64748b;
+      font-size: 0.9rem;
     }
   </style>
 </head>
 <body>
-  <div class="card">
-    <div class="badge"><span class="pulse"></span> ONLINE & ACTIVE</div>
-    <h1>ZingTalk Universal Server</h1>
-    <p class="sub">High-Performance WebRTC Signaling & Alexa Voice Node</p>
-    <div class="grid">
-      <div class="row"><span class="label">Domain:</span><span class="val">zingtalk.duckdns.org</span></div>
-      <div class="row"><span class="label">Signaling (Port):</span><span class="val">3000 / 443 (SSL)</span></div>
-      <div class="row"><span class="label">STUN / TURN:</span><span class="val">zingtalk.duckdns.org:3478</span></div>
-      <div class="row"><span class="label">Socket.IO:</span><span class="val green">Ready</span></div>
-      <div class="row"><span class="label">Alexa Webhook:</span><span class="val">/alexa</span></div>
-      <div class="row"><span class="label">Connected Users:</span><span class="val">${connectedUsers.size}</span></div>
+  <div class="ambient-glow"></div>
+
+  <!-- VIEW 1: THREE-LEVEL SECURITY GATE -->
+  <div id="gate-view">
+    <div class="gate-icon">
+      <svg width="32" height="32" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+      </svg>
     </div>
-    <div class="footer">Client Apps (Fire TV & Mobile) connect remotely over WSS/HTTPS.</div>
+    <h1 class="gate-title">ZingTalk Security Gate</h1>
+    <p class="gate-subtitle">Three-Level Developer Clearance Required for Server Panel</p>
+
+    <div class="level-tabs">
+      <div id="tab-lvl-1" class="level-tab active">LEVEL 1<br>Primary Key</div>
+      <div id="tab-lvl-2" class="level-tab">LEVEL 2<br>Clearance Key</div>
+      <div id="tab-lvl-3" class="level-tab">LEVEL 3<br>Developer Token</div>
+    </div>
+
+    <div id="gate-instruction" class="gate-instruction">Level 1 Verification: Enter Primary Authentication Key</div>
+
+    <div class="input-wrapper">
+      <input type="password" id="gate-input" class="gate-input" placeholder="Enter Level 1 Password..." autocomplete="off">
+      <button type="button" id="toggle-eye-btn" class="toggle-eye" title="Show / Hide Password">
+        <svg id="eye-icon" width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+        </svg>
+      </button>
+    </div>
+
+    <div id="gate-error" class="gate-error hidden"></div>
+
+    <button type="button" id="gate-submit-btn" class="gate-btn">Authorize Level 1 Key</button>
+
+    <div class="gate-footer">
+      Protected with Server-Side SHA-256 Multi-Factor Cryptographic Hashing<br>
+      Authorized for ZingTalk Developer Team • zingarenaoffi1@gmail.com
+    </div>
   </div>
+
+  <!-- VIEW 2: LIVE ANALYTICS & PRODUCTION DASHBOARD -->
+  <div id="dashboard-view" class="hidden">
+    <div class="dash-topbar">
+      <div class="dash-brand">
+        <div class="dash-logo">Z</div>
+        <div>
+          <div class="dash-title">ZingTalk Universal Server</div>
+          <div class="dash-subtitle">High-Performance WebRTC Signaling & Alexa Voice Node • zingtalk.duckdns.org</div>
+        </div>
+      </div>
+      <div class="dash-actions">
+        <div class="badge-status"><span class="pulse-dot"></span> ONLINE & ACTIVE</div>
+        <button type="button" id="btn-refresh" class="btn-secondary">🔄 Refresh Data</button>
+        <button type="button" id="btn-lock" class="btn-lock">🔒 Lock Gate</button>
+      </div>
+    </div>
+
+    <!-- STATS CARDS GRID -->
+    <div class="stats-grid">
+      <!-- Card 1: New Users Today -->
+      <div class="stat-card card-new">
+        <div class="stat-top">
+          <span class="stat-label">Daily New Users (Today)</span>
+          <span class="stat-badge badge-green">🆕 Fresh Users</span>
+        </div>
+        <div id="stat-new-today" class="stat-num">0</div>
+        <div class="stat-desc">Users who opened ZingTalk for the first time today</div>
+      </div>
+
+      <!-- Card 2: Returning Users Today -->
+      <div class="stat-card card-returning">
+        <div class="stat-top">
+          <span class="stat-label">Returning Users (Today)</span>
+          <span class="stat-badge badge-cyan">🔁 Active Retention</span>
+        </div>
+        <div id="stat-returning-today" class="stat-num">0</div>
+        <div class="stat-desc">Existing registered users who re-opened the app today</div>
+      </div>
+
+      <!-- Card 3: Live Online Sockets -->
+      <div class="stat-card card-live">
+        <div class="stat-top">
+          <span class="stat-label">Live Online Sockets</span>
+          <span class="stat-badge badge-yellow">🟢 Connected Now</span>
+        </div>
+        <div id="stat-live-now" class="stat-num">${connectedUsers.size}</div>
+        <div class="stat-desc">Active real-time WebRTC & Socket.IO connections</div>
+      </div>
+
+      <!-- Card 4: Total Lifetime Users -->
+      <div class="stat-card card-total">
+        <div class="stat-top">
+          <span class="stat-label">Total Lifetime Users</span>
+          <span class="stat-badge badge-purple">👥 Registered Database</span>
+        </div>
+        <div id="stat-total-users" class="stat-num">0</div>
+        <div class="stat-desc">Unique 10-digit UIDs across all sessions</div>
+      </div>
+    </div>
+
+    <!-- MIDDLE ROW: PLATFORMS & SYSTEM INFO -->
+    <div class="middle-grid">
+      <!-- Platform Distribution -->
+      <div class="panel">
+        <div class="panel-title">📱 App Platform Distribution</div>
+        
+        <div class="bar-item">
+          <div class="bar-header">
+            <span class="bar-label">Amazon Fire TV</span>
+            <span id="label-tv-count" class="bar-count">0 users (0%)</span>
+          </div>
+          <div class="progress-track">
+            <div id="bar-tv" class="progress-fill fill-tv" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <div class="bar-item">
+          <div class="bar-header">
+            <span class="bar-label">Android Mobile</span>
+            <span id="label-mob-count" class="bar-count">0 users (0%)</span>
+          </div>
+          <div class="progress-track">
+            <div id="bar-mob" class="progress-fill fill-mobile" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <div class="bar-item">
+          <div class="bar-header">
+            <span class="bar-label">Web / Other</span>
+            <span id="label-web-count" class="bar-count">0 users (0%)</span>
+          </div>
+          <div class="progress-track">
+            <div id="bar-web" class="progress-fill fill-web" style="width: 0%;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- System Diagnostics -->
+      <div class="panel">
+        <div class="panel-title">⚙️ Server Infrastructure Diagnostics</div>
+        <div class="diag-row"><span class="diag-label">Public Domain:</span><span class="diag-val">zingtalk.duckdns.org</span></div>
+        <div class="diag-row"><span class="diag-label">Signaling Ports:</span><span class="diag-val">3000 (HTTP) / 443 (HTTPS)</span></div>
+        <div class="diag-row"><span class="diag-label">coturn STUN / TURN:</span><span class="diag-val">zingtalk.duckdns.org:3478</span></div>
+        <div class="diag-row"><span class="diag-label">Alexa Voice Webhook:</span><span class="diag-val">/alexa & /api/alexa</span></div>
+        <div class="diag-row"><span class="diag-label">Server Uptime:</span><span id="diag-uptime" class="diag-val">--</span></div>
+        <div class="diag-row"><span class="diag-label">Node Memory RSS:</span><span id="diag-mem" class="diag-val">-- MB</span></div>
+      </div>
+    </div>
+
+    <!-- RECENT USERS LOG TABLE -->
+    <div class="table-container">
+      <div class="table-header-row">
+        <div class="panel-title" style="margin-bottom: 0;">📊 Recent Connected Users & Live Traffic Log</div>
+        <input type="text" id="user-search" class="search-input" placeholder="Search by UID or Name...">
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>10-Digit UID</th>
+            <th>Display Name</th>
+            <th>User Status</th>
+            <th>Platform</th>
+            <th>Total Sessions</th>
+            <th>Last Active</th>
+          </tr>
+        </thead>
+        <tbody id="users-tbody">
+          <tr>
+            <td colspan="6" class="empty-state">Loading user telemetry data...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const gateView = document.getElementById('gate-view');
+      const dashView = document.getElementById('dashboard-view');
+      const gateInput = document.getElementById('gate-input');
+      const gateSubmitBtn = document.getElementById('gate-submit-btn');
+      const gateError = document.getElementById('gate-error');
+      const gateInstruction = document.getElementById('gate-instruction');
+      const toggleEyeBtn = document.getElementById('toggle-eye-btn');
+      const btnRefresh = document.getElementById('btn-refresh');
+      const btnLock = document.getElementById('btn-lock');
+      const userSearch = document.getElementById('user-search');
+
+      const tab1 = document.getElementById('tab-lvl-1');
+      const tab2 = document.getElementById('tab-lvl-2');
+      const tab3 = document.getElementById('tab-lvl-3');
+
+      let currentLevel = 1;
+      let cachedUsersList = [];
+
+      // Check for saved session token
+      const savedToken = sessionStorage.getItem('zingtalk_admin_session');
+      if (savedToken) {
+        verifySessionToken(savedToken);
+      }
+
+      // Show/Hide password toggle
+      toggleEyeBtn.addEventListener('click', function() {
+        if (gateInput.type === 'password') {
+          gateInput.type = 'text';
+          toggleEyeBtn.innerHTML = '<svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24M1 1l22 22"/></svg>';
+        } else {
+          gateInput.type = 'password';
+          toggleEyeBtn.innerHTML = '<svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+        }
+      });
+
+      // Enter key submits
+      gateInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') handleGateSubmit();
+      });
+      gateSubmitBtn.addEventListener('click', handleGateSubmit);
+
+      async function handleGateSubmit() {
+        const val = gateInput.value.trim();
+        if (!val) {
+          showError('Please enter the security password');
+          return;
+        }
+
+        gateError.classList.add('hidden');
+        gateSubmitBtn.disabled = true;
+        gateSubmitBtn.textContent = 'Verifying Clearance...';
+
+        try {
+          const res = await fetch('/api/admin/verify-gate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ level: currentLevel, key: val })
+          });
+          const data = await res.json();
+
+          if (!res.ok || !data.success) {
+            showError(data.message || 'Invalid security key. Clearance denied.');
+            gateSubmitBtn.disabled = false;
+            updateLevelUI();
+            return;
+          }
+
+          if (data.nextLevel) {
+            currentLevel = data.nextLevel;
+            gateInput.value = '';
+            gateSubmitBtn.disabled = false;
+            updateLevelUI();
+          } else if (data.authorized && data.token) {
+            sessionStorage.setItem('zingtalk_admin_session', data.token);
+            gateInput.value = '';
+            showDashboard(data.token);
+          }
+        } catch (err) {
+          showError('Verification error: ' + err.message);
+          gateSubmitBtn.disabled = false;
+        }
+      }
+
+      function updateLevelUI() {
+        if (currentLevel === 1) {
+          tab1.className = 'level-tab active';
+          tab2.className = 'level-tab';
+          tab3.className = 'level-tab';
+          gateInstruction.textContent = 'Level 1 Verification: Enter Primary Authentication Key';
+          gateInput.placeholder = 'Enter Level 1 Password...';
+          gateSubmitBtn.textContent = 'Authorize Level 1 Key';
+        } else if (currentLevel === 2) {
+          tab1.className = 'level-tab done';
+          tab2.className = 'level-tab active';
+          tab3.className = 'level-tab';
+          gateInstruction.textContent = 'Level 2 Verification: Enter Secondary Clearance Key';
+          gateInput.placeholder = 'Enter Level 2 Password...';
+          gateSubmitBtn.textContent = 'Authorize Level 2 Key';
+        } else if (currentLevel === 3) {
+          tab1.className = 'level-tab done';
+          tab2.className = 'level-tab done';
+          tab3.className = 'level-tab active';
+          gateInstruction.textContent = 'Level 3 Verification: Enter Master Developer Token';
+          gateInput.placeholder = 'Enter Level 3 Password...';
+          gateSubmitBtn.textContent = 'Authorize Developer Token';
+        }
+        gateInput.focus();
+      }
+
+      function showError(msg) {
+        gateError.textContent = msg;
+        gateError.classList.remove('hidden');
+      }
+
+      async function verifySessionToken(token) {
+        try {
+          const res = await fetch('/api/admin/analytics?token=' + encodeURIComponent(token));
+          if (res.ok) {
+            showDashboard(token);
+          } else {
+            sessionStorage.removeItem('zingtalk_admin_session');
+          }
+        } catch (_) {}
+      }
+
+      function showDashboard(token) {
+        gateView.classList.add('hidden');
+        dashView.classList.remove('hidden');
+        loadAnalyticsData(token);
+      }
+
+      async function loadAnalyticsData(token, isSilent = false) {
+        if (!token) token = sessionStorage.getItem('zingtalk_admin_session');
+        if (!token) return;
+
+        if (!isSilent) {
+          btnRefresh.textContent = 'Loading...';
+        }
+
+        try {
+          const res = await fetch('/api/admin/analytics?token=' + encodeURIComponent(token));
+          if (!res.ok) {
+            if (res.status === 401) {
+              sessionStorage.removeItem('zingtalk_admin_session');
+              dashView.classList.add('hidden');
+              gateView.classList.remove('hidden');
+              currentLevel = 1;
+              updateLevelUI();
+              showError('Session expired. Please re-authenticate.');
+            }
+            return;
+          }
+          const data = await res.json();
+          renderAnalyticsUI(data);
+        } catch (err) {
+          console.error('[Dashboard Error]', err);
+        } finally {
+          btnRefresh.textContent = '🔄 Refresh Data';
+        }
+      }
+
+      function formatUptime(seconds) {
+        const d = Math.floor(seconds / (3600*24));
+        const h = Math.floor((seconds % (3600*24)) / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const parts = [];
+        if (d > 0) parts.push(d + 'd');
+        if (h > 0) parts.push(h + 'h');
+        parts.push(m + 'm');
+        return parts.join(' ');
+      }
+
+      function renderAnalyticsUI(data) {
+        if (!data || !data.summary) return;
+        const s = data.summary;
+
+        document.getElementById('stat-new-today').textContent = s.newUsersTodayCount || 0;
+        document.getElementById('stat-returning-today').textContent = s.returningUsersTodayCount || 0;
+        document.getElementById('stat-live-now').textContent = s.liveConnectedNowCount || 0;
+        document.getElementById('stat-total-users').textContent = s.totalLifetimeUsersCount || 0;
+
+        // Platform breakdown
+        const pb = s.platformBreakdown || { fireTv: 0, mobile: 0, other: 0 };
+        const total = (pb.fireTv + pb.mobile + pb.other) || 1;
+        const tvPct = Math.round((pb.fireTv / total) * 100);
+        const mobPct = Math.round((pb.mobile / total) * 100);
+        const webPct = Math.max(0, 100 - tvPct - mobPct);
+
+        document.getElementById('label-tv-count').textContent = pb.fireTv + ' users (' + tvPct + '%)';
+        document.getElementById('bar-tv').style.width = tvPct + '%';
+
+        document.getElementById('label-mob-count').textContent = pb.mobile + ' users (' + mobPct + '%)';
+        document.getElementById('bar-mob').style.width = mobPct + '%';
+
+        document.getElementById('label-web-count').textContent = pb.other + ' users (' + webPct + '%)';
+        document.getElementById('bar-web').style.width = webPct + '%';
+
+        if (s.system) {
+          document.getElementById('diag-uptime').textContent = formatUptime(s.system.uptimeSeconds || 0);
+          document.getElementById('diag-mem').textContent = (s.system.memoryUsageMb || 0) + ' MB';
+        }
+
+        // Table
+        cachedUsersList = data.recentUsers || [];
+        renderUsersTable(cachedUsersList);
+      }
+
+      function renderUsersTable(list) {
+        const tbody = document.getElementById('users-tbody');
+        const query = (userSearch.value || '').trim().toLowerCase();
+        const filtered = list.filter(u => {
+          if (!query) return true;
+          return (u.uid && u.uid.includes(query)) || (u.name && u.name.toLowerCase().includes(query));
+        });
+
+        if (filtered.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="empty-state">' +
+            (list.length === 0 ? 'No user sessions recorded yet today. Launch Fire TV or Mobile APK to see live traffic.' : 'No matching users found for "' + query + '"') +
+            '</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = filtered.map(u => {
+          const isNew = u.isNewToday || (u.type && u.type.includes('New'));
+          const statusTag = isNew
+            ? '<span class="tag-new">New User (Today)</span>'
+            : '<span class="tag-returning">Returning User</span>';
+          const platformTag = '<span class="tag-platform">' + (u.platform || 'Fire TV') + '</span>';
+          const lastSeen = u.lastSeenTime ? new Date(u.lastSeenTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--';
+
+          return '<tr>' +
+            '<td class="user-uid-cell">' + (u.uid || '----------') + '</td>' +
+            '<td><strong>' + (escapeHtml(u.name) || 'User') + '</strong></td>' +
+            '<td>' + statusTag + '</td>' +
+            '<td>' + platformTag + '</td>' +
+            '<td>' + (u.totalConnections || 1) + '</td>' +
+            '<td style="font-family: monospace; color: #94a3b8;">' + lastSeen + '</td>' +
+            '</tr>';
+        }).join('');
+      }
+
+      function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+
+      userSearch.addEventListener('input', function() {
+        renderUsersTable(cachedUsersList);
+      });
+
+      btnRefresh.addEventListener('click', function() {
+        loadAnalyticsData();
+      });
+
+      btnLock.addEventListener('click', async function() {
+        const token = sessionStorage.getItem('zingtalk_admin_session');
+        if (token) {
+          try {
+            await fetch('/api/admin/logout', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token })
+            });
+          } catch (_) {}
+        }
+        sessionStorage.removeItem('zingtalk_admin_session');
+        dashView.classList.add('hidden');
+        gateView.classList.remove('hidden');
+        currentLevel = 1;
+        gateInput.value = '';
+        gateError.classList.add('hidden');
+        updateLevelUI();
+      });
+
+      // Auto poll analytics every 8 seconds when dashboard is active
+      setInterval(function() {
+        const token = sessionStorage.getItem('zingtalk_admin_session');
+        if (token && !dashView.classList.contains('hidden')) {
+          loadAnalyticsData(token, true);
+        }
+      }, 8000);
+
+    })();
+  </script>
 </body>
 </html>`;
     return res.status(200).type('html').send(html);
 }
 
 // Multi-Client SPA & Route Fallback
+app.get('/', (req, res) => renderServerStatus(req, res));
+app.get('/admin', (req, res) => renderServerStatus(req, res));
+app.get('/status', (req, res) => renderServerStatus(req, res));
+
+app.get('/web*', (req, res) => {
+    const rootPath = path.join(__dirname, 'index.html');
+    if (fs.existsSync(rootPath)) return res.sendFile(rootPath);
+    return renderServerStatus(req, res);
+});
+
 app.get('/tv*', (req, res) => {
     const tvPath = path.join(__dirname, 'packages', 'tv', 'index.html');
     if (fs.existsSync(tvPath)) return res.sendFile(tvPath);
@@ -1517,14 +2606,6 @@ app.get('/mobile*', (req, res) => {
 
 app.get('*', (req, res, next) => {
     if (req.path.startsWith('/socket.io') || req.path.startsWith('/api') || req.path === '/alexa') return next();
-    const candidatePaths = [
-        path.join(__dirname, 'index.html'),
-        path.join(__dirname, 'packages', 'tv', 'index.html'),
-        path.join(__dirname, 'dist', 'index.html')
-    ];
-    for (const p of candidatePaths) {
-        if (fs.existsSync(p)) return res.sendFile(p);
-    }
     return renderServerStatus(req, res);
 });
 
