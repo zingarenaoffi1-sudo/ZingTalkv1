@@ -2597,7 +2597,22 @@ document.addEventListener("click", async (e) => {
 
         try {
             showToast("Sending reset link...");
-            await sendPasswordResetEmail(auth, email);
+            let sentViaCustomBrevo = false;
+            try {
+                const res = await fetch("/api/auth/custom-reset-password", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email: email })
+                });
+                const data = await res.json();
+                if (data && data.success) {
+                    sentViaCustomBrevo = true;
+                }
+            } catch (_) {}
+
+            if (!sentViaCustomBrevo) {
+                await sendPasswordResetEmail(auth, email);
+            }
             if (statusEl) {
                 statusEl.innerHTML = `<span style="color: #00d29d; font-weight: 700;">✅ Password reset email sent! Check your inbox and spam folder.</span>`;
                 statusEl.style.display = "block";

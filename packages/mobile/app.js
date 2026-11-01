@@ -942,7 +942,22 @@ document.addEventListener("DOMContentLoaded", () => {
         sendResetBtn.textContent = "Sending Link...";
 
         try {
-            await sendPasswordResetEmail(auth, email);
+            let sentViaCustomBrevo = false;
+            try {
+                const res = await fetch("/api/auth/custom-reset-password", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email: email })
+                });
+                const data = await res.json();
+                if (data && data.success) {
+                    sentViaCustomBrevo = true;
+                }
+            } catch (_) {}
+
+            if (!sentViaCustomBrevo) {
+                await sendPasswordResetEmail(auth, email);
+            }
             if (resetStatus) {
                 resetStatus.className = "";
                 resetStatus.style.display = "block";
