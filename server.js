@@ -489,7 +489,109 @@ const inMemoryBlocks = new Map();
 const ephemeralMessageQueue = new Map();
 
 // Persistent Alexa Device to ZingTalk User UID Registry (amazonUserId -> 10-digit UID)
+const ALEXA_PAIRINGS_FILE = path.join(__dirname, 'alexa_pairings.json');
 const alexaDevicePairings = new Map();
+
+function loadAlexaPairings() {
+    try {
+        if (fs.existsSync(ALEXA_PAIRINGS_FILE)) {
+            const raw = fs.readFileSync(ALEXA_PAIRINGS_FILE, 'utf8');
+            const data = JSON.parse(raw);
+            if (data && typeof data === 'object') {
+                for (const [k, v] of Object.entries(data)) {
+                    if (k && v) alexaDevicePairings.set(k, String(v).trim());
+                }
+                console.log(`[ZingTalk] Loaded ${alexaDevicePairings.size} persistent Alexa device pairings from disk.`);
+            }
+        }
+    } catch (err) {
+        console.error('[ZingTalk] Error loading alexa_pairings.json:', err.message);
+    }
+}
+
+function saveAlexaPairings() {
+    try {
+        const obj = {};
+        for (const [k, v] of alexaDevicePairings.entries()) {
+            obj[k] = v;
+        }
+        fs.writeFileSync(ALEXA_PAIRINGS_FILE, JSON.stringify(obj, null, 2), 'utf8');
+    } catch (err) {
+        console.error('[ZingTalk] Error saving alexa_pairings.json:', err.message);
+    }
+}
+
+async function loadAlexaPairingsFromFirestore() {
+    try {
+        if (db && typeof db.collection === 'function') {
+            const snap = await db.collection('alexa_pairings').get();
+            if (snap && !snap.empty) {
+                snap.forEach(docSnap => {
+                    const data = docSnap.data();
+                    if (data && data.amazonUserId && data.uid) {
+                        alexaDevicePairings.set(data.amazonUserId, String(data.uid).trim());
+                    }
+                });
+                console.log(`[ZingTalk Firebase] Loaded ${alexaDevicePairings.size} Alexa pairings from Firestore.`);
+            }
+        }
+    } catch (err) {
+        console.warn('[ZingTalk Firebase] Firestore pairings load warning:', err.message);
+    }
+}
+
+async function saveAlexaPairingToFirestore(amazonUserId, uid, autoLinked = false) {
+    if (!amazonUserId || !uid) return;
+    try {
+        const safeDocId = amazonUserId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(-64);
+        if (db && typeof db.collection === 'function') {
+            await db.collection('alexa_pairings').doc(safeDocId).set({
+                amazonUserId: amazonUserId,
+                uid: String(uid).trim(),
+                platform: "Amazon Fire TV",
+                autoLinked: autoLinked,
+                updatedAt: Date.now()
+            });
+            console.log(`[ZingTalk Firebase] Synced Alexa pairing to Firestore: ${amazonUserId} -> ${uid}`);
+        }
+    } catch (err) {
+        console.warn('[ZingTalk Firebase] Failed to save pairing to Firestore:', err.message);
+    }
+}
+
+async function removeAlexaPairingFromFirestore(amazonUserId) {
+    if (!amazonUserId) return;
+    try {
+        const safeDocId = amazonUserId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(-64);
+        if (db && typeof db.collection === 'function') {
+            await db.collection('alexa_pairings').doc(safeDocId).delete();
+            console.log(`[ZingTalk Firebase] Removed Alexa pairing from Firestore: ${safeDocId}`);
+        }
+    } catch (err) {
+        console.warn('[ZingTalk Firebase] Failed to delete pairing from Firestore:', err.message);
+    }
+}
+
+async function removeAllPairingsForUidFromFirestore(uid) {
+    if (!uid) return;
+    const cleanUid = String(uid).trim().replace(/\D/g, '');
+    try {
+        if (db && typeof db.collection === 'function') {
+            const snap = await db.collection('alexa_pairings').where('uid', '==', cleanUid).get();
+            if (snap && !snap.empty) {
+                for (const docSnap of snap.docs) {
+                    await docSnap.ref.delete();
+                }
+                console.log(`[ZingTalk Firebase] Purged all Firestore Alexa pairings for UID ${cleanUid}`);
+            }
+        }
+    } catch (err) {
+        console.warn('[ZingTalk Firebase] Error purging Firestore pairings for UID:', err.message);
+    }
+}
+
+loadAlexaPairings();
+loadAlexaPairingsFromFirestore().catch(() => {});
 
 // Helper to check if a user is currently connected with a healthy live socket
 function isUserOnline(uid) {
@@ -936,19 +1038,44 @@ async function checkUserUidExists(targetUid) {
         io.emit('alexa_command', data);
     });
 
+    function purgeUserSessionData(uid) {
+        if (!uid) return;
+        const cleanUid = String(uid).trim().replace(/\D/g, '');
+        if (!cleanUid) return;
+
+        connectedUsers.delete(cleanUid);
+        userContactsRegistry.delete(cleanUid);
+        ephemeralMessageQueue.delete(cleanUid);
+
+        if (lastActiveTvUid === cleanUid) {
+            lastActiveTvUid = null;
+        }
+
+        let pairingsChanged = false;
+        for (const [amzId, pairedUid] of alexaDevicePairings.entries()) {
+            if (pairedUid === cleanUid) {
+                alexaDevicePairings.delete(amzId);
+                pairingsChanged = true;
+                removeAlexaPairingFromFirestore(amzId).catch(() => {});
+            }
+        }
+        if (pairingsChanged) {
+            saveAlexaPairings();
+        }
+        removeAllPairingsForUidFromFirestore(cleanUid).catch(() => {});
+        console.log(`[ZingTalk] Complete raw session purge for UID ${cleanUid} (Contacts, Alexa Links, and Sockets cleared from memory, disk, and Firebase)`);
+    }
+
     // User Explicit Logout
     socket.on('logout_user', (data) => {
         const uid = data && data.uid ? String(data.uid).trim() : null;
         if (uid) {
-            connectedUsers.delete(uid);
-            userContactsRegistry.delete(uid); // Purge volatile contacts from RAM immediately
+            purgeUserSessionData(uid);
             socket.leave(uid);
-            console.log(`[ZingTalk] User logged out & volatile contacts purged from RAM: ${uid}`);
         }
         for (const [u, sId] of connectedUsers.entries()) {
             if (sId === socket.id) {
-                connectedUsers.delete(u);
-                userContactsRegistry.delete(u);
+                purgeUserSessionData(u);
                 socket.leave(u);
             }
         }
@@ -957,10 +1084,9 @@ async function checkUserUidExists(targetUid) {
     socket.on('disconnect', () => {
         for (const [uid, socketId] of connectedUsers.entries()) {
             if (socketId === socket.id) {
-                connectedUsers.delete(uid);
-                userContactsRegistry.delete(uid); // Purge volatile contacts from RAM immediately
+                purgeUserSessionData(uid);
                 socket.leave(uid);
-                console.log(`[ZingTalk] Socket disconnected for user: ${uid}`);
+                console.log(`[ZingTalk] Socket disconnected & purged for user: ${uid}`);
                 break;
             }
         }
@@ -1109,21 +1235,38 @@ async function handleAlexaWebhookRequest(req, res) {
         let shouldEndSession = false;
         let commandPayload = null;
 
-        const amazonUserId = body.session?.user?.userId || body.context?.System?.user?.userId || 'default_alexa_device';
-        let activeUserUid = alexaDevicePairings.get(amazonUserId) || lastActiveTvUid;
+        const amazonUserId = body.session?.user?.userId || body.context?.System?.user?.userId || body.context?.System?.device?.deviceId || 'default_alexa_device';
+        let activeUserUid = alexaDevicePairings.get(amazonUserId);
 
-        // Retrieve active user's contacts
+        const activeTvOnline = lastActiveTvUid && isUserOnline(lastActiveTvUid);
+
+        // AUTOMATIC FIRE TV PAIRING & SMART RE-MIGRATION:
+        // 1. If not yet paired, but user is currently logged in on Fire TV, auto-bind instantly!
+        // 2. If previously paired UID is logged out/offline, BUT a new user is logged in on Fire TV, auto-switch to new user!
+        if (!activeUserUid && activeTvOnline) {
+            activeUserUid = lastActiveTvUid;
+            alexaDevicePairings.set(amazonUserId, activeUserUid);
+            saveAlexaPairings();
+            saveAlexaPairingToFirestore(amazonUserId, activeUserUid, true).catch(() => {});
+            console.log(`[ZingTalk Auto-Pairing] Automatically linked Alexa ${amazonUserId} to active Fire TV UID ${activeUserUid}`);
+            io.to(activeUserUid).emit('alexa_paired', { uid: activeUserUid, auto: true });
+        } else if (activeUserUid && !isUserOnline(activeUserUid) && activeTvOnline && activeUserUid !== lastActiveTvUid) {
+            console.log(`[ZingTalk Auto-Pairing] Old paired UID ${activeUserUid} is offline/logged-out. Seamlessly migrating Alexa to active TV UID ${lastActiveTvUid}`);
+            activeUserUid = lastActiveTvUid;
+            alexaDevicePairings.set(amazonUserId, activeUserUid);
+            saveAlexaPairings();
+            saveAlexaPairingToFirestore(amazonUserId, activeUserUid, true).catch(() => {});
+            io.to(activeUserUid).emit('alexa_paired', { uid: activeUserUid, auto: true });
+        } else if (!activeUserUid && lastActiveTvUid && connectedUsers.size <= 1) {
+            activeUserUid = lastActiveTvUid;
+        }
+
+        const isPaired = Boolean(activeUserUid);
+
+        // Retrieve ONLY the active user's contacts (Strict Isolation: zero cross-user leakage)
         let userContacts = [];
         if (activeUserUid && userContactsRegistry.has(activeUserUid)) {
             userContacts = userContactsRegistry.get(activeUserUid) || [];
-        }
-        if (userContacts.length === 0) {
-            for (const [uid, list] of userContactsRegistry.entries()) {
-                if (list && list.length > 0) {
-                    userContacts = list;
-                    break;
-                }
-            }
         }
 
         if (reqType === 'LaunchRequest') {
@@ -1233,6 +1376,8 @@ async function handleAlexaWebhookRequest(req, res) {
                     const cleanDigits = (digits.length === 10) ? digits : (rawUid || '').replace(/[^0-9]/g, '');
                     if (cleanDigits.length === 10) {
                         alexaDevicePairings.set(amazonUserId, cleanDigits);
+                        saveAlexaPairings();
+                        saveAlexaPairingToFirestore(amazonUserId, cleanDigits, false).catch(() => {});
                         activeUserUid = cleanDigits;
                         speechText = `Successfully paired this Alexa device with ZingTalk Fire TV account UID ${cleanDigits.split('').join(' ')}! Your voice commands are now linked exclusively to your screen.`;
                         shouldEndSession = true;
@@ -1588,11 +1733,13 @@ async function handleAlexaWebhookRequest(req, res) {
                 if (activeUserUid && connectedUsers.has(activeUserUid)) {
                     io.to(activeUserUid).emit('alexa_command', commandPayload);
                     console.log(`[Alexa Skill Webhook] Dispatched exclusively to user room ${activeUserUid}:`, commandPayload);
-                } else if (lastActiveTvUid) {
+                } else if (activeUserUid) {
+                    console.log(`[Alexa Skill Webhook] Target user ${activeUserUid} is currently offline on Fire TV.`);
+                } else if (connectedUsers.size === 1 && lastActiveTvUid) {
                     io.to(lastActiveTvUid).emit('alexa_command', commandPayload);
-                    console.log(`[Alexa Skill Webhook] Dispatched to active user room ${lastActiveTvUid}:`, commandPayload);
+                    console.log(`[Alexa Skill Webhook] Dispatched to solo active TV room ${lastActiveTvUid}:`, commandPayload);
                 } else {
-                    io.emit('alexa_command', commandPayload);
+                    console.warn(`[Alexa Skill Webhook] Discarded command: No authenticated/paired Fire TV linked to Amazon User ${amazonUserId}`);
                 }
             }
         } else if (reqType === 'SessionEndedRequest') {

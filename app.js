@@ -14,6 +14,7 @@ import {
     doc,
     setDoc,
     getDoc,
+    deleteDoc,
     collection,
     query,
     where,
@@ -446,6 +447,18 @@ function loginUserSession(user) {
         connectSocket();
     }
 
+    if (firestoreDb && my10DigitUid) {
+        try {
+            setDoc(doc(firestoreDb, "active_tv_sessions", my10DigitUid), {
+                uid: my10DigitUid,
+                displayName: user.displayName || "TV User",
+                email: user.email || "Local TV",
+                platform: detectClientPlatform(),
+                lastActiveAt: Date.now()
+            }, { merge: true }).catch(() => {});
+        } catch (_) {}
+    }
+
     renderContacts(myContacts);
     autoFocusFirstElement();
 }
@@ -455,6 +468,13 @@ function logoutUserSession() {
     if (socket && socket.connected && my10DigitUid) {
         try {
             socket.emit("logout_user", { uid: my10DigitUid });
+        } catch (_) {}
+    }
+
+    // Purge active TV session from Firestore
+    if (firestoreDb && my10DigitUid) {
+        try {
+            deleteDoc(doc(firestoreDb, "active_tv_sessions", my10DigitUid)).catch(() => {});
         } catch (_) {}
     }
 
@@ -828,7 +848,15 @@ export function registerSocketListeners(s) {
     });
 
     s.on("alexa_paired", (data) => {
-        showToast(`🎙️ Alexa Paired (UID: ${data.uid})`);
+        const text = data?.auto ? `🎙️ Alexa Auto-Linked (UID: ${data.uid})` : `🎙️ Alexa Paired (UID: ${data.uid})`;
+        showToast(text);
+        const alexaPill = document.querySelector(".alexa-status-pill");
+        if (alexaPill) {
+            alexaPill.innerHTML = `
+                <span class="server-status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #00d29d; box-shadow: 0 0 6px #00d29d;"></span>
+                <span style="color: #00d29d;">Alexa Auto-Linked</span>
+            `;
+        }
     });
 
     s.on("contact_saved", (updatedContacts) => {
