@@ -1628,6 +1628,17 @@ function handleAlexaIncomingCommand(cmd) {
         autoFocusFirstElement();
         showToast("Contacts directory");
     } else if (action === 'open_profile') {
+        const name = (currentUser && currentUser.displayName) ? currentUser.displayName : "TV User";
+        const email = (currentUser && currentUser.email) ? currentUser.email : "Local TV";
+        const avatarEl = document.getElementById("modal-avatar");
+        if (avatarEl) avatarEl.innerText = name.charAt(0).toUpperCase();
+        const nameEl = document.getElementById("modal-name");
+        if (nameEl) nameEl.innerText = name;
+        const emailEl = document.getElementById("modal-email");
+        if (emailEl) emailEl.innerText = email;
+        const uidEl = document.getElementById("modal-uid");
+        if (uidEl) uidEl.innerText = my10DigitUid || "Generating...";
+        document.getElementById("profile-modal")?.classList.remove("hidden");
         showToast(`Your ZingTalk UID: ${my10DigitUid}`);
     } else if (action === 'type_message') {
         const text = cmd.message || "";
@@ -1647,6 +1658,12 @@ function handleAlexaIncomingCommand(cmd) {
         }
     } else if (action === 'navigate_home') {
         closeChat();
+        document.getElementById("guide-modal")?.classList.add("hidden");
+        document.getElementById("profile-modal")?.classList.add("hidden");
+        document.getElementById("policy-modal")?.classList.add("hidden");
+        document.getElementById("forgot-password-modal")?.classList.add("hidden");
+        autoFocusFirstElement();
+        showToast("Returned Home");
     }
 }
 

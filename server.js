@@ -1289,7 +1289,10 @@ async function handleAlexaWebhookRequest(req, res) {
                     };
                     break;
                 }
-                case 'ZingDialUidIntent': {
+                case 'ZingDialUidIntent':
+                case 'ZingDialUIDIntent':
+                case 'ZingCallUidIntent':
+                case 'ZingCallUIDIntent': {
                     let rawUid = extractSlotVal(slots, 'uid', 'number', 'target', 'UID', 'Number');
                     const digits = wordsToDigits(rawUid || '').replace(/[^0-9]/g, '');
                     const cleanDigits = (digits.length === 10) ? digits : (rawUid || '').replace(/[^0-9]/g, '');
@@ -1528,9 +1531,13 @@ async function handleAlexaWebhookRequest(req, res) {
                     break;
                 }
                 case 'AMAZON.HelpIntent': {
-                    speechText = "You can ask ZingTalk on Fire TV to call a contact, start an HD video call, answer, decline, mute microphone, or hang up an active call. Who would you like to call?";
-                    shouldEndSession = false;
-                    sessionAttributes = { pendingAction: 'call' };
+                    speechText = "You can ask ZingTalk on Fire TV to call a contact, start an HD video call, answer, decline, mute microphone, hang up, or open chat. Opening the Alexa voice guide on your screen now.";
+                    shouldEndSession = true;
+                    commandPayload = {
+                        intent: 'AMAZON.HelpIntent',
+                        action: 'open_guide',
+                        timestamp: Date.now()
+                    };
                     break;
                 }
                 case 'AMAZON.CancelIntent':
