@@ -7,7 +7,7 @@
 - **Android Mobile**: Handheld Touchscreen UI with Portrait Video Calling & Camera Flip Controls  
 **Signaling Host**: `https://zingtalk.duckdns.org`  
 **Developer / Organization**: ZingTalk Developer Team  
-**Contact Email**: `zingarenaoffi1@gmail.com`
+**Contact Email**: `support.zing.app@gmail.com`
 
 ---
 
@@ -77,7 +77,7 @@ ZingTalk is provided on an **"AS IS"** and **"AS AVAILABLE"** basis without warr
 ## 9. Contact Developer
 
 For inquiries regarding these Terms of Service:
-- **Email**: `zingarenaoffi1@gmail.com`
+- **Email**: `support.zing.app@gmail.com`
 - **Application Package**: `com.zingtalk.com`
 - **Developer / Organization**: ZingTalk Developer Team
 

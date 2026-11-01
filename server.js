@@ -2191,7 +2191,7 @@ function renderServerStatus(req, res) {
 
     <div class="gate-footer">
       Protected with Server-Side SHA-256 Multi-Factor Cryptographic Hashing<br>
-      Authorized for ZingTalk Developer Team • zingarenaoffi1@gmail.com
+      Authorized for ZingTalk Developer Team • support.zing.app@gmail.com
     </div>
   </div>
 

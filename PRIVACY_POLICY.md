@@ -3,7 +3,7 @@
 **Effective Date**: October 30, 2026  
 **Application Name**: ZingTalk (`com.zingtalk.com`)  
 **Developer / Organization**: ZingTalk Developer Team  
-**Support & Owner Contact**: `zingarenaoffi1@gmail.com`  
+**Support & Owner Contact**: `support.zing.app@gmail.com`  
 **Platforms Supported**: 
 - **Amazon Fire TV & Fire TV Stick**: 10-Foot Living Room UI with D-Pad Remote & Alexa Voice Integration
 - **Android Mobile**: Handheld Touchscreen UI with Portrait Video Calling & Camera Flip Controls
@@ -70,7 +70,7 @@ ZingTalk integrates with Amazon Alexa Skills to provide hands-free voice dialing
 ## 6. User Rights & Complete Data Control
 
 - **Right to Erasure**: You can wipe all local chat history and cached contacts instantly by clicking the Sign Out button or clearing app data in your device Settings.
-- **Account Deletion**: You can request immediate removal of your account, email, and 10-digit UID mapping by contacting `zingarenaoffi1@gmail.com`.
+- **Account Deletion**: You can request immediate removal of your account, email, and 10-digit UID mapping by contacting `support.zing.app@gmail.com`.
 - **Private Data Protection**: ZingTalk never sells, leases, or exposes your private personal conversations, audio, or video streams to third parties.
 
 ---
@@ -79,7 +79,7 @@ ZingTalk integrates with Amazon Alexa Skills to provide hands-free voice dialing
 
 - **Audience Focus**: ZingTalk is explicitly designed and marketed as an assistive communication tool for **elderly parents, senior citizens, and adult family caregivers**.
 - **Not for Children**: ZingTalk is **NOT designed for, marketed to, or intended for use by unsupervised children under the age of 13**.
-- **COPPA & GDPR-K Compliance**: ZingTalk does not knowingly harvest, collect, or solicit personal information from children under 13. If you believe a child under 13 has registered or provided personal information without parental consent, please contact us immediately at `zingarenaoffi1@gmail.com` and we will promptly terminate the account and purge any associated identifiers.
+- **COPPA & GDPR-K Compliance**: ZingTalk does not knowingly harvest, collect, or solicit personal information from children under 13. If you believe a child under 13 has registered or provided personal information without parental consent, please contact us immediately at `support.zing.app@gmail.com` and we will promptly terminate the account and purge any associated identifiers.
 
 ---
 
@@ -98,7 +98,7 @@ We may periodically update this Privacy Policy to reflect technical enhancements
 ## 10. Contact Developer
 
 If you have any questions, suggestions, or privacy requests regarding ZingTalk, please contact:
-- **Email**: `zingarenaoffi1@gmail.com`
+- **Email**: `support.zing.app@gmail.com`
 - **Application Package**: `com.zingtalk.com`
 - **Developer / Organization**: ZingTalk Developer Team
-- **Owner Contact**: `zingarenaoffi1@gmail.com`
+- **Owner Contact**: `support.zing.app@gmail.com`

@@ -3,12 +3,16 @@ apply plugin: 'com.android.application'
 android {
     signingConfigs {
         release {
-            storeFile file("zingtalk-release.keystore")
+            storeFile file("zingtalk-mobile-release.keystore")
             storePassword "zingtalk123456"
-            keyAlias "zingtalk"
+            keyAlias "zingtalk-mobile"
             keyPassword "zingtalk123456"
         }
     }
+
+    
+
+    
 
     namespace = "com.zingtalk.com"
     compileSdk = rootProject.ext.compileSdkVersion
