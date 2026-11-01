@@ -662,6 +662,7 @@ function loadAdminCredentials() {
     const files = [
         'Firebase_Admin_SDK',
         'Firebase_Admin_SDK.json',
+        'Firebase_Admin_SDK.txt',
         'firebase-admin-sdk.json',
         'serviceAccountKey.json',
         'firebase-adminsdk.json',
@@ -673,16 +674,50 @@ function loadAdminCredentials() {
             path.join(__dirname, f),
             path.join(process.cwd(), f),
             path.join('/home/ubuntu/ZingTalk', f),
+            path.join('/home/ubuntu', f),
             path.join('/home/ec2-user/ZingTalk', f)
         ];
         for (const p of candidatePaths) {
             if (fs.existsSync(p)) {
                 try {
-                    return JSON.parse(fs.readFileSync(p, 'utf-8'));
+                    const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
+                    if (parsed && (parsed.private_key || parsed.project_id)) {
+                        return parsed;
+                    }
                 } catch (_) {}
             }
         }
     }
+
+    // Dynamic Directory Auto-Scanner for any Firebase service account file
+    const candidateDirs = [
+        __dirname,
+        process.cwd(),
+        '/home/ubuntu/ZingTalk',
+        '/home/ubuntu',
+        '/home/ec2-user/ZingTalk'
+    ];
+    for (const dir of candidateDirs) {
+        if (fs.existsSync(dir)) {
+            try {
+                const entries = fs.readdirSync(dir);
+                for (const entry of entries) {
+                    if (/firebase.*admin/i.test(entry) || /adminsdk/i.test(entry) || /service.*account/i.test(entry)) {
+                        const fullPath = path.join(dir, entry);
+                        try {
+                            if (fs.statSync(fullPath).isFile()) {
+                                const parsed = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
+                                if (parsed && parsed.private_key && (parsed.client_email || parsed.project_id)) {
+                                    return parsed;
+                                }
+                            }
+                        } catch (_) {}
+                    }
+                }
+            } catch (_) {}
+        }
+    }
+
     return null;
 }
 

@@ -190,7 +190,9 @@ export function getEffectiveServerUrl() {
     if (saved && saved.trim()) return saved.trim();
 
     if (typeof window !== "undefined" && window.location) {
-        if (window.location.protocol.startsWith("http") && (window.location.host.includes("duckdns") || window.location.host.includes("localhost"))) {
+        const h = window.location.host || "";
+        const p = window.location.protocol || "";
+        if (p.startsWith("http") && (h.includes(":3000") || h.includes("run.app") || h.includes("ai.studio") || h.includes("duckdns"))) {
             return window.location.origin;
         }
     }
@@ -2599,7 +2601,8 @@ document.addEventListener("click", async (e) => {
             showToast("Sending reset link...");
             let sentViaCustomBrevo = false;
             try {
-                const res = await fetch("/api/auth/custom-reset-password", {
+                const sUrl = getEffectiveServerUrl();
+                const res = await fetch(`${sUrl}/api/auth/custom-reset-password`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ email: email })
@@ -2607,8 +2610,13 @@ document.addEventListener("click", async (e) => {
                 const data = await res.json();
                 if (data && data.success) {
                     sentViaCustomBrevo = true;
+                    console.log("[ZingTalk TV] Branded password reset dispatched via Brevo successfully!");
+                } else {
+                    console.warn("[ZingTalk TV] Custom reset mailer notice:", data?.message);
                 }
-            } catch (_) {}
+            } catch (mailerErr) {
+                console.warn("[ZingTalk TV] Mailer endpoint unreachable:", mailerErr.message);
+            }
 
             if (!sentViaCustomBrevo) {
                 await sendPasswordResetEmail(auth, email);
