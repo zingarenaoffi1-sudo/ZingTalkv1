@@ -115,8 +115,36 @@ body.mobile-body {
     flex-direction: column;
 }
 
+.hidden {
+    display: none !important;
+}
+
 .mobile-view.hidden {
     display: none !important;
+}
+
+.mobile-auth-screen.hidden {
+    display: none !important;
+}
+
+.mobile-modal-overlay.hidden {
+    display: none !important;
+}
+
+.auth-forgot-link {
+    background: none;
+    border: none;
+    color: var(--accent-cyan);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+    transition: opacity 0.2s;
+}
+
+.auth-forgot-link:hover {
+    text-decoration: underline;
+    opacity: 0.85;
 }
 
 /* Bottom Navigation Bar */

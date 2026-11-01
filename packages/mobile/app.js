@@ -3,6 +3,7 @@ import {
     getAuth, 
     signInWithEmailAndPassword, 
     createUserWithEmailAndPassword,
+    sendPasswordResetEmail,
     updateProfile
 } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js";
 import { 
@@ -200,12 +201,27 @@ function renderContacts() {
 
 function connectSocket() {
     const serverUrl = getEffectiveServerUrl();
-    if (socket && socket.connected) return;
+    if (socket && socket.connected) {
+        if (currentUser) {
+            socket.emit("login_user", {
+                email: currentUser.email,
+                name: currentUser.displayName,
+                authUid: currentUser.uid,
+                uid: my10DigitUid || currentUser.zingUid,
+                isGuest: !currentUser.email,
+                platform: "Mobile"
+            });
+        }
+        return;
+    }
 
-    if (typeof io === "undefined") return;
+    if (typeof io === "undefined") {
+        console.warn("[ZingTalk Mobile] Socket.io client runtime not yet loaded");
+        return;
+    }
     socket = io(serverUrl, {
         transports: ["websocket", "polling"],
-        reconnectionAttempts: 15,
+        reconnectionAttempts: 20,
         reconnectionDelay: 1500
     });
 
@@ -215,7 +231,8 @@ function connectSocket() {
                 email: currentUser.email,
                 name: currentUser.displayName,
                 authUid: currentUser.uid,
-                uid: my10DigitUid,
+                uid: my10DigitUid || currentUser.zingUid,
+                isGuest: !currentUser.email,
                 platform: "Mobile"
             });
         }
@@ -613,10 +630,32 @@ function sendChatMessage() {
 
 function loginUser(user) {
     currentUser = user;
-    document.getElementById("mobile-auth-screen")?.classList.add("hidden");
-    document.getElementById("profile-name").innerText = user.displayName || "User";
-    document.getElementById("profile-email").innerText = user.email || "Local Guest";
-    document.getElementById("profile-avatar").innerText = (user.displayName || "U").charAt(0).toUpperCase();
+    const authScreen = document.getElementById("mobile-auth-screen");
+    if (authScreen) {
+        authScreen.classList.add("hidden");
+        authScreen.style.display = "none";
+    }
+
+    // Ensure Contacts View is shown by default and navigation is synced
+    document.querySelectorAll(".mobile-view").forEach(v => {
+        v.classList.add("hidden");
+        v.style.display = "none";
+    });
+    const contactsView = document.getElementById("view-contacts");
+    if (contactsView) {
+        contactsView.classList.remove("hidden");
+        contactsView.style.display = "flex";
+    }
+    document.querySelectorAll(".mobile-nav-item").forEach(b => {
+        b.classList.toggle("active", b.dataset.view === "view-contacts");
+    });
+
+    const profName = document.getElementById("profile-name");
+    const profEmail = document.getElementById("profile-email");
+    const profAvatar = document.getElementById("profile-avatar");
+    if (profName) profName.innerText = user.displayName || "Guest User";
+    if (profEmail) profEmail.innerText = user.email || "Local Guest";
+    if (profAvatar) profAvatar.innerText = (user.displayName || "G").charAt(0).toUpperCase();
 
     if (user.zingUid) {
         updateDisplays(user.zingUid);
@@ -629,7 +668,11 @@ function logoutUser() {
     localStorage.removeItem("zingTalkMobileSession");
     currentUser = null;
     my10DigitUid = null;
-    document.getElementById("mobile-auth-screen")?.classList.remove("hidden");
+    const authScreen = document.getElementById("mobile-auth-screen");
+    if (authScreen) {
+        authScreen.classList.remove("hidden");
+        authScreen.style.display = "flex";
+    }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -782,11 +825,13 @@ document.addEventListener("DOMContentLoaded", () => {
         isSignUpMode = !isSignUpMode;
         if (isSignUpMode) {
             nameGroup?.classList.remove("hidden");
+            if (nameGroup) nameGroup.style.display = "flex";
             submitBtn.innerText = "Create Account";
             toggleBtn.innerText = "Sign In";
             document.getElementById("mobile-auth-toggle-label").innerText = "Already have an account?";
         } else {
             nameGroup?.classList.add("hidden");
+            if (nameGroup) nameGroup.style.display = "none";
             submitBtn.innerText = "Sign In";
             toggleBtn.innerText = "Sign Up";
             document.getElementById("mobile-auth-toggle-label").innerText = "Don't have an account?";
@@ -843,13 +888,104 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    // Forgot Password Handlers
+    const forgotBtn = document.getElementById("mobile-forgot-password-btn");
+    const forgotModal = document.getElementById("mobile-forgot-modal");
+    const cancelResetBtn = document.getElementById("mobile-cancel-reset-btn");
+    const sendResetBtn = document.getElementById("mobile-send-reset-btn");
+    const resetEmailInput = document.getElementById("mobile-reset-email");
+    const resetStatus = document.getElementById("mobile-reset-status");
+
+    forgotBtn?.addEventListener("click", () => {
+        const currentEmail = document.getElementById("mobile-auth-email")?.value.trim() || "";
+        if (resetEmailInput) resetEmailInput.value = currentEmail;
+        if (resetStatus) {
+            resetStatus.className = "hidden";
+            resetStatus.textContent = "";
+            resetStatus.style.display = "none";
+        }
+        forgotModal?.classList.remove("hidden");
+        resetEmailInput?.focus();
+    });
+
+    cancelResetBtn?.addEventListener("click", () => {
+        forgotModal?.classList.add("hidden");
+    });
+
+    sendResetBtn?.addEventListener("click", async () => {
+        const email = resetEmailInput?.value.trim();
+        if (!email) {
+            if (resetStatus) {
+                resetStatus.className = "";
+                resetStatus.style.display = "block";
+                resetStatus.style.background = "rgba(239, 68, 68, 0.15)";
+                resetStatus.style.color = "#f87171";
+                resetStatus.style.border = "1px solid rgba(239, 68, 68, 0.4)";
+                resetStatus.textContent = "Please enter your registered email address.";
+            }
+            return;
+        }
+
+        if (!auth) {
+            if (resetStatus) {
+                resetStatus.className = "";
+                resetStatus.style.display = "block";
+                resetStatus.style.background = "rgba(239, 68, 68, 0.15)";
+                resetStatus.style.color = "#f87171";
+                resetStatus.style.border = "1px solid rgba(239, 68, 68, 0.4)";
+                resetStatus.textContent = "Authentication service is currently offline. Please try again later.";
+            }
+            return;
+        }
+
+        sendResetBtn.disabled = true;
+        sendResetBtn.textContent = "Sending Link...";
+
+        try {
+            await sendPasswordResetEmail(auth, email);
+            if (resetStatus) {
+                resetStatus.className = "";
+                resetStatus.style.display = "block";
+                resetStatus.style.background = "rgba(0, 210, 157, 0.15)";
+                resetStatus.style.color = "#00d29d";
+                resetStatus.style.border = "1px solid rgba(0, 210, 157, 0.4)";
+                resetStatus.innerHTML = "✅ Password reset email sent! Check your inbox and spam folder.";
+            }
+            showToast("Password reset link sent to " + email);
+            setTimeout(() => {
+                forgotModal?.classList.add("hidden");
+                sendResetBtn.disabled = false;
+                sendResetBtn.textContent = "Send Reset Link";
+            }, 3000);
+        } catch (err) {
+            console.error("[Password Reset Error]:", err);
+            let msg = err.message || "Failed to send reset link.";
+            if (err.code === "auth/user-not-found") {
+                msg = "No registered account found with this email.";
+            } else if (err.code === "auth/invalid-email") {
+                msg = "Please enter a valid email address.";
+            }
+            if (resetStatus) {
+                resetStatus.className = "";
+                resetStatus.style.display = "block";
+                resetStatus.style.background = "rgba(239, 68, 68, 0.15)";
+                resetStatus.style.color = "#f87171";
+                resetStatus.style.border = "1px solid rgba(239, 68, 68, 0.4)";
+                resetStatus.textContent = msg;
+            }
+            sendResetBtn.disabled = false;
+            sendResetBtn.textContent = "Send Reset Link";
+        }
+    });
+
     document.getElementById("mobile-guest-btn")?.addEventListener("click", () => {
         const guestUid = computeDeterministic10DigitUid("guest_" + Date.now());
         const user = {
             displayName: "Guest User",
             email: null,
             uid: "guest_" + guestUid,
-            zingUid: guestUid
+            zingUid: guestUid,
+            isGuest: true
         };
         localStorage.setItem("zingTalkMobileSession", JSON.stringify(user));
         loginUser(user);

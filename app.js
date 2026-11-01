@@ -2503,11 +2503,13 @@ document.addEventListener("click", async (e) => {
 
         if (isSignUpMode) {
             nameGroup?.classList.remove("hidden");
+            if (nameGroup) nameGroup.style.display = "block";
             if (btnText) btnText.innerText = "Create Account";
             if (toggleBtn) toggleBtn.innerText = "Already have an account? Sign In";
             focusElement(document.getElementById("login-name-input"), false);
         } else {
             nameGroup?.classList.add("hidden");
+            if (nameGroup) nameGroup.style.display = "none";
             if (btnText) btnText.innerText = "Sign In";
             if (toggleBtn) toggleBtn.innerText = "Don't have an account? Sign Up";
             focusElement(document.getElementById("login-email-input"), false);

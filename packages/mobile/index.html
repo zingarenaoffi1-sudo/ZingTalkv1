@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>ZingTalk Mobile</title>
     <link rel="stylesheet" href="style.css">
-    <link rel="icon" type="image/png" href="../../assets/favicon.png">
-    <script src="../../capacitor.js"></script>
-    <script src="../../socket.io.min.js"></script>
+    <link rel="icon" type="image/png" href="assets/favicon.png">
+    <script src="capacitor.js"></script>
+    <script src="socket.io.min.js"></script>
 </head>
 <body class="mobile-body">
 
@@ -16,7 +16,7 @@
         <!-- Mobile Header -->
         <header id="mobile-header" class="mobile-header">
             <div class="mobile-header-brand">
-                <img src="../../assets/icon.png" alt="ZingTalk" class="mobile-brand-logo">
+                <img src="assets/icon.png" alt="ZingTalk" class="mobile-brand-logo">
                 <span class="mobile-brand-name">ZingTalk</span>
             </div>
             <div class="mobile-header-actions">
@@ -222,15 +222,32 @@
             </div>
         </div>
 
+        <!-- Mobile Forgot Password Modal -->
+        <div id="mobile-forgot-modal" class="mobile-modal-overlay hidden">
+            <div class="mobile-modal-card">
+                <h3 class="mobile-modal-title">🔑 Reset Password</h3>
+                <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">
+                    Enter your registered email address to receive a secure password reset link.
+                </p>
+                <div class="auth-input-group">
+                    <label class="auth-label" for="mobile-reset-email">Registered Email</label>
+                    <input type="email" id="mobile-reset-email" class="auth-input" placeholder="user@domain.com" autocomplete="email">
+                </div>
+                <div id="mobile-reset-status" class="hidden" style="font-size: 12px; padding: 10px 14px; border-radius: 8px; line-height: 1.4;"></div>
+                <button type="button" id="mobile-send-reset-btn" class="auth-submit-btn">Send Reset Link</button>
+                <button type="button" id="mobile-cancel-reset-btn" class="auth-guest-btn">Cancel</button>
+            </div>
+        </div>
+
         <!-- Authentication Screen -->
         <div id="mobile-auth-screen" class="mobile-auth-screen">
             <div class="auth-header">
-                <img src="../../assets/icon.png" alt="ZingTalk" class="auth-logo">
+                <img src="assets/icon.png" alt="ZingTalk" class="auth-logo">
                 <h1 class="auth-title">ZingTalk</h1>
                 <p class="auth-subtitle">Private P2P HD Calling & Ephemeral Messaging</p>
             </div>
             <div class="auth-form">
-                <div id="mobile-auth-name-group" class="auth-input-group hidden">
+                <div id="mobile-auth-name-group" class="auth-input-group hidden" style="display: none;">
                     <label class="auth-label" for="mobile-auth-name">Your Full Name</label>
                     <input type="text" id="mobile-auth-name" class="auth-input" placeholder="e.g. Alex">
                 </div>
@@ -239,7 +256,10 @@
                     <input type="email" id="mobile-auth-email" class="auth-input" placeholder="user@domain.com">
                 </div>
                 <div class="auth-input-group">
-                    <label class="auth-label" for="mobile-auth-pass">Password</label>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <label class="auth-label" for="mobile-auth-pass">Password</label>
+                        <button type="button" id="mobile-forgot-password-btn" class="auth-forgot-link">Forgot Password?</button>
+                    </div>
                     <input type="password" id="mobile-auth-pass" class="auth-input" placeholder="••••••••">
                 </div>
                 <button type="button" id="mobile-auth-submit-btn" class="auth-submit-btn">Sign In</button>
