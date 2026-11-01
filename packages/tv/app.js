@@ -427,6 +427,7 @@ function loginUserSession(user) {
             uid: my10DigitUid || user.zingUid,
             isAnonymous: Boolean(user.isAnonymous),
             isGuest: Boolean(user.isAnonymous),
+            platform: "Fire TV",
             contacts: myContacts
         });
         if (my10DigitUid) {

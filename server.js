@@ -64,7 +64,37 @@ function getTodayDateStr() {
     return now.toISOString().split('T')[0];
 }
 
-function recordUserConnection(uid, name, platform = 'Fire TV') {
+function detectPlatformFromSocket(socket, data) {
+    if (data && data.platform && typeof data.platform === 'string' && data.platform.trim()) {
+        const p = data.platform.trim().toLowerCase();
+        if (p.includes('fire') || p.includes('tv') || p.includes('leanback')) return 'Fire TV';
+        if (p.includes('mob') || p.includes('android') || p.includes('ios') || p.includes('phone')) return 'Mobile';
+        return 'Web Browser';
+    }
+    if (data && data.isTv) return 'Fire TV';
+    if (data && data.isMobile) return 'Mobile';
+
+    const ua = (socket && socket.handshake && socket.handshake.headers && socket.handshake.headers['user-agent']) || '';
+    if (/AFT|FireTV|Silk/i.test(ua)) return 'Fire TV';
+    if (/Android.*Mobile|iPhone|iPad|iPod/i.test(ua)) return 'Mobile';
+    if (/Android/i.test(ua) && !/Mobile/i.test(ua)) return 'Fire TV';
+    if (/Windows|Macintosh|Linux|Chrome|Firefox|Safari/i.test(ua)) return 'Web Browser';
+
+    return 'Web Browser';
+}
+
+function getLiveConnectedCount() {
+    for (const [uid, socketId] of connectedUsers.entries()) {
+        const s = io.sockets.sockets.get(socketId);
+        if (!s || !s.connected) {
+            connectedUsers.delete(uid);
+            userContactsRegistry.delete(uid);
+        }
+    }
+    return connectedUsers.size;
+}
+
+function recordUserConnection(uid, name, platform = 'Web Browser') {
     if (!uid) return;
     const cleanUid = String(uid).trim().replace(/\D/g, '');
     if (cleanUid.length !== 10) return;
@@ -83,7 +113,7 @@ function recordUserConnection(uid, name, platform = 'Fire TV') {
         analyticsStore.allUsers[cleanUid] = {
             uid: cleanUid,
             name: name || `User ${cleanUid}`,
-            platform: platform || 'Fire TV',
+            platform: platform || 'Web Browser',
             firstSeenDate: today,
             lastSeenDate: today,
             firstSeenTime: nowIso,
@@ -140,7 +170,7 @@ function getAnalyticsSummary() {
         returningUsersTodayCount: todayLog.returningUsers.length,
         totalActiveTodayCount: todayLog.newUsers.length + todayLog.returningUsers.length,
         totalLifetimeUsersCount: totalLifetime,
-        liveConnectedNowCount: connectedUsers.size,
+        liveConnectedNowCount: getLiveConnectedCount(),
         platformBreakdown: {
             fireTv: fireTvCount,
             mobile: mobileCount,
@@ -161,12 +191,27 @@ function getRecentUsersList() {
     const today = getTodayDateStr();
     const list = Object.values(analyticsStore.allUsers).map(u => {
         const isNewToday = (u.firstSeenDate === today);
+        const isActiveToday = (u.lastSeenDate === today);
+        const isOnline = isUserOnline(u.uid);
+
+        let typeLabel = 'First-Time User';
+        if (isNewToday) {
+            typeLabel = 'New User (Today)';
+        } else if ((u.totalConnections || 1) > 1) {
+            typeLabel = isActiveToday ? 'Returning User (Today)' : 'Returning User';
+        } else {
+            typeLabel = 'First-Time User';
+        }
+
         return {
             uid: u.uid,
             name: u.name,
-            platform: u.platform,
-            type: isNewToday ? 'New User (Today)' : 'Returning User',
+            platform: u.platform || 'Web Browser',
+            type: typeLabel,
             isNewToday,
+            isActiveToday,
+            isOnline,
+            firstSeenDate: u.firstSeenDate,
             firstSeenTime: u.firstSeenTime,
             lastSeenTime: u.lastSeenTime,
             totalConnections: u.totalConnections || 1
@@ -174,7 +219,7 @@ function getRecentUsersList() {
     });
 
     list.sort((a, b) => new Date(b.lastSeenTime) - new Date(a.lastSeenTime));
-    return list.slice(0, 30); // Top 30 recent users
+    return list.slice(0, 50); // Top 50 recent users
 }
 
 // ==========================================================================
@@ -542,7 +587,7 @@ io.on('connection', (socket) => {
             lastActiveTvUid = uid;
             socket.join(uid);
 
-            const platformDetected = data.platform || (data.isTv ? 'Fire TV' : (data.isMobile ? 'Mobile' : 'Fire TV'));
+            const platformDetected = detectPlatformFromSocket(socket, data);
             recordUserConnection(uid, userObj.name, platformDetected);
 
             console.log(`[ZingTalk] Server authenticated UID: ${uid} for user: ${userObj.name} (${userObj.email}) [Platform: ${platformDetected}]`);
@@ -2512,10 +2557,16 @@ function renderServerStatus(req, res) {
 
         tbody.innerHTML = filtered.map(u => {
           const isNew = u.isNewToday || (u.type && u.type.includes('New'));
+          const isReturning = ((u.totalConnections || 1) > 1) || (u.type && u.type.includes('Returning'));
           const statusTag = isNew
-            ? '<span class="tag-new">New User (Today)</span>'
-            : '<span class="tag-returning">Returning User</span>';
-          const platformTag = '<span class="tag-platform">' + (u.platform || 'Fire TV') + '</span>';
+            ? '<span class="tag-new">' + escapeHtml(u.type || 'New User (Today)') + '</span>'
+            : (isReturning
+                ? '<span class="tag-returning">' + escapeHtml(u.type || 'Returning User') + '</span>'
+                : '<span class="tag-platform">First-Time User</span>');
+          const onlineIndicator = u.isOnline
+            ? '<span style="color: #00d29d; font-weight: 700; margin-left: 6px;">🟢 Online</span>'
+            : '<span style="color: #64748b; margin-left: 6px;">⚪ Offline</span>';
+          const platformTag = '<span class="tag-platform">' + escapeHtml(u.platform || 'Web Browser') + '</span>';
           const lastSeen = u.lastSeenTime ? new Date(u.lastSeenTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--';
 
           return '<tr>' +
@@ -2524,7 +2575,7 @@ function renderServerStatus(req, res) {
             '<td>' + statusTag + '</td>' +
             '<td>' + platformTag + '</td>' +
             '<td>' + (u.totalConnections || 1) + '</td>' +
-            '<td style="font-family: monospace; color: #94a3b8;">' + lastSeen + '</td>' +
+            '<td style="font-family: monospace; color: #94a3b8;">' + lastSeen + onlineIndicator + '</td>' +
             '</tr>';
         }).join('');
       }

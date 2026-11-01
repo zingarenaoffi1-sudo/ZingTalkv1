@@ -184,6 +184,15 @@ const PRIMARY_STUN = "stun:stun.l.google.com:19302";
 const SECONDARY_STUN = "stun:zingtalk.duckdns.org:3478";
 let isStunFailoverActive = false;
 
+export function detectClientPlatform() {
+    if (typeof navigator === "undefined") return "Web Browser";
+    const ua = navigator.userAgent || "";
+    if (/AFT|FireTV|Silk/i.test(ua)) return "Fire TV";
+    if (/Android.*Mobile|iPhone|iPad|iPod/i.test(ua)) return "Mobile";
+    if (/Android/i.test(ua) && !/Mobile/i.test(ua)) return "Fire TV";
+    return "Web Browser";
+}
+
 export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
     if (saved && saved.trim()) return saved.trim();
@@ -427,6 +436,7 @@ function loginUserSession(user) {
             uid: my10DigitUid || user.zingUid,
             isAnonymous: Boolean(user.isAnonymous),
             isGuest: Boolean(user.isAnonymous),
+            platform: detectClientPlatform(),
             contacts: myContacts
         });
         if (my10DigitUid) {
