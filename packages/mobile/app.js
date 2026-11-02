@@ -194,9 +194,23 @@ function renderContacts() {
                 </button>
             </div>
         `;
-        card.querySelector(".chat-btn").addEventListener("click", () => openChat(contact));
-        card.querySelector(".audio-btn").addEventListener("click", () => initiateCall(contact.uid, "audio"));
-        card.querySelector(".video-btn").addEventListener("click", () => initiateCall(contact.uid, "video"));
+        // Whole card click opens chat
+        card.addEventListener("click", (e) => {
+            if (e.target.closest(".action-icon-btn")) return;
+            openChat(contact);
+        });
+        card.querySelector(".chat-btn")?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openChat(contact);
+        });
+        card.querySelector(".audio-btn")?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            initiateCall(contact.uid, "audio");
+        });
+        card.querySelector(".video-btn")?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            initiateCall(contact.uid, "video");
+        });
         list.appendChild(card);
     });
 }
@@ -457,10 +471,21 @@ async function setupPeerConnection() {
 }
 
 async function startMobileWebRTC(isCaller) {
-    await setupLocalMedia(incomingCallType === "video");
-    document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
-    document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
-    document.getElementById("mobile-call-screen")?.classList.remove("hidden");
+    const outOverlay = document.getElementById("mobile-outgoing-call-overlay");
+    if (outOverlay) {
+        outOverlay.classList.add("hidden");
+        outOverlay.style.display = "none";
+    }
+    const inOverlay = document.getElementById("mobile-incoming-call-overlay");
+    if (inOverlay) {
+        inOverlay.classList.add("hidden");
+        inOverlay.style.display = "none";
+    }
+    const callScreen = document.getElementById("mobile-call-screen");
+    if (callScreen) {
+        callScreen.classList.remove("hidden");
+        callScreen.style.display = "flex";
+    }
 
     const known = myContacts.find(c => c.uid === currentTargetUid);
     const nameToShow = known ? known.name : `UID: ${currentTargetUid}`;
@@ -468,6 +493,7 @@ async function startMobileWebRTC(isCaller) {
     if (displayEl) displayEl.innerText = nameToShow;
 
     startTimer();
+    await setupLocalMedia(incomingCallType === "video");
     await setupPeerConnection();
 
     if (isCaller) {
@@ -500,21 +526,30 @@ async function startMobileWebRTC(isCaller) {
 }
 
 async function initiateCall(targetUid, type = "video") {
+    const cleanTarget = String(targetUid || "").trim().replace(/\D/g, "");
+    const cleanCaller = String(my10DigitUid || currentUser?.zingUid || "").trim().replace(/\D/g, "");
+
+    if (!cleanTarget || cleanTarget.length !== 10) {
+        showToast("Please enter a valid 10-digit UID");
+        return;
+    }
+
+    if (cleanTarget === cleanCaller) {
+        showToast("You cannot call your own UID");
+        return;
+    }
+
     if (!socket || !socket.connected) {
         showToast("Connecting to server...");
         connectSocket();
         return;
     }
-    if (targetUid === my10DigitUid) {
-        showToast("You cannot call your own UID");
-        return;
-    }
 
-    currentTargetUid = targetUid;
+    currentTargetUid = cleanTarget;
     incomingCallType = type;
 
-    const known = myContacts.find(c => c.uid === targetUid);
-    const nameToShow = known ? known.name : `UID: ${targetUid}`;
+    const known = myContacts.find(c => c.uid === cleanTarget);
+    const nameToShow = known ? known.name : `UID: ${cleanTarget}`;
     const avatarLetter = (known?.name || "U").charAt(0).toUpperCase();
 
     const outName = document.getElementById("outgoing-name");
@@ -525,23 +560,34 @@ async function initiateCall(targetUid, type = "video") {
     if (outAvatar) outAvatar.innerText = avatarLetter;
     if (outStatus) outStatus.innerText = `Calling (${type === 'video' ? 'HD Video' : 'Audio'})...`;
 
-    document.getElementById("mobile-outgoing-call-overlay")?.classList.remove("hidden");
+    const outOverlay = document.getElementById("mobile-outgoing-call-overlay");
+    if (outOverlay) {
+        outOverlay.classList.remove("hidden");
+        outOverlay.style.display = "flex";
+    }
 
     socket.emit("initiate_call", {
-        callerUid: my10DigitUid,
-        targetUid: targetUid,
+        callerUid: cleanCaller,
+        targetUid: cleanTarget,
         type: type,
         callerName: currentUser?.displayName || "Mobile User"
     });
 }
 
 async function answerCall(targetUid, type = "video") {
-    currentTargetUid = targetUid;
+    const cleanTarget = String(targetUid || "").trim().replace(/\D/g, "");
+    currentTargetUid = cleanTarget;
     incomingCallType = type;
-    document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
+    
+    const inOverlay = document.getElementById("mobile-incoming-call-overlay");
+    if (inOverlay) {
+        inOverlay.classList.add("hidden");
+        inOverlay.style.display = "none";
+    }
+
     if (socket) {
-        socket.emit("call_response", { targetUid: targetUid, status: "accepted" });
-        socket.emit("answer_call", { callerUid: targetUid, answererUid: my10DigitUid });
+        socket.emit("call_response", { targetUid: cleanTarget, status: "accepted" });
+        socket.emit("answer_call", { callerUid: cleanTarget, answererUid: my10DigitUid });
     }
     await startMobileWebRTC(false);
 }
@@ -584,9 +630,22 @@ function endCallCleanup() {
     if (localVideo) localVideo.srcObject = null;
     if (remoteVideo) remoteVideo.srcObject = null;
 
-    document.getElementById("mobile-call-screen")?.classList.add("hidden");
-    document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
-    document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
+    const callScreen = document.getElementById("mobile-call-screen");
+    if (callScreen) {
+        callScreen.classList.add("hidden");
+        callScreen.style.display = "none";
+    }
+    const inOverlay = document.getElementById("mobile-incoming-call-overlay");
+    if (inOverlay) {
+        inOverlay.classList.add("hidden");
+        inOverlay.style.display = "none";
+    }
+    const outOverlay = document.getElementById("mobile-outgoing-call-overlay");
+    if (outOverlay) {
+        outOverlay.classList.add("hidden");
+        outOverlay.style.display = "none";
+    }
+
     currentTargetUid = null;
     pendingOffer = null;
     iceCandidatesQueue = [];
@@ -594,10 +653,19 @@ function endCallCleanup() {
 
 function openChat(contact) {
     currentTargetUid = contact.uid;
-    document.getElementById("chat-contact-name").innerText = contact.name;
-    document.getElementById("chat-contact-uid").innerText = `UID: ${contact.uid}`;
-    document.getElementById("mobile-chat-screen")?.classList.remove("hidden");
+    const nameEl = document.getElementById("chat-contact-name");
+    const uidEl = document.getElementById("chat-contact-uid");
+    if (nameEl) nameEl.innerText = contact.name;
+    if (uidEl) uidEl.innerText = `UID: ${contact.uid}`;
+    
+    const chatScreen = document.getElementById("mobile-chat-screen");
+    if (chatScreen) {
+        chatScreen.classList.remove("hidden");
+        chatScreen.style.display = "flex";
+    }
     renderChatMessages();
+    const chatInput = document.getElementById("mobile-chat-input");
+    if (chatInput) setTimeout(() => chatInput.focus(), 100);
 }
 
 function renderChatMessages() {
@@ -621,13 +689,34 @@ function sendChatMessage() {
     if (!chatHistory[currentTargetUid]) chatHistory[currentTargetUid] = [];
     chatHistory[currentTargetUid].push({ text, sent: true });
     renderChatMessages();
-    socket.emit("send_message", {
+    
+    const payload = {
         senderUid: my10DigitUid,
+        receiverUid: currentTargetUid,
         targetUid: currentTargetUid,
         text: text,
         id: Date.now()
-    });
+    };
+    
+    if (socket && socket.connected) {
+        socket.emit("send_message", payload);
+    }
     input.value = "";
+}
+
+function switchMobileView(viewId) {
+    document.querySelectorAll(".mobile-nav-item").forEach(b => {
+        b.classList.toggle("active", b.dataset.view === viewId);
+    });
+    document.querySelectorAll(".mobile-view").forEach(v => {
+        if (v.id === viewId) {
+            v.classList.remove("hidden");
+            v.style.display = "flex";
+        } else {
+            v.classList.add("hidden");
+            v.style.display = "none";
+        }
+    });
 }
 
 function loginUser(user) {
@@ -638,19 +727,8 @@ function loginUser(user) {
         authScreen.style.display = "none";
     }
 
-    // Ensure Contacts View is shown by default and navigation is synced
-    document.querySelectorAll(".mobile-view").forEach(v => {
-        v.classList.add("hidden");
-        v.style.display = "none";
-    });
-    const contactsView = document.getElementById("view-contacts");
-    if (contactsView) {
-        contactsView.classList.remove("hidden");
-        contactsView.style.display = "flex";
-    }
-    document.querySelectorAll(".mobile-nav-item").forEach(b => {
-        b.classList.toggle("active", b.dataset.view === "view-contacts");
-    });
+    // Switch cleanly to Contacts View
+    switchMobileView("view-contacts");
 
     const profName = document.getElementById("profile-name");
     const profEmail = document.getElementById("profile-email");
@@ -670,26 +748,37 @@ function logoutUser() {
     localStorage.removeItem("zingTalkMobileSession");
     currentUser = null;
     my10DigitUid = null;
+    currentTargetUid = null;
+    if (socket && socket.connected) {
+        try {
+            socket.emit("logout_user", { uid: my10DigitUid });
+            socket.disconnect();
+        } catch (_) {}
+        socket = null;
+    }
     const authScreen = document.getElementById("mobile-auth-screen");
     if (authScreen) {
         authScreen.classList.remove("hidden");
         authScreen.style.display = "flex";
     }
+    document.querySelectorAll(".mobile-view").forEach(v => {
+        v.classList.add("hidden");
+        v.style.display = "none";
+    });
+    updateDisplays(null);
+    showToast("Signed out successfully");
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-    // Navigation Tabs
+function initMobileApp() {
+    // Navigation Tabs (Contacts, Dialpad, Profile)
     document.querySelectorAll(".mobile-nav-item").forEach(btn => {
         btn.addEventListener("click", () => {
-            document.querySelectorAll(".mobile-nav-item").forEach(b => b.classList.remove("active"));
-            document.querySelectorAll(".mobile-view").forEach(v => v.classList.add("hidden"));
-            btn.classList.add("active");
             const viewId = btn.dataset.view;
-            document.getElementById(viewId)?.classList.remove("hidden");
+            if (viewId) switchMobileView(viewId);
         });
     });
 
-    // Dialpad Number Clicks
+    // Dialpad Number & Action Clicks
     const dialInput = document.getElementById("mobile-dial-input");
     document.querySelectorAll(".dial-btn").forEach(b => {
         b.addEventListener("click", () => {
@@ -705,23 +794,32 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     document.getElementById("mobile-dial-video-btn")?.addEventListener("click", () => {
-        const val = dialInput.value.trim();
+        const val = dialInput.value.trim().replace(/\D/g, "");
         if (val.length === 10) initiateCall(val, "video");
         else showToast("Enter a 10-digit UID");
     });
 
     document.getElementById("mobile-dial-audio-btn")?.addEventListener("click", () => {
-        const val = dialInput.value.trim();
+        const val = dialInput.value.trim().replace(/\D/g, "");
         if (val.length === 10) initiateCall(val, "audio");
         else showToast("Enter a 10-digit UID");
     });
 
-    // Contacts
+    // Contacts Add Modal
     document.getElementById("open-add-contact-btn")?.addEventListener("click", () => {
-        document.getElementById("add-contact-modal")?.classList.remove("hidden");
+        const modal = document.getElementById("add-contact-modal");
+        if (modal) {
+            modal.classList.remove("hidden");
+            modal.style.display = "flex";
+            document.getElementById("new-contact-name")?.focus();
+        }
     });
     document.getElementById("cancel-contact-btn")?.addEventListener("click", () => {
-        document.getElementById("add-contact-modal")?.classList.add("hidden");
+        const modal = document.getElementById("add-contact-modal");
+        if (modal) {
+            modal.classList.add("hidden");
+            modal.style.display = "none";
+        }
     });
     document.getElementById("save-new-contact-btn")?.addEventListener("click", () => {
         const name = document.getElementById("new-contact-name")?.value.trim();
@@ -729,7 +827,11 @@ document.addEventListener("DOMContentLoaded", () => {
         if (name && uid.length === 10) {
             myContacts.unshift({ name, uid });
             saveContacts();
-            document.getElementById("add-contact-modal")?.classList.add("hidden");
+            const modal = document.getElementById("add-contact-modal");
+            if (modal) {
+                modal.classList.add("hidden");
+                modal.style.display = "none";
+            }
             document.getElementById("new-contact-name").value = "";
             document.getElementById("new-contact-uid").value = "";
             showToast("Contact saved!");
@@ -738,9 +840,13 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    // Chat Controls
+    // Chat Screen Controls
     document.getElementById("close-chat-btn")?.addEventListener("click", () => {
-        document.getElementById("mobile-chat-screen")?.classList.add("hidden");
+        const chatScreen = document.getElementById("mobile-chat-screen");
+        if (chatScreen) {
+            chatScreen.classList.add("hidden");
+            chatScreen.style.display = "none";
+        }
         currentTargetUid = null;
     });
     document.getElementById("mobile-chat-send-btn")?.addEventListener("click", sendChatMessage);
@@ -763,7 +869,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (track) {
                 isMicMuted = !isMicMuted;
                 track.enabled = !isMicMuted;
-                showToast(isMicMuted ? "Microphone muted" : "Microphone unmuted");
+                showToast(isMicMuted ? "Microphone muted" : "Microphone active");
             }
         }
     });
@@ -778,24 +884,30 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    // Mobile Incoming & Outgoing Call Overlay Buttons
+    // Mobile Incoming & Outgoing Call Overlays
     document.getElementById("mobile-accept-call-btn")?.addEventListener("click", () => {
         if (incomingCallerUid) {
             answerCall(incomingCallerUid, incomingCallType);
         }
     });
-
     document.getElementById("mobile-decline-call-btn")?.addEventListener("click", () => {
-        document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
+        const inOverlay = document.getElementById("mobile-incoming-call-overlay");
+        if (inOverlay) {
+            inOverlay.classList.add("hidden");
+            inOverlay.style.display = "none";
+        }
         if (socket && incomingCallerUid) {
             socket.emit("call_response", { targetUid: incomingCallerUid, status: "rejected" });
             socket.emit("cancel_call", { targetUid: incomingCallerUid });
         }
         incomingCallerUid = null;
     });
-
     document.getElementById("mobile-cancel-outgoing-btn")?.addEventListener("click", () => {
-        document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
+        const outOverlay = document.getElementById("mobile-outgoing-call-overlay");
+        if (outOverlay) {
+            outOverlay.classList.add("hidden");
+            outOverlay.style.display = "none";
+        }
         if (socket && currentTargetUid) {
             socket.emit("cancel_call", { targetUid: currentTargetUid });
         }
@@ -804,10 +916,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Mobile Privacy Policy Modal
     document.getElementById("open-mobile-policy-btn")?.addEventListener("click", () => {
-        document.getElementById("mobile-policy-modal")?.classList.remove("hidden");
+        const pModal = document.getElementById("mobile-policy-modal");
+        if (pModal) {
+            pModal.classList.remove("hidden");
+            pModal.style.display = "flex";
+        }
     });
     document.getElementById("close-policy-btn")?.addEventListener("click", () => {
-        document.getElementById("mobile-policy-modal")?.classList.add("hidden");
+        const pModal = document.getElementById("mobile-policy-modal");
+        if (pModal) {
+            pModal.classList.add("hidden");
+            pModal.style.display = "none";
+        }
     });
 
     // Profile & Logout
@@ -818,7 +938,56 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    // Auth Form
+    // Guest Login Modal Flow (Prompt for Name)
+    const guestBtn = document.getElementById("mobile-guest-btn");
+    const guestModal = document.getElementById("mobile-guest-modal");
+    const confirmGuestBtn = document.getElementById("mobile-confirm-guest-btn");
+    const cancelGuestBtn = document.getElementById("mobile-cancel-guest-btn");
+    const guestNameInput = document.getElementById("mobile-guest-name-input");
+
+    guestBtn?.addEventListener("click", () => {
+        if (guestModal) {
+            guestModal.classList.remove("hidden");
+            guestModal.style.display = "flex";
+            if (guestNameInput) {
+                guestNameInput.value = "";
+                setTimeout(() => guestNameInput.focus(), 100);
+            }
+        }
+    });
+
+    cancelGuestBtn?.addEventListener("click", () => {
+        if (guestModal) {
+            guestModal.classList.add("hidden");
+            guestModal.style.display = "none";
+        }
+    });
+
+    const handleConfirmGuest = () => {
+        const enteredName = guestNameInput?.value.trim() || "Guest User";
+        const guestUid = computeDeterministic10DigitUid("guest_" + Date.now());
+        const user = {
+            displayName: enteredName,
+            email: null,
+            uid: "guest_" + guestUid,
+            zingUid: guestUid,
+            isGuest: true
+        };
+        if (guestModal) {
+            guestModal.classList.add("hidden");
+            guestModal.style.display = "none";
+        }
+        localStorage.setItem("zingTalkMobileSession", JSON.stringify(user));
+        loginUser(user);
+        showToast(`Welcome ${enteredName}!`);
+    };
+
+    confirmGuestBtn?.addEventListener("click", handleConfirmGuest);
+    guestNameInput?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") handleConfirmGuest();
+    });
+
+    // Auth Form (Sign Up / Sign In)
     const toggleBtn = document.getElementById("mobile-auth-toggle-btn");
     const nameGroup = document.getElementById("mobile-auth-name-group");
     const submitBtn = document.getElementById("mobile-auth-submit-btn");
@@ -906,12 +1075,18 @@ document.addEventListener("DOMContentLoaded", () => {
             resetStatus.textContent = "";
             resetStatus.style.display = "none";
         }
-        forgotModal?.classList.remove("hidden");
-        resetEmailInput?.focus();
+        if (forgotModal) {
+            forgotModal.classList.remove("hidden");
+            forgotModal.style.display = "flex";
+            resetEmailInput?.focus();
+        }
     });
 
     cancelResetBtn?.addEventListener("click", () => {
-        forgotModal?.classList.add("hidden");
+        if (forgotModal) {
+            forgotModal.classList.add("hidden");
+            forgotModal.style.display = "none";
+        }
     });
 
     sendResetBtn?.addEventListener("click", async () => {
@@ -976,7 +1151,10 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             showToast("Password reset link sent to " + email);
             setTimeout(() => {
-                forgotModal?.classList.add("hidden");
+                if (forgotModal) {
+                    forgotModal.classList.add("hidden");
+                    forgotModal.style.display = "none";
+                }
                 sendResetBtn.disabled = false;
                 sendResetBtn.textContent = "Send Reset Link";
             }, 3000);
@@ -1001,20 +1179,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    document.getElementById("mobile-guest-btn")?.addEventListener("click", () => {
-        const guestUid = computeDeterministic10DigitUid("guest_" + Date.now());
-        const user = {
-            displayName: "Guest User",
-            email: null,
-            uid: "guest_" + guestUid,
-            zingUid: guestUid,
-            isGuest: true
-        };
-        localStorage.setItem("zingTalkMobileSession", JSON.stringify(user));
-        loginUser(user);
-        showToast("Logged in as Guest");
-    });
-
     // Check saved session
     const saved = localStorage.getItem("zingTalkMobileSession");
     if (saved) {
@@ -1023,4 +1187,10 @@ document.addEventListener("DOMContentLoaded", () => {
             if (parsed) loginUser(parsed);
         } catch (_) {}
     }
-});
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initMobileApp);
+} else {
+    initMobileApp();
+}

@@ -926,6 +926,12 @@ function isUserOnline(uid) {
     if (!uid) return false;
     const clean = String(uid).trim().replace(/\D/g, '');
     if (!clean || clean.length !== 10) return false;
+
+    // 1. Check if recipient has an active Socket.io room joined
+    const room = io.sockets.adapter.rooms.get(clean);
+    if (room && room.size > 0) return true;
+
+    // 2. Fallback check for direct socket in connectedUsers map
     const socketId = connectedUsers.get(clean);
     if (!socketId) return false;
     const targetSocket = io.sockets.sockets.get(socketId);
@@ -1145,10 +1151,19 @@ async function checkUserUidExists(targetUid) {
     });
 
     socket.on('send_message', async (data) => {
-        if (!data || !data.receiverUid) return;
+        if (!data) return;
+        const rawTarget = data.receiverUid || data.targetUid;
+        if (!rawTarget) return;
 
-        const targetUid = String(data.receiverUid).trim().replace(/\D/g, '');
+        const targetUid = String(rawTarget).trim().replace(/\D/g, '');
         const senderUid = data.senderUid ? String(data.senderUid).trim().replace(/\D/g, '') : '';
+
+        // Normalize data object so both receiverUid and targetUid are populated
+        data.receiverUid = targetUid;
+        data.targetUid = targetUid;
+        if (senderUid) {
+            data.senderUid = senderUid;
+        }
 
         // 1. Strict 10-digit UID format validation
         if (targetUid.length !== 10) {
@@ -1271,9 +1286,13 @@ async function checkUserUidExists(targetUid) {
     });
 
     socket.on('initiate_call', async (data) => {
-        if (!data || !data.targetUid) return;
-        const targetUid = String(data.targetUid).trim().replace(/\D/g, '');
+        if (!data) return;
+        const rawTarget = data.targetUid || data.receiverUid;
+        if (!rawTarget) return;
+        const targetUid = String(rawTarget).trim().replace(/\D/g, '');
         const callerUid = data.callerUid ? String(data.callerUid).trim().replace(/\D/g, '') : '';
+        data.targetUid = targetUid;
+        data.callerUid = callerUid;
 
         if (targetUid.length !== 10) {
             socket.emit('call_error', {

@@ -131,6 +131,18 @@ body.mobile-body {
     display: none !important;
 }
 
+.mobile-chat-screen.hidden {
+    display: none !important;
+}
+
+.mobile-call-screen.hidden {
+    display: none !important;
+}
+
+.mobile-call-overlay.hidden {
+    display: none !important;
+}
+
 .auth-forgot-link {
     background: none;
     border: none;

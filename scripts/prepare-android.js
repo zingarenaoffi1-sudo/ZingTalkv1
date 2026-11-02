@@ -248,4 +248,22 @@ if (fs.existsSync(appGradlePath)) {
     console.log(`[prepare-android] ✅ Configured ${keystoreFileName} with alias ${keyAlias}`);
 }
 
+// 8. Copy platform web assets to android/app/src/main/assets/public
+const androidPublicDir = path.join('android', 'app', 'src', 'main', 'assets', 'public');
+if (!fs.existsSync(androidPublicDir)) {
+    fs.mkdirSync(androidPublicDir, { recursive: true });
+}
+const platformSourceDir = targetPlatform === 'mobile' ? path.join('packages', 'mobile') : path.join('packages', 'tv');
+const filesToSync = ['index.html', 'style.css', 'app.js', 'manifest.json', 'capacitor.js', 'socket.io.min.js'];
+filesToSync.forEach(f => {
+    let src = path.join(platformSourceDir, f);
+    if (!fs.existsSync(src)) {
+        src = path.join('.', f);
+    }
+    if (fs.existsSync(src)) {
+        fs.copyFileSync(src, path.join(androidPublicDir, f));
+    }
+});
+console.log(`[prepare-android] ✅ Synchronized web bundle from ${platformSourceDir} to Android assets public directory!`);
+
 console.log(`[prepare-android] Android project successfully configured for ${targetPlatform}!`);

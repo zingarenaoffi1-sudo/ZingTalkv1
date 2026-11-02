@@ -240,6 +240,22 @@
             </div>
         </div>
 
+        <!-- Mobile Guest Login Name Modal -->
+        <div id="mobile-guest-modal" class="mobile-modal-overlay hidden">
+            <div class="mobile-modal-card">
+                <h3 class="mobile-modal-title">👤 Guest Login</h3>
+                <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">
+                    Enter your display name to start chatting and calling friends.
+                </p>
+                <div class="auth-input-group">
+                    <label class="auth-label" for="mobile-guest-name-input">Your Display Name</label>
+                    <input type="text" id="mobile-guest-name-input" class="auth-input" placeholder="e.g. Rahul Sharma" autocomplete="name">
+                </div>
+                <button type="button" id="mobile-confirm-guest-btn" class="auth-submit-btn">Continue as Guest</button>
+                <button type="button" id="mobile-cancel-guest-btn" class="auth-guest-btn">Cancel</button>
+            </div>
+        </div>
+
         <!-- Authentication Screen -->
         <div id="mobile-auth-screen" class="mobile-auth-screen">
             <div class="auth-header">
