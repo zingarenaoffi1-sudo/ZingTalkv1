@@ -77,6 +77,17 @@ if (!fs.existsSync(bannerDest) && fs.existsSync(bannerSrc)) {
     fs.copyFileSync(bannerSrc, bannerDest);
 }
 
+// 1.2 Configure Android App Display Name in strings.xml (ZingTalk TV vs ZingTalk)
+const stringsPath = path.join('android', 'app', 'src', 'main', 'res', 'values', 'strings.xml');
+if (fs.existsSync(stringsPath)) {
+    const appDisplayName = targetPlatform === 'tv' ? 'ZingTalk TV' : 'ZingTalk';
+    let stringsContent = fs.readFileSync(stringsPath, 'utf8');
+    stringsContent = stringsContent.replace(/<string name="app_name">.*?<\/string>/, `<string name="app_name">${appDisplayName}</string>`);
+    stringsContent = stringsContent.replace(/<string name="title_activity_main">.*?<\/string>/, `<string name="title_activity_main">${appDisplayName}</string>`);
+    fs.writeFileSync(stringsPath, stringsContent, 'utf8');
+    console.log(`[prepare-android] ✅ Configured Android app_name to "${appDisplayName}"`);
+}
+
 // 2. Configure network_security_config.xml
 const resXmlDir = path.join('android', 'app', 'src', 'main', 'res', 'xml');
 if (!fs.existsSync(resXmlDir)) {

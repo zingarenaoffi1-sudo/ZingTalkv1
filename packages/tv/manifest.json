@@ -1,0 +1,27 @@
+{
+  "short_name": "ZingTalk TV",
+  "name": "ZingTalk TV Real-Time Communication",
+  "start_url": "./",
+  "display": "standalone",
+  "theme_color": "#070c14",
+  "background_color": "#070c14",
+  "icons": [
+    {
+      "src": "assets/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icon-round.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "assets/favicon.png",
+      "sizes": "64x64",
+      "type": "image/png"
+    }
+  ]
+}

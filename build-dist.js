@@ -37,7 +37,7 @@ packages.forEach(pkg => {
     if (!fs.existsSync(pkgDist)) {
         fs.mkdirSync(pkgDist, { recursive: true });
     }
-    ['index.html', 'style.css', 'app.js'].forEach(f => {
+    ['index.html', 'style.css', 'app.js', 'manifest.json', 'capacitor.config.json'].forEach(f => {
         const src = path.join(pkgDir, f);
         if (fs.existsSync(src)) {
             fs.copyFileSync(src, path.join(pkgDist, f));
