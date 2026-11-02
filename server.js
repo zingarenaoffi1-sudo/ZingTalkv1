@@ -364,6 +364,28 @@ const BREVO_CONFIG = {
     senderName: process.env.BREVO_SENDER_NAME || 'ZingTalk Support Team'
 };
 
+function generateZingTalkResetEmailPlainText(data) {
+    const email = data.email || 'user@domain.com';
+    const resetLink = data.resetLink || '#';
+    const finalUid = data.uid || (email ? computeDeterministic10DigitUid(email) : "----------");
+
+    return `Hello,
+
+You recently requested to reset your password for your ZingTalk account.
+
+Account Details:
+- Account Email: ${email}
+- ZingTalk 10-Digit UID: ${finalUid}
+
+Click the link below to reset your password:
+${resetLink}
+
+If you didn't request a password reset, you can safely ignore this email.
+
+Thanks,
+The ZingTalk Team`;
+}
+
 function generateZingTalkResetEmailHtml(data) {
     const email = data.email || 'user@domain.com';
     const resetLink = data.resetLink || '#';
@@ -375,7 +397,7 @@ function generateZingTalkResetEmailHtml(data) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Reset Your ZingTalk Password</title>
+  <title>Reset your password for ZingTalk</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #0b111e; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #ffffff;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #0b111e; padding: 40px 15px;">
@@ -386,8 +408,8 @@ function generateZingTalkResetEmailHtml(data) {
           
           <!-- Header Banner -->
           <tr>
-            <td style="padding: 32px 36px 20px; text-align: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08);">
-              <div style="display: inline-block; padding: 8px 18px; background: rgba(0, 210, 255, 0.12); border: 1px solid rgba(0, 210, 255, 0.4); border-radius: 10px; margin-bottom: 8px;">
+            <td style="padding: 30px 36px 20px; text-align: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08);">
+              <div style="display: inline-block; padding: 8px 20px; background: rgba(0, 210, 255, 0.12); border: 1px solid rgba(0, 210, 255, 0.4); border-radius: 10px; margin-bottom: 6px;">
                 <span style="font-size: 24px; font-weight: 800; letter-spacing: 2px; color: #00d2ff; text-transform: uppercase;">ZingTalk</span>
               </div>
               <div style="font-size: 11px; font-weight: 700; letter-spacing: 2px; color: #00d29d; text-transform: uppercase; margin-top: 4px;">
@@ -399,62 +421,68 @@ function generateZingTalkResetEmailHtml(data) {
           <!-- Body Content -->
           <tr>
             <td style="padding: 32px 36px;">
-              <h1 style="margin: 0 0 14px; font-size: 22px; font-weight: 700; color: #ffffff; text-align: left;">
-                Password Reset Request
-              </h1>
-              <p style="margin: 0 0 20px; font-size: 14.5px; line-height: 1.6; color: #cbd5e1; text-align: left;">
-                Hello, we received a secure request to reset the password for your ZingTalk account:
+              <p style="margin: 0 0 16px; font-size: 15px; color: #ffffff; line-height: 1.5;">
+                Hello,
+              </p>
+              <p style="margin: 0 0 20px; font-size: 14.5px; line-height: 1.6; color: #cbd5e1;">
+                You recently requested to reset your password for your <strong>ZingTalk</strong> account.
               </p>
               
               <!-- Account Details Box -->
-              <table role="presentation" width="100%" style="background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(0, 210, 255, 0.25); border-radius: 12px; margin-bottom: 24px;">
+              <table role="presentation" width="100%" style="background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(0, 210, 255, 0.25); border-radius: 12px; margin-bottom: 24px;">
                 <tr>
                   <td style="padding: 16px 20px;">
                     <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.2px; font-weight: 700; margin-bottom: 3px;">Account Email</div>
-                    <div style="font-size: 15px; color: #00d2ff; font-weight: 700; margin-bottom: 12px;">${email}</div>
+                    <div style="font-size: 14.5px; color: #00d2ff; font-weight: 700; margin-bottom: 12px;">${email}</div>
                     <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.2px; font-weight: 700; margin-bottom: 3px;">ZingTalk 10-Digit UID</div>
                     <div style="font-size: 16px; color: #00d29d; font-weight: 800; font-family: monospace; letter-spacing: 1.5px;">${finalUid}</div>
                   </td>
                 </tr>
               </table>
 
-              <p style="margin: 0 0 26px; font-size: 14.5px; line-height: 1.6; color: #cbd5e1; text-align: left;">
-                Click the button below to choose a new password. For your security, this link is valid for <strong>1 hour</strong>:
+              <p style="margin: 0 0 22px; font-size: 14.5px; line-height: 1.6; color: #cbd5e1;">
+                Click the link below to reset your password:
               </p>
 
               <!-- CTA Glowing Button -->
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 28px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 26px;">
                 <tr>
                   <td align="center">
-                    <a href="${resetLink}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, #00d2ff 0%, #00d29d 100%); color: #05101a; text-decoration: none; padding: 14px 34px; font-size: 14.5px; font-weight: 800; border-radius: 10px; letter-spacing: 0.5px; box-shadow: 0 6px 20px rgba(0, 210, 255, 0.35); text-transform: uppercase;">
-                      Reset Password Now
+                    <a href="${resetLink}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, #00d2ff 0%, #00d29d 100%); color: #05101a; text-decoration: none; padding: 14px 36px; font-size: 14.5px; font-weight: 800; border-radius: 10px; letter-spacing: 0.5px; box-shadow: 0 6px 20px rgba(0, 210, 255, 0.35); text-transform: uppercase;">
+                      Reset Password
                     </a>
                   </td>
                 </tr>
               </table>
 
-              <!-- Plain URL Fallback -->
+              <!-- Direct Plain URL Box -->
               <p style="margin: 0 0 8px; font-size: 12px; color: #64748b; line-height: 1.5;">
-                If the button above does not work, copy and paste this link into your browser:
+                Or copy and paste this reset link into your browser:
               </p>
-              <div style="background: rgba(0, 0, 0, 0.4); border: 1px dashed rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 10px 12px; font-size: 11.5px; color: #94a3b8; word-break: break-all; font-family: monospace; line-height: 1.4; margin-bottom: 24px;">
+              <div style="background: rgba(0, 0, 0, 0.4); border: 1px dashed rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 10px 14px; font-size: 11.5px; color: #94a3b8; word-break: break-all; font-family: monospace; line-height: 1.4; margin-bottom: 24px;">
                 <a href="${resetLink}" style="color: #00d2ff; text-decoration: underline;">${resetLink}</a>
               </div>
 
-              <!-- Security Advisory -->
-              <div style="background: rgba(255, 170, 0, 0.08); border-left: 3px solid #ffaa00; border-radius: 4px; padding: 10px 14px;">
-                <p style="margin: 0; font-size: 12px; color: #fef08a; line-height: 1.5;">
-                  <strong>Didn't make this request?</strong> You can safely ignore this email. Your password will remain unchanged and your ZingTalk account is completely safe.
+              <!-- Security Notice -->
+              <div style="background: rgba(255, 170, 0, 0.08); border-left: 3px solid #ffaa00; border-radius: 4px; padding: 10px 14px; margin-bottom: 24px;">
+                <p style="margin: 0; font-size: 12.5px; color: #fef08a; line-height: 1.5;">
+                  If you didn't request a password reset, you can safely ignore this email. Your password will remain unchanged and your account is secure.
                 </p>
               </div>
+
+              <!-- Formal Closing -->
+              <p style="margin: 0; font-size: 14.5px; line-height: 1.6; color: #cbd5e1;">
+                Thanks,<br>
+                <strong style="color: #ffffff;">The ZingTalk Team</strong>
+              </p>
             </td>
           </tr>
 
           <!-- Footer -->
           <tr>
-            <td style="padding: 22px 36px; background: rgba(0, 0, 0, 0.3); border-top: 1px solid rgba(255, 255, 255, 0.06); text-align: center;">
+            <td style="padding: 20px 36px; background: rgba(0, 0, 0, 0.3); border-top: 1px solid rgba(255, 255, 255, 0.06); text-align: center;">
               <p style="margin: 0 0 4px; font-size: 12px; color: #64748b;">
-                Need assistance? Contact support: <a href="mailto:support.zing.app@gmail.com" style="color: #00d2ff; text-decoration: none;">support.zing.app@gmail.com</a>
+                Need assistance? Contact: <a href="mailto:support.zing.app@gmail.com" style="color: #00d2ff; text-decoration: none;">support.zing.app@gmail.com</a>
               </p>
               <p style="margin: 0; font-size: 11px; color: #475569;">
                 &copy; ${year} ZingTalk Developer Team. All rights reserved.
@@ -520,7 +548,8 @@ app.post('/api/auth/custom-reset-password', async (req, res) => {
             }
         } catch (_) {}
 
-        // 5. Generate luxury HTML
+        // 5. Generate luxury HTML & plain text version (for slow internet / standard clients)
+        const plainText = generateZingTalkResetEmailPlainText({ email, resetLink, uid: userUid });
         const html = generateZingTalkResetEmailHtml({ email, resetLink, uid: userUid });
 
         // 6. Send via Brevo SMTP transporter
@@ -537,7 +566,8 @@ app.post('/api/auth/custom-reset-password', async (req, res) => {
         await transporter.sendMail({
             from: `"${BREVO_CONFIG.senderName}" <${BREVO_CONFIG.senderEmail}>`,
             to: email,
-            subject: '🔐 Reset Your ZingTalk Password',
+            subject: 'Reset your password for ZingTalk',
+            text: plainText,
             html: html
         });
 
