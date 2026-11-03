@@ -3,12 +3,16 @@ apply plugin: 'com.android.application'
 android {
     signingConfigs {
         release {
-            storeFile file("zingtalk-mobile-release.keystore")
+            storeFile file("zingtalk-tv-release.keystore")
             storePassword "zingtalk123456"
-            keyAlias "zingtalk-mobile"
+            keyAlias "zingtalk-tv"
             keyPassword "zingtalk123456"
         }
     }
+
+    
+
+    
 
     
 

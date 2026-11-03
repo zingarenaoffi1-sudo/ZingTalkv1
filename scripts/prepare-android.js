@@ -4,11 +4,14 @@ const path = require('path');
 const targetPlatform = (process.argv[2] || 'tv').toLowerCase();
 console.log(`[prepare-android] Starting Android project configuration for [${targetPlatform.toUpperCase()}]...`);
 
-// 1. Configure MainActivity.java
+// 1. Configure MainActivity.java in com.zingtalk.com
 const mainActivityDir = path.join('android', 'app', 'src', 'main', 'java', 'com', 'zingtalk', 'com');
+if (!fs.existsSync(mainActivityDir)) {
+    fs.mkdirSync(mainActivityDir, { recursive: true });
+}
+
 const mainActivityPath = path.join(mainActivityDir, 'MainActivity.java');
-if (fs.existsSync(mainActivityPath)) {
-    const customMainActivity = `package com.zingtalk.com;
+const customMainActivity = `package com.zingtalk.com;
 
 import android.Manifest;
 import android.app.NotificationChannel;
@@ -324,10 +327,29 @@ public class MainActivity extends BridgeActivity {
     }
 }
 `;
-    fs.writeFileSync(mainActivityPath, customMainActivity, 'utf8');
+fs.writeFileSync(mainActivityPath, customMainActivity, 'utf8');
+console.log(`[prepare-android] ✅ Written custom MainActivity.java with ZingNativeBridge`);
+
+// Clean up any stray duplicate MainActivity in other package subdirs
+['tv', 'mobile'].forEach(subPkg => {
+    const strayFile = path.join('android', 'app', 'src', 'main', 'java', 'com', 'zingtalk', subPkg, 'MainActivity.java');
+    if (fs.existsSync(strayFile)) {
+        try {
+            fs.unlinkSync(strayFile);
+            console.log(`[prepare-android] 🧹 Removed duplicate ${strayFile}`);
+        } catch (e) {}
+    }
+});
+
+// 1.1 Ensure google-services.json is synced to android/app
+const rootGoogleServices = path.join('.', 'google-services.json');
+const appGoogleServices = path.join('android', 'app', 'google-services.json');
+if (fs.existsSync(rootGoogleServices)) {
+    fs.copyFileSync(rootGoogleServices, appGoogleServices);
+    console.log('[prepare-android] ✅ Synced google-services.json to android/app');
 }
 
-// 1.1 Ensure Banner Drawable Exists for TV
+// 1.2 Ensure Banner Drawable Exists for TV
 const drawableDir = path.join('android', 'app', 'src', 'main', 'res', 'drawable');
 if (!fs.existsSync(drawableDir)) {
     fs.mkdirSync(drawableDir, { recursive: true });
@@ -338,7 +360,7 @@ if (!fs.existsSync(bannerDest) && fs.existsSync(bannerSrc)) {
     fs.copyFileSync(bannerSrc, bannerDest);
 }
 
-// 1.2 Configure Android App Display Name in strings.xml (ZingTalk TV vs ZingTalk)
+// 1.3 Configure Android App Display Name in strings.xml (ZingTalk TV vs ZingTalk)
 const stringsPath = path.join('android', 'app', 'src', 'main', 'res', 'values', 'strings.xml');
 if (fs.existsSync(stringsPath)) {
     const appDisplayName = targetPlatform === 'tv' ? 'ZingTalk TV' : 'ZingTalk';
@@ -383,20 +405,45 @@ if (fs.existsSync(rootGradle)) {
     }
 }
 
-// 4. App-level build.gradle
-const appGradle = path.join('android', 'app', 'build.gradle');
-if (fs.existsSync(appGradle)) {
-    let content = fs.readFileSync(appGradle, 'utf8');
-    if (!content.includes('com.google.gms.google-services')) {
-        content += "\napply plugin: 'com.google.gms.google-services'\n";
-        fs.writeFileSync(appGradle, content, 'utf8');
+// 4. App-level build.gradle (applicationId, namespace, and signing configs)
+const appGradlePath = path.join('android', 'app', 'build.gradle');
+if (fs.existsSync(appGradlePath)) {
+    let content = fs.readFileSync(appGradlePath, 'utf8');
+
+    // Enforce consistent applicationId and namespace
+    content = content.replace(/applicationId\s+"[^"]+"/, 'applicationId "com.zingtalk.com"');
+    content = content.replace(/namespace\s*=?\s*"[^"]+"/, 'namespace = "com.zingtalk.com"');
+
+    const keystoreFileName = targetPlatform === 'tv' ? 'zingtalk-tv-release.keystore' : 'zingtalk-mobile-release.keystore';
+    const keyAlias = targetPlatform === 'tv' ? 'zingtalk-tv' : 'zingtalk-mobile';
+
+    const signingBlock = `
+    signingConfigs {
+        release {
+            storeFile file("${keystoreFileName}")
+            storePassword "zingtalk123456"
+            keyAlias "${keyAlias}"
+            keyPassword "zingtalk123456"
+        }
     }
+`;
+    content = content.replace(/signingConfigs\s*\{[\s\S]*?\}\s*\}/, '');
+    content = content.replace('android {', 'android {' + signingBlock);
+    if (!content.includes('signingConfig signingConfigs.release')) {
+        content = content.replace(/(buildTypes\s*\{\s*release\s*\{)/, '$1\n            signingConfig signingConfigs.release');
+    }
+
+    fs.writeFileSync(appGradlePath, content, 'utf8');
+    console.log(`[prepare-android] ✅ Configured ${keystoreFileName} with alias ${keyAlias} and com.zingtalk.com appId`);
 }
 
 // 5. AndroidManifest.xml
 const manifestPath = path.join('android', 'app', 'src', 'main', 'AndroidManifest.xml');
 if (fs.existsSync(manifestPath)) {
     let content = fs.readFileSync(manifestPath, 'utf8');
+
+    // Remove conflicting touchscreen requirements
+    content = content.replace(/<uses-feature\s+android:name="android\.hardware\.touchscreen"\s+android:required="true"\s*\/>/g, '');
 
     const elementsToAdd = [
         '<uses-permission android:name="android.permission.INTERNET" />',
@@ -420,18 +467,14 @@ if (fs.existsSync(manifestPath)) {
         '<uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />',
         '<uses-feature android:name="android.hardware.microphone" android:required="false" />',
         '<uses-feature android:name="android.hardware.telephony" android:required="false" />',
-        '<uses-feature android:name="android.hardware.wifi" android:required="false" />'
+        '<uses-feature android:name="android.hardware.wifi" android:required="false" />',
+        '<uses-feature android:name="android.hardware.touchscreen" android:required="false" />'
     ];
 
     if (targetPlatform === 'tv') {
         elementsToAdd.push(
             '<uses-feature android:name="android.software.leanback" android:required="false" />',
-            '<uses-feature android:name="android.hardware.touchscreen" android:required="false" />',
             '<uses-feature android:name="android.hardware.faketouch" android:required="false" />'
-        );
-    } else {
-        elementsToAdd.push(
-            '<uses-feature android:name="android.hardware.touchscreen" android:required="true" />'
         );
     }
 
@@ -466,6 +509,9 @@ if (fs.existsSync(manifestPath)) {
                 '<category android:name="android.intent.category.LAUNCHER" />\n                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />'
             );
         }
+    } else {
+        // For mobile, remove leanback launcher
+        content = content.replace(/\s*<category android:name="android\.intent\.category\.LEANBACK_LAUNCHER"\s*\/>/g, '');
     }
 
     const orientation = targetPlatform === 'tv' ? 'landscape' : 'portrait';
@@ -489,7 +535,9 @@ if (fs.existsSync(manifestPath)) {
 // 6. ProGuard Rules
 const proguardPath = path.join('android', 'app', 'proguard-rules.pro');
 if (fs.existsSync(proguardPath)) {
-    const rules = `
+    let currentRules = fs.readFileSync(proguardPath, 'utf8');
+    if (!currentRules.includes('com.google.firebase')) {
+        const rules = `
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,JavascriptInterface
 -keep class com.getcapacitor.** { *; }
 -keep class * extends com.getcapacitor.Plugin { *; }
@@ -503,36 +551,11 @@ if (fs.existsSync(proguardPath)) {
 -keep class org.webrtc.** { *; }
 -dontwarn org.webrtc.**
 `;
-    fs.appendFileSync(proguardPath, '\n' + rules.trim() + '\n', 'utf8');
+        fs.appendFileSync(proguardPath, '\n' + rules.trim() + '\n', 'utf8');
+    }
 }
 
-// 7. Configure Keystore Signing in android/app/build.gradle
-const appGradlePath = path.join('android', 'app', 'build.gradle');
-if (fs.existsSync(appGradlePath)) {
-    let content = fs.readFileSync(appGradlePath, 'utf8');
-    const keystoreFileName = targetPlatform === 'tv' ? 'zingtalk-tv-release.keystore' : 'zingtalk-mobile-release.keystore';
-    const keyAlias = targetPlatform === 'tv' ? 'zingtalk-tv' : 'zingtalk-mobile';
-
-    const signingBlock = `
-    signingConfigs {
-        release {
-            storeFile file("${keystoreFileName}")
-            storePassword "zingtalk123456"
-            keyAlias "${keyAlias}"
-            keyPassword "zingtalk123456"
-        }
-    }
-`;
-    content = content.replace(/signingConfigs\s*\{[\s\S]*?\}\s*\}/, '');
-    content = content.replace('android {', 'android {' + signingBlock);
-    if (!content.includes('signingConfig signingConfigs.release')) {
-        content = content.replace(/(buildTypes\s*\{\s*release\s*\{)/, '$1\n            signingConfig signingConfigs.release');
-    }
-    fs.writeFileSync(appGradlePath, content, 'utf8');
-    console.log(`[prepare-android] ✅ Configured ${keystoreFileName} with alias ${keyAlias}`);
-}
-
-// 8. Copy platform web assets to android/app/src/main/assets/public
+// 7. Copy platform web assets to android/app/src/main/assets/public
 const androidPublicDir = path.join('android', 'app', 'src', 'main', 'assets', 'public');
 if (!fs.existsSync(androidPublicDir)) {
     fs.mkdirSync(androidPublicDir, { recursive: true });

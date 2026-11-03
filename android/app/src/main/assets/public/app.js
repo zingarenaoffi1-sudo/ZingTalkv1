@@ -1,21 +1,27 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js";
 import { 
     getAuth, 
-    signInWithEmailAndPassword, 
+    onAuthStateChanged,
+    signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     sendPasswordResetEmail,
-    updateProfile
+    signInAnonymously,
+    updateProfile,
+    signOut
 } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js";
-import { 
-    getFirestore, 
-    doc, 
-    setDoc, 
-    collection, 
-    query, 
-    where, 
-    getDocs 
+import {
+    getFirestore,
+    doc,
+    setDoc,
+    getDoc,
+    deleteDoc,
+    collection,
+    query,
+    where,
+    getDocs
 } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js";
 
+// Client Firebase configuration
 const firebaseConfig = {
     apiKey: "AIzaSyDDi5b_GBmRLSXQOXe-_ZA3bP6KuxHZvvQ",
     authDomain: "zing-talk-c6496.firebaseapp.com",
@@ -31,13 +37,158 @@ try {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
     firestoreDb = getFirestore(app);
-} catch (_) {}
+} catch (e) {
+    // Initialized in offline fallback mode
+}
 
+// ----------------- Firestore 10-Digit UID Registry -----------------
+// Automatically persists the user's allocated 10-digit UID in the 'users' collection on Firestore
+export async function saveUserUidToFirestore(user, uid) {
+    if (!firestoreDb || !uid) return;
+    try {
+        const cleanUid = String(uid).trim().replace(/\D/g, '');
+        if (cleanUid.length !== 10) return;
+
+        const authUid = user?.uid || (auth?.currentUser ? auth.currentUser.uid : null);
+        const email = user?.email || (auth?.currentUser ? auth.currentUser.email : "") || (user?.isAnonymous ? `guest_${cleanUid}@zingtalk.local` : "");
+        const displayName = user?.displayName || (auth?.currentUser ? auth.currentUser.displayName : "") || (email ? email.split("@")[0] : "TV User");
+
+        const dataToSave = {
+            uid: cleanUid,
+            authUid: authUid,
+            email: email,
+            displayName: displayName,
+            isGuest: Boolean(user?.isAnonymous || auth?.currentUser?.isAnonymous),
+            platform: "Fire TV / Android",
+            updatedAt: new Date().toISOString()
+        };
+
+        // 1. Primary Record: Keyed by 10-Digit UID in 'users' collection
+        try {
+            const docByUid = doc(firestoreDb, "users", cleanUid);
+            await setDoc(docByUid, dataToSave, { merge: true });
+            console.log(`[Firestore] ✅ 10-Digit UID [${cleanUid}] saved to Firestore users/${cleanUid}`);
+        } catch (err1) {
+            console.warn(`[Firestore] Notice on users/${cleanUid}:`, err1.message);
+        }
+
+        // 2. Secondary Index: Keyed by Firebase Auth UID in 'user_profiles' collection
+        if (authUid) {
+            try {
+                const docByAuth = doc(firestoreDb, "user_profiles", authUid);
+                await setDoc(docByAuth, dataToSave, { merge: true });
+                console.log(`[Firestore] ✅ Profile mapped to Firestore user_profiles/${authUid}`);
+            } catch (err2) {
+                console.warn(`[Firestore] Notice on user_profiles/${authUid}:`, err2.message);
+            }
+        }
+    } catch (err) {
+        console.warn("[Firestore] Notice saving UID to Firestore:", err.message);
+    }
+}
+
+// Lookup existing 10-Digit UID from Firestore for a returning user
+export async function lookupUserUidFromFirestore(email, authUid) {
+    if (!firestoreDb) return null;
+    try {
+        const usersCol = collection(firestoreDb, "users");
+        if (email) {
+            const q = query(usersCol, where("email", "==", email));
+            const snap = await getDocs(q);
+            if (!snap.empty) {
+                const d = snap.docs[0].data();
+                if (d && d.uid && String(d.uid).length === 10) return String(d.uid);
+            }
+        }
+        if (authUid) {
+            const q = query(usersCol, where("authUid", "==", authUid));
+            const snap = await getDocs(q);
+            if (!snap.empty) {
+                const d = snap.docs[0].data();
+                if (d && d.uid && String(d.uid).length === 10) return String(d.uid);
+            }
+        }
+    } catch (err) {
+        console.warn("[Firestore] Lookup notice:", err.message);
+    }
+    return null;
+}
+
+// Local-Only Storage: Save contacts strictly on the user's local device (100% Zero-Server & Privacy Policy Compliant)
+export function saveContactLocally(contactUid, contactName) {
+    if (!contactUid || !contactName) return;
+    const cleanUid = String(contactUid).trim().replace(/\D/g, '');
+    const cleanName = String(contactName).trim();
+
+    const updated = myContacts.filter(c => c.uid !== cleanUid);
+    const newContact = { uid: cleanUid, name: cleanName };
+    updated.unshift(newContact);
+    myContacts = updated;
+    saveUserContactsToStorage();
+    renderContacts(myContacts);
+
+    // Sync only to volatile in-memory RAM so live Alexa voice commands know who to call during this active session
+    if (socket && socket.connected && my10DigitUid) {
+        socket.emit("save_contact", { myUid: my10DigitUid, targetUid: cleanUid, customName: cleanName });
+    }
+}
+
+export function showToast(message) {
+    const toast = document.getElementById("toast");
+    if (!toast) return;
+    toast.textContent = message;
+    toast.style.opacity = "1";
+    setTimeout(() => {
+        toast.style.opacity = "0";
+    }, 3200);
+}
+
+// Web Audio API Pleasant 2-Tone Notification Sound (Zero External Dependency)
+let sharedAudioCtx = null;
+export function playIncomingChime() {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        if (!sharedAudioCtx || sharedAudioCtx.state === "closed") {
+            sharedAudioCtx = new AudioCtx();
+        }
+        if (sharedAudioCtx.state === "suspended") {
+            sharedAudioCtx.resume().catch(() => {});
+        }
+        const ctx = sharedAudioCtx;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        const now = ctx.currentTime;
+        osc.frequency.setValueAtTime(587.33, now); // D5 Note
+        osc.frequency.setValueAtTime(880.00, now + 0.09); // A5 Note
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+    } catch (_) {}
+}
+
+window.addEventListener("submit", (e) => e.preventDefault());
+
+// Application State
+export let currentUser = null;
+export let my10DigitUid = null;
+export let currentTargetUid = null;
+export let socket = null;
+
+// Infrastructure Configuration (Always hosted directly on user's AWS EC2 server)
 const DUCKDNS_SIGNALING_URL = "https://zingtalk.duckdns.org";
+const PRIMARY_STUN = "stun:stun.l.google.com:19302";
+const SECONDARY_STUN = "stun:zingtalk.duckdns.org:3478";
+let isStunFailoverActive = false;
 
 export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
     if (saved && saved.trim()) return saved.trim();
+
     if (typeof window !== "undefined" && window.location) {
         const h = window.location.host || "";
         const p = window.location.protocol || "";
@@ -60,52 +211,36 @@ export function computeDeterministic10DigitUid(idStr) {
     return num.toString();
 }
 
-export async function lookupUserUidFromFirestore(email, authUid) {
-    if (!firestoreDb) return null;
-    try {
-        const usersCol = collection(firestoreDb, "users");
-        if (email) {
-            const snap = await getDocs(query(usersCol, where("email", "==", email.toLowerCase().trim())));
-            if (!snap.empty) {
-                const d = snap.docs[0].data();
-                if (d && d.uid && String(d.uid).length === 10) return String(d.uid);
-            }
-        }
-        if (authUid) {
-            const snap = await getDocs(query(usersCol, where("authUid", "==", authUid)));
-            if (!snap.empty) {
-                const d = snap.docs[0].data();
-                if (d && d.uid && String(d.uid).length === 10) return String(d.uid);
-            }
-        }
-    } catch (_) {}
-    return null;
-}
-
-export async function saveUserUidToFirestore(user, uid) {
-    if (!firestoreDb || !uid) return;
-    try {
-        const cleanUid = String(uid).trim().replace(/\D/g, '');
-        if (cleanUid.length !== 10) return;
-        const data = {
-            uid: cleanUid,
-            authUid: user?.uid || null,
-            email: user?.email ? user.email.toLowerCase().trim() : "",
-            displayName: user?.displayName || "Mobile User",
-            platform: "Android Mobile",
-            updatedAt: new Date().toISOString()
-        };
-        await setDoc(doc(firestoreDb, "users", cleanUid), data, { merge: true });
-        if (user?.uid) {
-            await setDoc(doc(firestoreDb, "user_profiles", user.uid), data, { merge: true });
-        }
-    } catch (_) {}
+export function updateUidDisplays(uid) {
+    const label = document.getElementById("my-uid-label");
+    const modalUid = document.getElementById("modal-uid");
+    if (!uid) {
+        my10DigitUid = null;
+        if (label) label.innerText = "UID: Connecting...";
+        if (modalUid) modalUid.innerText = "Connecting to Server...";
+        return;
+    }
+    my10DigitUid = String(uid);
+    if (label) label.innerText = "UID: " + my10DigitUid;
+    if (modalUid) modalUid.innerText = my10DigitUid;
 }
 
 const rtcConfig = {
     iceServers: [
-        { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
-        { urls: ["stun:zingtalk.duckdns.org:3478"] },
+        { 
+            urls: [
+                "stun:stun.l.google.com:19302",
+                "stun:stun1.l.google.com:19302",
+                "stun:stun2.l.google.com:19302",
+                "stun:stun3.l.google.com:19302",
+                "stun:stun4.l.google.com:19302"
+            ] 
+        },
+        { 
+            urls: [
+                "stun:zingtalk.duckdns.org:3478"
+            ] 
+        },
         {
             urls: [
                 "turn:zingtalk.duckdns.org:3478?transport=udp",
@@ -113,463 +248,120 @@ const rtcConfig = {
             ],
             username: "zingtalk",
             credential: "zingtalkpassword"
+        },
+        { 
+            urls: ["stun:global.stun.twilio.com:3478"] 
         }
     ],
     iceCandidatePoolSize: 10
 };
 
-let currentUser = null;
-let my10DigitUid = null;
-let currentTargetUid = null;
-let socket = null;
+// Clean in-memory user states (isolated per user UID)
 let myContacts = [];
 let chatHistory = {};
-let localStream = null;
-let peerConnection = null;
-let isMicMuted = false;
-let isVideoDisabled = false;
-let currentFacingMode = "user";
-let callTimer = null;
-let callDurationSeconds = 0;
-let isSignUpMode = false;
+let unreadCounts = {};
 
-function showToast(msg) {
-    const toast = document.getElementById("mobile-toast");
-    if (!toast) return;
-    toast.textContent = msg;
-    toast.style.opacity = "1";
-    setTimeout(() => { toast.style.opacity = "0"; }, 3000);
+export function getHistoryKey(uid) {
+    const id = uid || my10DigitUid;
+    return id ? `zingTalkHistory_${id}` : "zingTalkHistory_guest";
+}
+export function getContactsKey(uid) {
+    const id = uid || my10DigitUid;
+    return id ? `zingTalkContacts_${id}` : "zingTalkContacts_guest";
+}
+export function getUnreadKey(uid) {
+    const id = uid || my10DigitUid;
+    return id ? `zingTalkUnread_${id}` : "zingTalkUnread_guest";
 }
 
-function updateDisplays(uid) {
-    my10DigitUid = uid ? String(uid) : null;
-    const pill = document.getElementById("mobile-my-uid-pill");
-    const full = document.getElementById("profile-uid-full");
-    if (pill) pill.innerText = uid ? `UID: ${uid}` : "UID: Connecting...";
-    if (full) full.innerText = uid ? `UID: ${uid}` : "UID: Connecting...";
-}
-
-function loadContacts() {
+export function loadUserStorageData(uid) {
+    const targetUid = uid || my10DigitUid;
     try {
-        const stored = localStorage.getItem("zingTalkMobileContacts");
-        myContacts = stored ? JSON.parse(stored) : [];
+        const hist = localStorage.getItem(getHistoryKey(targetUid));
+        chatHistory = hist ? JSON.parse(hist) : {};
+    } catch (_) { chatHistory = {}; }
+
+    try {
+        const cont = localStorage.getItem(getContactsKey(targetUid));
+        myContacts = cont ? JSON.parse(cont) : [];
     } catch (_) { myContacts = []; }
-    renderContacts();
-}
 
-function saveContacts() {
     try {
-        localStorage.setItem("zingTalkMobileContacts", JSON.stringify(myContacts));
+        const unread = localStorage.getItem(getUnreadKey(targetUid));
+        unreadCounts = unread ? JSON.parse(unread) : {};
+    } catch (_) { unreadCounts = {}; }
+}
+
+export function saveUserHistoryToStorage() {
+    try {
+        localStorage.setItem(getHistoryKey(), JSON.stringify(chatHistory));
     } catch (_) {}
-    renderContacts();
 }
 
-function renderContacts() {
-    const list = document.getElementById("mobile-contacts-list");
-    if (!list) return;
-    list.innerHTML = "";
-    if (myContacts.length === 0) {
-        list.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 40px 10px; font-size: 14px;">No contacts saved yet.<br>Tap "+ Add Contact" or use the Dialpad.</div>`;
-        return;
-    }
-    myContacts.forEach(contact => {
-        const card = document.createElement("div");
-        card.className = "contact-card";
-        const initial = (contact.name || "U").charAt(0).toUpperCase();
-        card.innerHTML = `
-            <div class="contact-avatar">${initial}</div>
-            <div class="contact-info">
-                <div class="contact-name">${contact.name}</div>
-                <div class="contact-uid">UID: ${contact.uid}</div>
-            </div>
-            <div class="contact-actions">
-                <button type="button" class="action-icon-btn chat-btn" title="Chat">
-                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>
-                </button>
-                <button type="button" class="action-icon-btn call-audio audio-btn" title="Audio Call">
-                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56-.35-.12-.74-.03-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/></svg>
-                </button>
-                <button type="button" class="action-icon-btn call-video video-btn" title="Video Call">
-                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
-                </button>
-            </div>
-        `;
-        // Whole card click opens chat
-        card.addEventListener("click", (e) => {
-            if (e.target.closest(".action-icon-btn")) return;
-            openChat(contact);
-        });
-        card.querySelector(".chat-btn")?.addEventListener("click", (e) => {
-            e.stopPropagation();
-            openChat(contact);
-        });
-        card.querySelector(".audio-btn")?.addEventListener("click", (e) => {
-            e.stopPropagation();
-            initiateCall(contact.uid, "audio");
-        });
-        card.querySelector(".video-btn")?.addEventListener("click", (e) => {
-            e.stopPropagation();
-            initiateCall(contact.uid, "video");
-        });
-        list.appendChild(card);
-    });
+export function saveUserContactsToStorage() {
+    try {
+        localStorage.setItem(getContactsKey(), JSON.stringify(myContacts));
+    } catch (_) {}
 }
 
-let activeWebNotification = null;
+export function saveUserUnreadToStorage() {
+    try {
+        localStorage.setItem(getUnreadKey(), JSON.stringify(unreadCounts));
+    } catch (_) {}
+}
 
-export const CallNotificationService = {
-    async requestPermission() {
-        if (window.ZingNativeBridge && window.ZingNativeBridge.requestAllPermissions) {
-            try { window.ZingNativeBridge.requestAllPermissions(); } catch (_) {}
+// ----------------- WhatsApp-Style Call Audio & Ringtone Engine -----------------
+let callAudioCtx = null;
+let outgoingRingInterval = null;
+let incomingRingInterval = null;
+
+function getCallAudioContext() {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return null;
+        if (!callAudioCtx || callAudioCtx.state === "closed") {
+            callAudioCtx = new AudioCtx();
         }
-        if (typeof Notification !== "undefined" && Notification.permission === "default") {
-            try { await Notification.requestPermission(); } catch (_) {}
+        if (callAudioCtx.state === "suspended") {
+            callAudioCtx.resume().catch(() => {});
         }
-    },
-
-    showIncoming(callerUid, callerName, callType) {
-        const title = callerName || `UID: ${callerUid}`;
-        const subtitle = `Incoming ZingTalk ${callType === 'video' ? 'HD Video' : 'Audio'} Call...`;
-
-        // 1. In-App WhatsApp-style Top Dropdown Banner
-        const banner = document.getElementById("mobile-top-call-banner");
-        const bannerName = document.getElementById("top-banner-name");
-        const bannerType = document.getElementById("top-banner-type");
-        const bannerAvatar = document.getElementById("top-banner-avatar");
-
-        if (banner) {
-            if (bannerName) bannerName.innerText = title;
-            if (bannerType) bannerType.innerText = subtitle;
-            if (bannerAvatar) bannerAvatar.innerText = (title || "U").charAt(0).toUpperCase();
-            banner.classList.remove("hidden");
-            banner.style.display = "flex";
-        }
-
-        // 2. Android Native Heads-Up System Notification with Accept/Decline action buttons
-        if (window.ZingNativeBridge && window.ZingNativeBridge.showIncomingCall) {
-            try {
-                window.ZingNativeBridge.showIncomingCall(callerUid, title, callType);
-            } catch (err) {
-                console.warn("[NativeBridge] showIncomingCall notice:", err);
-            }
-        }
-
-        // 3. Web Notification (for browser / desktop / PWA)
-        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-            try {
-                if (activeWebNotification) activeWebNotification.close();
-                activeWebNotification = new Notification(title, {
-                    body: subtitle,
-                    icon: "assets/icon.png",
-                    tag: "zingtalk-call",
-                    requireInteraction: true
-                });
-                activeWebNotification.onclick = () => {
-                    window.focus();
-                    const inOverlay = document.getElementById("mobile-incoming-call-overlay");
-                    if (inOverlay) {
-                        inOverlay.classList.remove("hidden");
-                        inOverlay.style.display = "flex";
-                    }
-                };
-            } catch (_) {}
-        }
-    },
-
-    showOngoing(targetUid, targetName, durationStr) {
-        const title = targetName || `UID: ${targetUid}`;
-        
-        // Hide incoming banner
-        const banner = document.getElementById("mobile-top-call-banner");
-        if (banner) {
-            banner.classList.add("hidden");
-            banner.style.display = "none";
-        }
-
-        // Update In-App Ongoing Call Bar
-        const barTarget = document.getElementById("ongoing-bar-target");
-        const barTimer = document.getElementById("ongoing-bar-timer");
-        if (barTarget) barTarget.innerText = title;
-        if (barTimer) barTimer.innerText = durationStr;
-
-        // Android Native Ongoing Status Notification in status bar
-        if (window.ZingNativeBridge && window.ZingNativeBridge.showOngoingCall) {
-            try {
-                window.ZingNativeBridge.showOngoingCall(targetUid, title, durationStr);
-            } catch (err) {
-                console.warn("[NativeBridge] showOngoingCall notice:", err);
-            }
-        }
-    },
-
-    dismissAll() {
-        const banner = document.getElementById("mobile-top-call-banner");
-        if (banner) {
-            banner.classList.add("hidden");
-            banner.style.display = "none";
-        }
-
-        const bar = document.getElementById("mobile-ongoing-call-bar");
-        if (bar) {
-            bar.classList.add("hidden");
-            bar.style.display = "none";
-        }
-
-        if (window.ZingNativeBridge && window.ZingNativeBridge.dismissCallNotifications) {
-            try { window.ZingNativeBridge.dismissCallNotifications(); } catch (_) {}
-        }
-
-        if (activeWebNotification) {
-            try { activeWebNotification.close(); } catch (_) {}
-            activeWebNotification = null;
-        }
-    }
-};
-
-// Global Native Intent Hook: Called by MainActivity.java when user taps Accept / Decline / End from Android notification
-window.handleNativeCallAction = function(action) {
-    console.log("[ZingTalk Mobile] Native Notification action received:", action);
-    if (action === "accept") {
-        if (incomingCallerUid) {
-            answerCall(incomingCallerUid, incomingCallType);
-        }
-    } else if (action === "decline") {
-        if (incomingCallerUid && socket) {
-            socket.emit("call_response", { targetUid: incomingCallerUid, status: "declined" });
-        }
-        stopRingtone();
-        playCallEndedTone();
-        CallNotificationService.dismissAll();
-        const inOverlay = document.getElementById("mobile-incoming-call-overlay");
-        if (inOverlay) {
-            inOverlay.classList.add("hidden");
-            inOverlay.style.display = "none";
-        }
-        incomingCallerUid = null;
-    } else if (action === "end") {
-        endCall();
-    }
-};
-
-export async function updatePermissionsStatusUI() {
-    const micBadge = document.getElementById("perm-mic-badge");
-    const camBadge = document.getElementById("perm-cam-badge");
-    const notifBadge = document.getElementById("perm-notif-badge");
-
-    // Notifications status
-    let notifGranted = false;
-    if (window.ZingNativeBridge && window.ZingNativeBridge.areNotificationsEnabled) {
-        try { notifGranted = window.ZingNativeBridge.areNotificationsEnabled(); } catch (_) {}
-    } else if (typeof Notification !== "undefined") {
-        notifGranted = (Notification.permission === "granted");
-    }
-    if (notifBadge) {
-        if (notifGranted) {
-            notifBadge.className = "perm-status granted";
-            notifBadge.innerText = "Granted";
-        } else {
-            notifBadge.className = "perm-status needed";
-            notifBadge.innerText = "Tap to Enable";
-        }
-    }
-
-    // Camera and Microphone status
-    if (navigator.permissions && navigator.permissions.query) {
-        try {
-            const micP = await navigator.permissions.query({ name: "microphone" });
-            if (micBadge) {
-                if (micP.state === "granted") {
-                    micBadge.className = "perm-status granted";
-                    micBadge.innerText = "Granted";
-                } else if (micP.state === "denied") {
-                    micBadge.className = "perm-status needed";
-                    micBadge.innerText = "Blocked";
-                } else {
-                    micBadge.className = "perm-status";
-                    micBadge.innerText = "Ready on Call";
-                }
-            }
-        } catch (_) {}
-
-        try {
-            const camP = await navigator.permissions.query({ name: "camera" });
-            if (camBadge) {
-                if (camP.state === "granted") {
-                    camBadge.className = "perm-status granted";
-                    camBadge.innerText = "Granted";
-                } else if (camP.state === "denied") {
-                    camBadge.className = "perm-status needed";
-                    camBadge.innerText = "Blocked";
-                } else {
-                    camBadge.className = "perm-status";
-                    camBadge.innerText = "Ready on Call";
-                }
-            }
-        } catch (_) {}
+        return callAudioCtx;
+    } catch (_) {
+        return null;
     }
 }
 
-function connectSocket() {
-    const serverUrl = getEffectiveServerUrl();
-    if (socket && socket.connected) {
-        if (currentUser) {
-            socket.emit("login_user", {
-                email: currentUser.email,
-                name: currentUser.displayName,
-                authUid: currentUser.uid,
-                uid: my10DigitUid || currentUser.zingUid,
-                isGuest: !currentUser.email,
-                platform: "Mobile"
-            });
-        }
-        return;
-    }
+// 1. WhatsApp Outgoing Calling Tone (Dual 440Hz + 480Hz pulses)
+function playOutgoingBeepPair() {
+    const ctx = getCallAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
 
-    if (typeof io === "undefined") {
-        console.warn("[ZingTalk Mobile] Socket.io client runtime not yet loaded");
-        return;
-    }
-    socket = io(serverUrl, {
-        transports: ["websocket", "polling"],
-        reconnectionAttempts: 20,
-        reconnectionDelay: 1500
-    });
-
-    socket.on("connect", () => {
-        if (currentUser) {
-            socket.emit("login_user", {
-                email: currentUser.email,
-                name: currentUser.displayName,
-                authUid: currentUser.uid,
-                uid: my10DigitUid || currentUser.zingUid,
-                isGuest: !currentUser.email,
-                platform: "Mobile"
-            });
-        }
-    });
-
-    socket.on("user_data", (data) => {
-        if (data && data.uid) {
-            updateDisplays(data.uid);
-            if (currentUser) {
-                currentUser.zingUid = data.uid;
-                localStorage.setItem("zingTalkMobileSession", JSON.stringify(currentUser));
-                saveUserUidToFirestore(currentUser, data.uid);
-            }
-        }
-    });
-
-    let incomingCallerUid = null;
-    let incomingCallType = "video";
-    let pendingOffer = null;
-    let iceCandidatesQueue = [];
-
-    // ----------------- WhatsApp-Style Call Audio & Ringtone Engine -----------------
-    let callAudioCtx = null;
-    let outgoingRingInterval = null;
-    let incomingRingInterval = null;
-    let outgoingCallTimer = null;
-    let incomingCallTimer = null;
-
-    function getCallAudioContext() {
-        try {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) return null;
-            if (!callAudioCtx || callAudioCtx.state === "closed") {
-                callAudioCtx = new AudioCtx();
-            }
-            if (callAudioCtx.state === "suspended") {
-                callAudioCtx.resume().catch(() => {});
-            }
-            return callAudioCtx;
-        } catch (_) {
-            return null;
-        }
-    }
-
-    // 1. WhatsApp Outgoing Calling Tone (Dual 440Hz + 480Hz pulses)
-    function playOutgoingBeepPair() {
-        const ctx = getCallAudioContext();
-        if (!ctx) return;
-        const now = ctx.currentTime;
-
-        function createTone(startTime, duration) {
-            try {
-                const osc1 = ctx.createOscillator();
-                const osc2 = ctx.createOscillator();
-                const gainNode = ctx.createGain();
-                const filter = ctx.createBiquadFilter();
-
-                filter.type = "lowpass";
-                filter.frequency.setValueAtTime(2200, startTime);
-
-                osc1.type = "sine";
-                osc1.frequency.setValueAtTime(440, startTime);
-
-                osc2.type = "sine";
-                osc2.frequency.setValueAtTime(480, startTime);
-
-                gainNode.gain.setValueAtTime(0.0001, startTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.12, startTime + 0.025);
-                gainNode.gain.setValueAtTime(0.12, startTime + duration - 0.035);
-                gainNode.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
-
-                osc1.connect(filter);
-                osc2.connect(filter);
-                filter.connect(gainNode);
-                gainNode.connect(ctx.destination);
-
-                osc1.start(startTime);
-                osc2.start(startTime);
-                osc1.stop(startTime + duration);
-                osc2.stop(startTime + duration);
-            } catch (_) {}
-        }
-
-        createTone(now, 0.35);
-        createTone(now + 0.53, 0.35);
-    }
-
-    function startOutgoingRingtone() {
-        stopOutgoingRingtone();
-        stopIncomingRingtone();
-        playOutgoingBeepPair();
-        outgoingRingInterval = setInterval(() => {
-            playOutgoingBeepPair();
-        }, 2800);
-    }
-
-    function stopOutgoingRingtone() {
-        if (outgoingRingInterval) {
-            clearInterval(outgoingRingInterval);
-            outgoingRingInterval = null;
-        }
-    }
-
-    // 2. WhatsApp Incoming Marimba Melodic Ringtone
-    function playMarimbaNote(ctx, freq, startTime, duration, gainVal = 0.22) {
+    function createTone(startTime, duration) {
         try {
             const osc1 = ctx.createOscillator();
             const osc2 = ctx.createOscillator();
-            const gain = ctx.createGain();
+            const gainNode = ctx.createGain();
+            const filter = ctx.createBiquadFilter();
+
+            filter.type = "lowpass";
+            filter.frequency.setValueAtTime(2200, startTime);
 
             osc1.type = "sine";
-            osc1.frequency.setValueAtTime(freq, startTime);
+            osc1.frequency.setValueAtTime(440, startTime);
 
-            osc2.type = "triangle";
-            osc2.frequency.setValueAtTime(freq * 2, startTime);
+            osc2.type = "sine";
+            osc2.frequency.setValueAtTime(480, startTime);
 
-            gain.gain.setValueAtTime(0.0001, startTime);
-            gain.gain.exponentialRampToValueAtTime(gainVal, startTime + 0.006);
-            gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+            gainNode.gain.setValueAtTime(0.0001, startTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.12, startTime + 0.025);
+            gainNode.gain.setValueAtTime(0.12, startTime + duration - 0.035);
+            gainNode.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
 
-            const subGain = ctx.createGain();
-            subGain.gain.setValueAtTime(0.18, startTime);
-            osc2.connect(subGain);
-            subGain.connect(gain);
-
-            osc1.connect(gain);
-            gain.connect(ctx.destination);
+            osc1.connect(filter);
+            osc2.connect(filter);
+            filter.connect(gainNode);
+            gainNode.connect(ctx.destination);
 
             osc1.start(startTime);
             osc2.start(startTime);
@@ -578,193 +370,651 @@ function connectSocket() {
         } catch (_) {}
     }
 
-    function playWhatsAppIncomingPhrase() {
+    createTone(now, 0.35);
+    createTone(now + 0.53, 0.35);
+}
+
+export function startOutgoingRingtone() {
+    stopOutgoingRingtone();
+    stopIncomingRingtone();
+    playOutgoingBeepPair();
+    outgoingRingInterval = setInterval(() => {
+        playOutgoingBeepPair();
+    }, 2800);
+}
+
+export function stopOutgoingRingtone() {
+    if (outgoingRingInterval) {
+        clearInterval(outgoingRingInterval);
+        outgoingRingInterval = null;
+    }
+}
+
+// 2. WhatsApp Incoming Marimba Melodic Ringtone
+function playMarimbaNote(ctx, freq, startTime, duration, gainVal = 0.22) {
+    try {
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc1.type = "sine";
+        osc1.frequency.setValueAtTime(freq, startTime);
+
+        osc2.type = "triangle";
+        osc2.frequency.setValueAtTime(freq * 2, startTime);
+
+        gain.gain.setValueAtTime(0.0001, startTime);
+        gain.gain.exponentialRampToValueAtTime(gainVal, startTime + 0.006);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+        const subGain = ctx.createGain();
+        subGain.gain.setValueAtTime(0.18, startTime);
+        osc2.connect(subGain);
+        subGain.connect(gain);
+
+        osc1.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc1.start(startTime);
+        osc2.start(startTime);
+        osc1.stop(startTime + duration);
+        osc2.stop(startTime + duration);
+    } catch (_) {}
+}
+
+function playWhatsAppIncomingPhrase() {
+    const ctx = getCallAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    // Classic WhatsApp Marimba arpeggio rhythm
+    playMarimbaNote(ctx, 659.25, now + 0.00, 0.14); // E5
+    playMarimbaNote(ctx, 830.61, now + 0.14, 0.14); // G#5
+    playMarimbaNote(ctx, 987.77, now + 0.28, 0.14); // B5
+    playMarimbaNote(ctx, 1318.51, now + 0.42, 0.22); // E6
+    playMarimbaNote(ctx, 987.77, now + 0.66, 0.16); // B5
+    playMarimbaNote(ctx, 1318.51, now + 0.84, 0.38); // E6
+
+    playMarimbaNote(ctx, 880.00, now + 1.28, 0.14); // A5
+    playMarimbaNote(ctx, 1108.73, now + 1.42, 0.14); // C#6
+    playMarimbaNote(ctx, 1318.51, now + 1.56, 0.22); // E6
+    playMarimbaNote(ctx, 1760.00, now + 1.76, 0.45); // A6
+}
+
+export function startIncomingRingtone() {
+    stopIncomingRingtone();
+    stopOutgoingRingtone();
+    playWhatsAppIncomingPhrase();
+    incomingRingInterval = setInterval(() => {
+        playWhatsAppIncomingPhrase();
+    }, 3200);
+}
+
+export function stopIncomingRingtone() {
+    if (incomingRingInterval) {
+        clearInterval(incomingRingInterval);
+        incomingRingInterval = null;
+    }
+}
+
+// 3. WhatsApp Call Ended Tone (Three quick descending beeps)
+export function playCallEndedTone() {
+    stopOutgoingRingtone();
+    stopIncomingRingtone();
+    try {
         const ctx = getCallAudioContext();
         if (!ctx) return;
         const now = ctx.currentTime;
+        const beeps = [
+            { freq: 480, start: now, dur: 0.08 },
+            { freq: 400, start: now + 0.12, dur: 0.08 },
+            { freq: 320, start: now + 0.24, dur: 0.16 }
+        ];
+        beeps.forEach(b => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(b.freq, b.start);
+            gain.gain.setValueAtTime(0.14, b.start);
+            gain.gain.exponentialRampToValueAtTime(0.001, b.start + b.dur);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(b.start);
+            osc.stop(b.start + b.dur);
+        });
+    } catch (_) {}
+}
 
-        // Classic WhatsApp Marimba arpeggio rhythm
-        playMarimbaNote(ctx, 659.25, now + 0.00, 0.14); // E5
-        playMarimbaNote(ctx, 830.61, now + 0.14, 0.14); // G#5
-        playMarimbaNote(ctx, 987.77, now + 0.28, 0.14); // B5
-        playMarimbaNote(ctx, 1318.51, now + 0.42, 0.22); // E6
-        playMarimbaNote(ctx, 987.77, now + 0.66, 0.16); // B5
-        playMarimbaNote(ctx, 1318.51, now + 0.84, 0.38); // E6
+export function startRingtone() {
+    startIncomingRingtone();
+}
 
-        playMarimbaNote(ctx, 880.00, now + 1.28, 0.14); // A5
-        playMarimbaNote(ctx, 1108.73, now + 1.42, 0.14); // C#6
-        playMarimbaNote(ctx, 1318.51, now + 1.56, 0.22); // E6
-        playMarimbaNote(ctx, 1760.00, now + 1.76, 0.45); // A6
-    }
+export function stopRingtone() {
+    stopIncomingRingtone();
+    stopOutgoingRingtone();
+}
 
-    function startIncomingRingtone() {
-        stopIncomingRingtone();
-        stopOutgoingRingtone();
-        playWhatsAppIncomingPhrase();
-        incomingRingInterval = setInterval(() => {
-            playWhatsAppIncomingPhrase();
-        }, 3200);
-    }
+// Purge legacy unscoped cache keys from previous versions
+try {
+    localStorage.removeItem("zingTalkHistory");
+    localStorage.removeItem("zingTalkContacts");
+    localStorage.removeItem("zingTalkUnread");
+} catch (_) {}
 
-    function stopIncomingRingtone() {
-        if (incomingRingInterval) {
-            clearInterval(incomingRingInterval);
-            incomingRingInterval = null;
+let localStream = null;
+let peerConnection = null;
+let activeCallTarget = null;
+let currentCallType = "video";
+let isMicMuted = false;
+let callDurationTimer = null;
+let callSecondsElapsed = 0;
+let iceCandidatesQueue = [];
+let pendingOffer = null;
+let outgoingCallTimer = null;
+let incomingCallTimer = null;
+
+// Auto-login from saved session (Dual-layer: LocalStorage + Native Preferences)
+const savedSession = localStorage.getItem("zingTalkTvSession");
+if (savedSession) {
+    try {
+        const sessionData = JSON.parse(savedSession);
+        if (sessionData && (sessionData.displayName || sessionData.uid || sessionData.zingUid)) {
+            if (sessionData.zingUid) {
+                my10DigitUid = String(sessionData.zingUid);
+                updateUidDisplays(my10DigitUid);
+                loadUserStorageData(my10DigitUid);
+            }
+            loginUserSession(sessionData);
         }
+    } catch (_) {}
+}
+
+// Native SharedPreferences Persistence Backup (Prevents Bug 37 & 48: WebView Storage Aggressive Clear)
+async function persistSessionBackup(key, value) {
+    try {
+        localStorage.setItem(key, value);
+        if (window.Capacitor?.Plugins?.Preferences) {
+            await window.Capacitor.Plugins.Preferences.set({ key, value });
+        }
+    } catch (_) {}
+}
+
+async function restoreSessionFromNativeBackup() {
+    try {
+        if (!currentUser && window.Capacitor?.Plugins?.Preferences) {
+            const { value } = await window.Capacitor.Plugins.Preferences.get({ key: "zingTalkTvSession" });
+            if (value) {
+                const sessionData = JSON.parse(value);
+                if (sessionData && (sessionData.displayName || sessionData.uid || sessionData.zingUid)) {
+                    if (sessionData.zingUid && !my10DigitUid) {
+                        my10DigitUid = String(sessionData.zingUid);
+                        updateUidDisplays(my10DigitUid);
+                        loadUserStorageData(my10DigitUid);
+                    }
+                    loginUserSession(sessionData);
+                }
+            }
+        }
+    } catch (_) {}
+}
+restoreSessionFromNativeBackup();
+
+function loginUserSession(user) {
+    currentUser = user;
+    if (user.zingUid && !my10DigitUid) {
+        my10DigitUid = String(user.zingUid);
+        updateUidDisplays(my10DigitUid);
+        loadUserStorageData(my10DigitUid);
+    }
+    if (my10DigitUid) {
+        saveUserUidToFirestore(user, my10DigitUid);
+    }
+    document.getElementById("login-screen")?.classList.add("hidden");
+    document.getElementById("tv-top-bar")?.classList.remove("hidden");
+    document.getElementById("main-screen")?.classList.remove("hidden");
+
+    persistSessionBackup("zingTalkTvSession", JSON.stringify(user));
+
+    const displayName = user.displayName || (user.email ? user.email.split("@")[0] : "TV User");
+    if (document.getElementById("my-name")) document.getElementById("my-name").innerText = displayName;
+    if (document.getElementById("my-avatar")) document.getElementById("my-avatar").innerText = displayName.charAt(0).toUpperCase();
+
+    // Close any previous open chat and clear message area so no old user's chat leaks!
+    closeChat();
+    const messagesArea = document.getElementById("messages-area");
+    if (messagesArea) messagesArea.innerHTML = "";
+
+    // Server-Authoritative UID: Do NOT generate fake local math UID.
+    // Wait strictly for server response if not yet restored.
+    if (!my10DigitUid) {
+        updateUidDisplays(null); // Displays "UID: Connecting..."
     }
 
-    // 3. WhatsApp Call Ended Tone (Three quick descending beeps)
-    function playCallEndedTone() {
-        stopOutgoingRingtone();
-        stopIncomingRingtone();
+    if (socket && socket.connected) {
+        socket.emit("login_user", {
+            email: user.email,
+            name: displayName,
+            authUid: user.uid,
+            uid: my10DigitUid || user.zingUid,
+            isAnonymous: Boolean(user.isAnonymous),
+            isGuest: Boolean(user.isAnonymous),
+            platform: "Fire TV",
+            contacts: myContacts
+        });
+        if (my10DigitUid) {
+            socket.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+        }
+    } else {
+        connectSocket();
+    }
+
+    if (firestoreDb && my10DigitUid) {
         try {
-            const ctx = getCallAudioContext();
-            if (!ctx) return;
-            const now = ctx.currentTime;
-            const beeps = [
-                { freq: 480, start: now, dur: 0.08 },
-                { freq: 400, start: now + 0.12, dur: 0.08 },
-                { freq: 320, start: now + 0.24, dur: 0.16 }
-            ];
-            beeps.forEach(b => {
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = "sine";
-                osc.frequency.setValueAtTime(b.freq, b.start);
-                gain.gain.setValueAtTime(0.14, b.start);
-                gain.gain.exponentialRampToValueAtTime(0.001, b.start + b.dur);
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                osc.start(b.start);
-                osc.stop(b.start + b.dur);
-            });
+            setDoc(doc(firestoreDb, "active_tv_sessions", my10DigitUid), {
+                uid: my10DigitUid,
+                displayName: user.displayName || "TV User",
+                email: user.email || "Local TV",
+                platform: "Fire TV",
+                lastActiveAt: Date.now()
+            }, { merge: true }).catch(() => {});
         } catch (_) {}
     }
 
-    function stopRingtone() {
-        stopIncomingRingtone();
-        stopOutgoingRingtone();
+    renderContacts(myContacts);
+    autoFocusFirstElement();
+}
+
+function logoutUserSession() {
+    // 1. Notify server of logout
+    if (socket && socket.connected && my10DigitUid) {
+        try {
+            socket.emit("logout_user", { uid: my10DigitUid });
+        } catch (_) {}
     }
 
-    socket.on("incoming_call", (data) => {
-        incomingCallerUid = data.callerUid;
-        incomingCallType = data.type || "video";
+    // Purge active TV session from Firestore
+    if (firestoreDb && my10DigitUid) {
+        try {
+            deleteDoc(doc(firestoreDb, "active_tv_sessions", my10DigitUid)).catch(() => {});
+        } catch (_) {}
+    }
 
-        const known = myContacts.find(c => c.uid === data.callerUid);
-        const nameToShow = known ? known.name : `UID: ${data.callerUid}`;
-        const avatarLetter = (known?.name || "U").charAt(0).toUpperCase();
+    // 2. Disconnect socket completely to tear down old rooms and mappings
+    if (socket) {
+        try { socket.disconnect(); } catch (_) {}
+        socket = null;
+    }
 
-        const nameEl = document.getElementById("incoming-name");
-        const avatarEl = document.getElementById("incoming-avatar");
-        const typeEl = document.getElementById("incoming-type");
+    // 3. Clear all in-memory user variables
+    currentUser = null;
+    my10DigitUid = null;
+    currentTargetUid = null;
+    chatHistory = {};
+    myContacts = [];
+    unreadCounts = {};
 
-        if (nameEl) nameEl.innerText = nameToShow;
-        if (avatarEl) avatarEl.innerText = avatarLetter;
-        if (typeEl) typeEl.innerText = `Incoming ${incomingCallType === 'video' ? 'HD Video' : 'Audio'} Call...`;
+    // 4. Clear storage
+    localStorage.removeItem("zingTalkTvSession");
+    if (window.Capacitor?.Plugins?.Preferences) {
+        window.Capacitor.Plugins.Preferences.remove({ key: "zingTalkTvSession" }).catch(() => {});
+    }
+    if (auth) {
+        signOut(auth).catch(() => {});
+    }
 
-        document.getElementById("mobile-incoming-call-overlay")?.classList.remove("hidden");
+    // 5. Clean DOM elements
+    closeChat();
+    const messagesArea = document.getElementById("messages-area");
+    if (messagesArea) messagesArea.innerHTML = "";
+    const contactsList = document.getElementById("contacts-list");
+    if (contactsList) contactsList.innerHTML = "";
+    const myNameEl = document.getElementById("my-name");
+    if (myNameEl) myNameEl.innerText = "TV User";
+    const myAvatarEl = document.getElementById("my-avatar");
+    if (myAvatarEl) myAvatarEl.innerText = "U";
+    updateUidDisplays(null);
+
+    // 6. Navigation
+    document.getElementById("profile-modal")?.classList.add("hidden");
+    document.getElementById("main-screen")?.classList.add("hidden");
+    document.getElementById("tv-top-bar")?.classList.add("hidden");
+    document.getElementById("login-screen")?.classList.remove("hidden");
+    const loginError = document.getElementById("login-message") || document.getElementById("login-error");
+    if (loginError) loginError.style.display = "none";
+    
+    showToast("Signed out successfully");
+}
+
+if (auth) {
+    onAuthStateChanged(auth, async (user) => {
+        if (user) {
+            if (!user.zingUid && user.email) {
+                const existingUid = await lookupUserUidFromFirestore(user.email, user.uid);
+                if (existingUid) {
+                    user.zingUid = existingUid;
+                }
+            }
+            loginUserSession(user);
+        } else if (!currentUser) {
+            document.getElementById("login-screen")?.classList.remove("hidden");
+            document.getElementById("tv-top-bar")?.classList.add("hidden");
+            document.getElementById("main-screen")?.classList.add("hidden");
+        }
+    });
+}
+
+export function updateServerStatusBadge(connected, text) {
+    const badges = document.querySelectorAll(".server-status-pill");
+    badges.forEach(b => {
+        const dot = b.querySelector(".server-status-dot");
+        const txt = b.querySelector(".server-status-text");
+        if (connected) {
+            if (dot) {
+                dot.style.background = "#00d29d";
+                dot.style.boxShadow = "0 0 8px #00d29d";
+            }
+            if (txt) {
+                txt.style.color = "#00d29d";
+                txt.innerText = text || "AWS Cloud Online";
+            }
+            b.style.borderColor = "rgba(0, 210, 157, 0.4)";
+        } else {
+            if (dot) {
+                dot.style.background = "#ff4444";
+                dot.style.boxShadow = "0 0 8px #ff4444";
+            }
+            if (txt) {
+                txt.style.color = "#ff8888";
+                txt.innerText = text || "Connecting...";
+            }
+            b.style.borderColor = "rgba(255, 68, 68, 0.4)";
+        }
+    });
+}
+
+// ----------------- Socket Signaling & Alexa Webhook Commands -----------------
+export function registerSocketListeners(s) {
+    if (!s) return;
+
+    s.on("connect", () => {
+        console.log("[ZingTalk Socket] Connected to:", s.io.uri);
+        updateServerStatusBadge(true, "AWS Cloud Online");
+
+        const displayName = currentUser?.displayName || currentUser?.name || "TV User";
+        const email = currentUser?.email || null;
+        const authUid = currentUser?.uid || null;
+
+        s.emit("login_user", {
+            email: email,
+            name: displayName,
+            authUid: authUid,
+            uid: my10DigitUid || currentUser?.zingUid,
+            platform: "Fire TV",
+            isAnonymous: Boolean(currentUser?.isAnonymous),
+            isGuest: Boolean(currentUser?.isAnonymous),
+            contacts: myContacts
+        });
+        if (my10DigitUid) {
+            s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+        }
+
+        if (pendingOutgoingMessages.length > 0) {
+            pendingOutgoingMessages.forEach(msg => s.emit("send_message", msg));
+            pendingOutgoingMessages = [];
+        }
+    });
+
+    s.on("disconnect", (reason) => {
+        console.warn("[ZingTalk Socket] Disconnected:", reason);
+        updateServerStatusBadge(false, "Reconnecting...");
+    });
+
+    s.on("connect_error", (err) => {
+        console.warn("[ZingTalk Socket] Connect error:", err.message);
+        updateServerStatusBadge(false, "Connecting to AWS...");
+    });
+
+    s.on("user_data", (data) => {
+        if (data && data.uid) {
+            updateUidDisplays(data.uid);
+            loadUserStorageData(data.uid);
+            if (currentUser) {
+                currentUser.zingUid = String(data.uid);
+                persistSessionBackup("zingTalkTvSession", JSON.stringify(currentUser));
+                saveUserUidToFirestore(currentUser, data.uid);
+            } else {
+                saveUserUidToFirestore({ uid: null, isAnonymous: true }, data.uid);
+            }
+        }
+        renderContacts(myContacts);
+        if (my10DigitUid && myContacts.length > 0) {
+            s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+        }
+    });
+
+    s.on("contact_saved", (contacts) => {
+        if (Array.isArray(contacts)) {
+            myContacts = contacts;
+            saveUserContactsToStorage();
+            renderContacts(myContacts);
+            showToast("Contact saved locally");
+        }
+    });
+
+    s.on("contact_error", (msg) => {
+        showToast(msg);
+    });
+
+    s.on("receive_message", (data) => {
+        const sender = data && data.senderUid ? String(data.senderUid).trim() : null;
+        if (!sender) return;
+        const senderName = data.senderName || ("User " + sender);
+
+        // 1. WhatsApp Contact Logic:
+        // If sender is NOT in myContacts, automatically add them to recent contacts list!
+        let knownContact = myContacts.find(c => c.uid === sender);
+        if (!knownContact) {
+            knownContact = { uid: sender, name: senderName };
+            myContacts.unshift(knownContact);
+            saveUserContactsToStorage();
+            if (my10DigitUid) {
+                s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+            }
+        } else {
+            // Move conversation to the top of the contact list
+            myContacts = [knownContact, ...myContacts.filter(c => c.uid !== sender)];
+            saveUserContactsToStorage();
+        }
+
+        // 2. Save strictly locally in device (zero retention on server or Firebase)
+        if (!chatHistory[sender]) chatHistory[sender] = [];
+        chatHistory[sender].push({ ...data, type: "msg-received" });
+        saveUserHistoryToStorage();
+
+        // 3. Play incoming sound chime
+        playIncomingChime();
+
+        // 4. WhatsApp / TV Non-Intrusive Display Logic:
+        // Do NOT automatically force open the chat window!
+        if (currentTargetUid === sender) {
+            // ONLY if user currently has this exact conversation open on screen, append message!
+            appendMessage(data, "msg-received");
+            unreadCounts[sender] = 0;
+            saveUserUnreadToStorage();
+        } else {
+            // Increment unread count for this sender so the unread counter badge (1, 2, ...) appears on their contact card!
+            unreadCounts[sender] = (unreadCounts[sender] || 0) + 1;
+            saveUserUnreadToStorage();
+            
+            // Show toast preview notification
+            showToast(`💬 ${knownContact.name} (${sender}): "${data.text ? data.text.slice(0, 30) : ''}"`);
+        }
+
+        // Re-render contacts list immediately so the badge count, last message snippet, and updated order reflect!
+        renderContacts(myContacts);
+
+        s.emit("message_seen", { receiverUid: my10DigitUid, msgId: data.id });
+    });
+
+    s.on("message_error", (data) => {
+        const msg = data && data.message ? data.message : "Message delivery failed.";
+        showToast("❌ " + msg);
+        const messagesArea = document.getElementById("messages-area");
+        if (messagesArea && currentTargetUid) {
+            const errDiv = document.createElement("div");
+            errDiv.style.cssText = "text-align: center; color: #ff5252; font-size: 13px; font-weight: 600; padding: 8px 14px; margin: 10px auto; background: rgba(255, 82, 82, 0.15); border: 1px solid rgba(255, 82, 82, 0.35); border-radius: 8px; max-width: 85%;";
+            errDiv.innerText = "⚠️ " + msg;
+            messagesArea.appendChild(errDiv);
+            messagesArea.scrollTop = messagesArea.scrollHeight;
+        }
+    });
+
+    s.on("call_error", (data) => {
+        const msg = data && data.message ? data.message : "Call failed.";
+        showToast("❌ " + msg);
+        stopRingtone();
+        playCallEndedTone();
+        document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
+        document.getElementById("incoming-call-overlay")?.classList.add("hidden");
+        isCallInitiating = false;
+        activeCallTarget = null;
+        endCallCleanup();
+    });
+
+    s.on("uid_check_result", (data) => {
+        if (!data.valid) {
+            showToast("❌ " + (data.message || "UID not found."));
+        }
+    });
+
+    s.on("incoming_call", (data) => {
+        activeCallTarget = data.callerUid;
+        currentCallType = data.type || "video";
+
+        let callerNameToShow = "UID: " + data.callerUid;
+        const knownContact = myContacts.find(c => c.uid === data.callerUid);
+        if (knownContact) callerNameToShow = knownContact.name;
+
+        const callerDisplay = document.getElementById("caller-name-display");
+        if (callerDisplay) callerDisplay.innerText = callerNameToShow;
+
+        const callTypeEl = document.getElementById("incoming-call-type");
+        if (callTypeEl) {
+            callTypeEl.innerText = `Incoming ${currentCallType === 'video' ? 'HD Video' : 'Audio'} Call...`;
+        }
+        document.getElementById("incoming-call-overlay")?.classList.remove("hidden");
+        document.getElementById("accept-call-btn")?.focus();
         startIncomingRingtone();
 
-        // Trigger WhatsApp-style in-app drop-down banner & Android system heads-up notification
-        CallNotificationService.showIncoming(data.callerUid, nameToShow, incomingCallType);
+        // Native Android Heads-Up Notification & Web Notification
+        if (window.ZingNativeBridge && window.ZingNativeBridge.showIncomingCall) {
+            try {
+                window.ZingNativeBridge.showIncomingCall(data.callerUid, callerNameToShow, currentCallType);
+            } catch (_) {}
+        }
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            try {
+                new Notification(callerNameToShow, {
+                    body: `Incoming ZingTalk ${currentCallType === 'video' ? 'HD Video' : 'Audio'} Call...`,
+                    icon: "assets/icon.png",
+                    tag: "zingtalk-call",
+                    requireInteraction: true
+                });
+            } catch (_) {}
+        }
 
         if (incomingCallTimer) clearTimeout(incomingCallTimer);
         incomingCallTimer = setTimeout(() => {
-            const inOverlay = document.getElementById("mobile-incoming-call-overlay");
-            if (inOverlay && !inOverlay.classList.contains("hidden")) {
+            const overlay = document.getElementById("incoming-call-overlay");
+            if (overlay && !overlay.classList.contains("hidden")) {
                 stopRingtone();
                 playCallEndedTone();
-                inOverlay.classList.add("hidden");
-                inOverlay.style.display = "none";
-                CallNotificationService.dismissAll();
-                showToast("Missed call from " + nameToShow);
-                incomingCallerUid = null;
+                if (window.ZingNativeBridge && window.ZingNativeBridge.dismissCallNotifications) {
+                    try { window.ZingNativeBridge.dismissCallNotifications(); } catch (_) {}
+                }
+                overlay.classList.add("hidden");
+                activeCallTarget = null;
+                endCallCleanup();
+                showToast("Missed call from " + callerNameToShow);
             }
         }, 45000);
     });
 
-    socket.on("call_cancelled", () => {
+    s.on("call_cancelled", () => {
         stopRingtone();
         playCallEndedTone();
-        CallNotificationService.dismissAll();
-        document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
-        document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
+        if (window.ZingNativeBridge && window.ZingNativeBridge.dismissCallNotifications) {
+            try { window.ZingNativeBridge.dismissCallNotifications(); } catch (_) {}
+        }
+        document.getElementById("incoming-call-overlay")?.classList.add("hidden");
+        document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
+        activeCallTarget = null;
+        isCallInitiating = false;
         endCallCleanup();
-        showToast("Call cancelled.");
+        showToast("Call cancelled");
     });
 
-    socket.on("call_error", (data) => {
+    s.on("call_response_received", async (data) => {
         stopRingtone();
-        playCallEndedTone();
-        CallNotificationService.dismissAll();
-        document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
-        document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
-        endCallCleanup();
-        showToast("❌ " + (data?.message || "Call error"));
-    });
-
-    socket.on("call_response_received", async (data) => {
-        stopRingtone();
-        document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
+        document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
         if (data && data.status === "accepted") {
             if (!peerConnection) {
-                await startMobileWebRTC(true);
+                await startWebRTC(true);
             }
         } else {
             playCallEndedTone();
-            showToast("Call declined.");
+            showToast("Call declined");
+            activeCallTarget = null;
+            isCallInitiating = false;
             endCallCleanup();
         }
     });
 
-    socket.on("call_accepted", async () => {
-        stopRingtone();
-        document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
-        if (!peerConnection) {
-            await startMobileWebRTC(true);
-        }
-    });
-
-    const handleWebRtcOffer = async (data) => {
+    s.on("webrtc_offer_received", async (data) => {
         if (!data || !data.offer) return;
         if (!peerConnection) {
             pendingOffer = data.offer;
             return;
         }
+        if (peerConnection.signalingState !== "stable") return;
         try {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
-            socket.emit("webrtc_answer", { targetUid: currentTargetUid || data.callerUid, answer });
+            s.emit("webrtc_answer", { targetUid: activeCallTarget, answer });
+
             while (iceCandidatesQueue.length > 0) {
-                try {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidatesQueue.shift()));
-                } catch (_) {}
+                const cand = iceCandidatesQueue.shift();
+                if (cand) {
+                    try {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(cand));
+                    } catch (_) {}
+                }
             }
         } catch (err) {
-            console.error("[Mobile WebRTC] Offer error:", err);
+            console.error("[WebRTC] Offer error:", err);
         }
-    };
-    socket.on("webrtc_offer_received", handleWebRtcOffer);
-    socket.on("webrtc_offer", handleWebRtcOffer);
+    });
 
-    const handleWebRtcAnswer = async (data) => {
+    s.on("webrtc_answer_received", async (data) => {
         if (!peerConnection || !data || !data.answer) return;
+        if (peerConnection.signalingState !== "have-local-offer") return;
         try {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
             while (iceCandidatesQueue.length > 0) {
-                try {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidatesQueue.shift()));
-                } catch (_) {}
+                const cand = iceCandidatesQueue.shift();
+                if (cand) {
+                    try {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(cand));
+                    } catch (_) {}
+                }
             }
         } catch (err) {
-            console.error("[Mobile WebRTC] Answer error:", err);
+            console.error("[WebRTC] Answer error:", err);
         }
-    };
-    socket.on("webrtc_answer_received", handleWebRtcAnswer);
-    socket.on("webrtc_answer", handleWebRtcAnswer);
+    });
 
-    const handleWebRtcIce = async (data) => {
+    s.on("webrtc_ice_candidate_received", async (data) => {
         if (!data || !data.candidate) return;
         if (peerConnection && peerConnection.remoteDescription) {
             try {
@@ -773,125 +1023,545 @@ function connectSocket() {
         } else {
             iceCandidatesQueue.push(data.candidate);
         }
-    };
-    socket.on("webrtc_ice_candidate_received", handleWebRtcIce);
-    socket.on("webrtc_ice_candidate", handleWebRtcIce);
+    });
 
-    const handleCallEnded = () => {
+    s.on("webrtc_call_ended", () => {
         stopRingtone();
         playCallEndedTone();
         endCallCleanup();
-        showToast("Call ended.");
-    };
-    socket.on("webrtc_call_ended", handleCallEnded);
-    socket.on("call_ended", handleCallEnded);
+        showToast("Call ended");
+    });
 
-    socket.on("receive_message", (data) => {
-        const sender = data.senderUid;
-        if (!chatHistory[sender]) chatHistory[sender] = [];
-        chatHistory[sender].push({ text: data.text, sent: false });
-        if (currentTargetUid === sender) {
-            renderChatMessages();
+    // Alexa Webhook Intent Dispatcher from Server
+    s.on("alexa_command", (cmd) => {
+        handleAlexaIncomingCommand(cmd);
+    });
+
+    s.on("alexa_paired", (data) => {
+        const text = data?.auto ? `🎙️ Alexa Auto-Linked (UID: ${data.uid})` : `🎙️ Alexa Paired (UID: ${data.uid})`;
+        showToast(text);
+        const alexaPill = document.querySelector(".alexa-status-pill");
+        if (alexaPill) {
+            alexaPill.innerHTML = `
+                <span class="server-status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #00d29d; box-shadow: 0 0 6px #00d29d;"></span>
+                <span style="color: #00d29d;">Alexa Auto-Linked</span>
+            `;
         }
-        showToast(`💬 Message from ${sender}: ${data.text.slice(0, 24)}`);
+    });
+
+    s.on("contact_saved", (updatedContacts) => {
+        if (Array.isArray(updatedContacts)) {
+            myContacts = updatedContacts;
+            saveUserContactsToStorage();
+            renderContacts(myContacts);
+            showToast("Contact saved successfully");
+        }
+    });
+
+    s.on("contact_error", (errMsg) => {
+        showToast(errMsg || "Failed to save contact");
     });
 }
 
-async function setupLocalMedia(videoWanted = true) {
-    if (localStream) {
-        localStream.getTracks().forEach(t => t.stop());
+export function connectSocket() {
+    if (typeof io === "undefined") return null;
+    const targetUrl = getEffectiveServerUrl() || "";
+
+    if (socket) {
+        try { socket.disconnect(); } catch (_) {}
     }
-    const constraints = {
-        audio: true,
-        video: videoWanted ? { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } } : false
+
+    const socketOpts = {
+        transports: ["websocket", "polling"],
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+        timeout: 10000
     };
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch (_) {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    }
-    const localVideo = document.getElementById("local-video");
-    if (localVideo) localVideo.srcObject = localStream;
+
+    socket = targetUrl ? io(targetUrl, socketOpts) : io(socketOpts);
+    registerSocketListeners(socket);
+    return socket;
 }
 
-async function switchCamera() {
-    currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
-    if (localStream) {
-        const videoTrack = localStream.getVideoTracks()[0];
-        if (videoTrack) videoTrack.stop();
-        try {
-            const newStream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: currentFacingMode }
-            });
-            const newVideoTrack = newStream.getVideoTracks()[0];
-            if (peerConnection) {
-                const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === "video");
-                if (sender) sender.replaceTrack(newVideoTrack);
+connectSocket();
+
+// ----------------- UI Rendering (Clean TV Leanback) -----------------
+function renderContacts(contacts) {
+    const list = document.getElementById("contacts-list");
+    if (!list) return;
+    list.innerHTML = "";
+
+    if (!contacts || contacts.length === 0) {
+        list.innerHTML = `
+            <div style="padding: 24px 10px; text-align: center; color: var(--tv-text-secondary); font-size: 14.5px;">
+                No contacts saved yet. Enter a 10-digit UID above to save a contact.
+            </div>
+        `;
+        return;
+    }
+
+    contacts.forEach(contact => {
+        const card = document.createElement("div");
+        card.className = "tv-contact-card tv-focusable";
+        card.tabIndex = 0;
+        card.dataset.uid = contact.uid;
+
+        // WhatsApp Unread Counter for this contact
+        const unread = unreadCounts[contact.uid] || 0;
+        
+        // Latest message snippet from device local history
+        const history = chatHistory[contact.uid] || [];
+        const lastMsg = history.length > 0 ? history[history.length - 1] : null;
+        const lastText = lastMsg ? (lastMsg.text || "") : "";
+        const lastTime = lastMsg ? (lastMsg.timestamp || "") : "";
+
+        card.innerHTML = `
+            <div class="tv-contact-info-block" style="flex: 1; min-width: 0;">
+                <div class="tv-avatar-circle" style="position: relative;">
+                    ${(contact.name || "U").charAt(0).toUpperCase()}
+                </div>
+                <div style="flex: 1; min-width: 0; padding-right: 6px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+                        <span class="tv-contact-name-txt" style="font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(contact.name)}</span>
+                        ${unread > 0 ? `<span class="tv-unread-pill" style="background: #00d29d; color: #081018; font-size: 11px; font-weight: 800; border-radius: 12px; padding: 2px 7px; min-width: 18px; text-align: center; box-shadow: 0 0 8px rgba(0,210,157,0.5);">${unread}</span>` : ''}
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-top: 2px;">
+                        <span class="tv-contact-uid-txt" style="font-size: 12px; opacity: 0.75;">UID: ${contact.uid}</span>
+                        ${lastTime ? `<span style="font-size: 10px; color: ${unread > 0 ? '#00d29d' : 'rgba(255,255,255,0.45)'};">${escapeHtml(lastTime)}</span>` : ''}
+                    </div>
+                    ${lastText ? `<div class="tv-contact-last-msg" style="font-size: 12px; color: ${unread > 0 ? '#00e5aa' : 'rgba(255,255,255,0.6)'}; font-weight: ${unread > 0 ? '600' : '400'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px;">${unread > 0 ? '💬 ' : ''}${escapeHtml(lastText.slice(0, 32))}</div>` : ''}
+                </div>
+            </div>
+            <div class="tv-contact-quick-actions">
+                <button type="button" class="tv-mini-call-btn tv-focusable" data-action="audio" title="Audio Call">📞</button>
+                <button type="button" class="tv-mini-call-btn tv-focusable" data-action="video" title="Video Call">🎥</button>
+            </div>
+        `;
+
+        card.addEventListener("click", (e) => {
+            const btn = e.target.closest("button");
+            if (btn) {
+                const action = btn.dataset.action;
+                initiateDirectCall(contact.uid, action);
+            } else {
+                openChat(contact);
             }
-            localStream.removeTrack(videoTrack);
-            localStream.addTrack(newVideoTrack);
-            const localVideo = document.getElementById("local-video");
-            if (localVideo) localVideo.srcObject = localStream;
-            showToast(`Switched to ${currentFacingMode === 'user' ? 'Front' : 'Back'} Camera`);
-        } catch (_) {}
+        });
+
+        card.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                const btn = e.target.closest("button");
+                if (btn && btn.dataset.action) {
+                    initiateDirectCall(contact.uid, btn.dataset.action);
+                } else {
+                    openChat(contact);
+                }
+            }
+        });
+
+        list.appendChild(card);
+    });
+}
+
+function openChat(contact) {
+    if (!contact) return;
+    const uid = typeof contact === "object" ? contact.uid : contact;
+    const name = (typeof contact === "object" && contact.name)
+        ? contact.name
+        : (myContacts.find(c => c.uid === uid)?.name || ("User " + uid));
+
+    currentTargetUid = uid;
+
+    // Clear unread counter for this contact when opened (WhatsApp standard)
+    if (unreadCounts[uid]) {
+        delete unreadCounts[uid];
+        saveUserUnreadToStorage();
+        renderContacts(myContacts);
+    }
+
+    document.getElementById("tv-empty-stage")?.classList.add("hidden");
+    document.getElementById("tv-active-chat")?.classList.remove("hidden");
+
+    if (document.getElementById("chat-contact-name")) {
+        document.getElementById("chat-contact-name").innerText = name;
+    }
+    if (document.getElementById("chat-contact-uid")) {
+        document.getElementById("chat-contact-uid").innerText = "UID: " + uid;
+    }
+    if (document.getElementById("chat-avatar")) {
+        document.getElementById("chat-avatar").innerText = (name || "U").charAt(0).toUpperCase();
+    }
+
+    const messagesArea = document.getElementById("messages-area");
+    if (messagesArea) {
+        messagesArea.innerHTML = "";
+        if (chatHistory[uid]) {
+            chatHistory[uid].forEach(msg => appendMessage(msg, msg.type));
+        }
+    }
+    document.getElementById("message-input")?.focus();
+}
+
+function closeChat() {
+    currentTargetUid = null;
+    document.getElementById("tv-active-chat")?.classList.add("hidden");
+    document.getElementById("tv-empty-stage")?.classList.remove("hidden");
+    autoFocusFirstElement();
+}
+
+let pendingOutgoingMessages = [];
+
+function sendMessageLogic() {
+    const input = document.getElementById("message-input");
+    const text = input?.value.trim();
+    if (!text || !currentTargetUid) return;
+
+    if (!socket || !socket.connected) {
+        showToast("❌ Server not connected. Waiting for AWS Cloud connection...");
+        connectSocket();
+        return;
+    }
+
+    if (!my10DigitUid) {
+        showToast("❌ Waiting for official server UID assignment...");
+        return;
+    }
+
+    if (!/^\d{10}$/.test(currentTargetUid)) {
+        showToast(`❌ No user found with UID [${currentTargetUid}]. Please check the 10-digit number.`);
+        return;
+    }
+
+    if (currentTargetUid === my10DigitUid) {
+        showToast(`❌ You cannot send a message to your own UID [${currentTargetUid}].`);
+        return;
+    }
+
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const myName = currentUser?.displayName || currentUser?.name || ("User " + my10DigitUid);
+    const msgData = {
+        id: "msg_" + Date.now(),
+        senderUid: my10DigitUid,
+        senderName: myName,
+        receiverUid: currentTargetUid,
+        text: text,
+        timestamp: timeStr
+    };
+
+    appendMessage(msgData, "msg-sent");
+
+    if (!chatHistory[currentTargetUid]) chatHistory[currentTargetUid] = [];
+    chatHistory[currentTargetUid].push({ ...msgData, type: "msg-sent" });
+    saveUserHistoryToStorage();
+
+    input.value = "";
+
+    if (socket && socket.connected) {
+        socket.emit("send_message", msgData);
+    } else {
+        showToast("⚠️ Connecting to AWS Cloud... Message will be delivered upon connection.");
+        pendingOutgoingMessages.push(msgData);
+        connectSocket();
     }
 }
 
-async function setupPeerConnection() {
+function appendMessage(data, type) {
+    const area = document.getElementById("messages-area");
+    if (!area) return;
+
+    const div = document.createElement("div");
+    div.className = `tv-msg ${type === 'msg-sent' ? 'tv-msg-sent' : 'tv-msg-received'}`;
+    div.innerHTML = `
+        <div>${escapeHtml(data.text)}</div>
+        <div class="tv-msg-meta">${data.timestamp || ''}</div>
+    `;
+    area.appendChild(div);
+    area.scrollTop = area.scrollHeight;
+}
+
+function escapeHtml(text) {
+    if (!text) return "";
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Screen WakeLock for Android TV / Mobile (Prevents OEM Background Sleep & Media Disconnect)
+let wakeLock = null;
+async function acquireScreenWakeLock() {
+    try {
+        if ('wakeLock' in navigator && navigator.wakeLock) {
+            wakeLock = await navigator.wakeLock.request('screen');
+            wakeLock.addEventListener('release', () => {
+                wakeLock = null;
+            });
+        }
+    } catch (_) {}
+}
+
+function releaseScreenWakeLock() {
+    if (wakeLock) {
+        try { wakeLock.release(); } catch (_) {}
+        wakeLock = null;
+    }
+}
+
+// App Surface Lifecycle Handler (Prevents Minimization Video Freeze, HDMI Focus Loss, and GPU Context Loss)
+function resumeMediaPlayback() {
+    const remote = document.getElementById("remote-video");
+    const local = document.getElementById("local-video");
+    if (remote && remote.srcObject && remote.paused) {
+        remote.play().catch(() => {});
+    }
+    if (local && local.srcObject && local.paused) {
+        local.play().catch(() => {});
+    }
+    if (peerConnection) {
+        acquireScreenWakeLock();
+    }
+}
+
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+        resumeMediaPlayback();
+    }
+});
+
+window.addEventListener("focus", () => {
+    resumeMediaPlayback();
+});
+
+// Audio Hardware Hotplug Handler (Prevents Bug 69: Audio Jack Hotplug Crash)
+if (navigator.mediaDevices && 'ondevicechange' in navigator.mediaDevices) {
+    navigator.mediaDevices.ondevicechange = () => {
+        resumeMediaPlayback();
+    };
+}
+
+// ----------------- WebRTC HD Calling (Google STUN + AWS Fallback) -----------------
+async function startWebRTC(isCaller) {
+    document.getElementById("full-call-screen")?.classList.remove("hidden");
+    const localVideo = document.getElementById("local-video");
+    const remoteVideo = document.getElementById("remote-video");
+    const audioVisualizer = document.getElementById("audio-call-visualizer");
+    const audioPeerName = document.getElementById("audio-call-peer-name");
+
+    isStunFailoverActive = false;
+
+    let peerNameToShow = "UID: " + activeCallTarget;
+    const knownContact = myContacts.find(c => c.uid === activeCallTarget);
+    if (knownContact) peerNameToShow = knownContact.name;
+
+    // Acquire WakeLock so CPU & screen stay active during call
+    await acquireScreenWakeLock();
+
+    // Resilient Hardware Media Ladder:
+    // 1. Mono, 48kHz, full software AEC + ANS + AGC (prevents TV howl and robot voice)
+    // 2. 720p 30fps safe bounds (Safe for TV MediaCodec hardware decoders)
+    const audioConstraints = {
+        echoCancellation: { ideal: true },
+        noiseSuppression: { ideal: true },
+        autoGainControl: { ideal: true },
+        channelCount: { ideal: 1 },
+        sampleRate: { ideal: 48000 }
+    };
+
+    let streamObtained = localStream;
+    if (!streamObtained) {
+        if (currentCallType === "video") {
+            try {
+                streamObtained = await navigator.mediaDevices.getUserMedia({
+                    audio: audioConstraints,
+                    video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 } }
+                });
+            } catch (vidErr) {
+                console.warn("[WebRTC] Video media request failed, attempting standard video fallback:", vidErr);
+                try {
+                    streamObtained = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: true });
+                } catch (fallbackErr) {
+                    console.warn("[WebRTC] Camera unavailable on this device, gracefully falling back to Audio Call:", fallbackErr);
+                    currentCallType = "audio";
+                    showToast("Camera not available on this device. Switched to HD Audio Call.");
+                }
+            }
+        }
+
+        if (!streamObtained) {
+            try {
+                streamObtained = await navigator.mediaDevices.getUserMedia({
+                    audio: audioConstraints,
+                    video: false
+                });
+            } catch (audErr) {
+                showToast("Microphone access required: " + audErr.message);
+                endCall();
+                return;
+            }
+        }
+        localStream = streamObtained;
+    }
+
+    if (currentCallType === "audio") {
+        if (localVideo) localVideo.classList.add("hidden");
+        if (remoteVideo) remoteVideo.style.opacity = "0";
+        if (audioVisualizer) {
+            audioVisualizer.classList.remove("hidden");
+            if (audioPeerName) audioPeerName.innerText = peerNameToShow;
+        }
+    } else {
+        if (localVideo) localVideo.classList.remove("hidden");
+        if (remoteVideo) remoteVideo.style.opacity = "1";
+        if (audioVisualizer) audioVisualizer.classList.add("hidden");
+    }
+
+    if (localVideo && currentCallType === "video") {
+        localVideo.srcObject = localStream;
+        localVideo.play().catch(() => {});
+    }
+
     peerConnection = new RTCPeerConnection(rtcConfig);
-    if (localStream) {
-        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-    }
+    localStream.getTracks().forEach(track => {
+        peerConnection.addTrack(track, localStream);
+        track.onended = () => {
+            if (track.kind === "video") {
+                console.warn("[WebRTC] Local video track ended (hardware disconnect/unplug).");
+                showToast("Camera disconnected or unavailable.");
+                const localVideo = document.getElementById("local-video");
+                if (localVideo) localVideo.classList.add("hidden");
+            } else if (track.kind === "audio") {
+                console.warn("[WebRTC] Local audio track ended.");
+                showToast("Microphone disconnected.");
+            }
+        };
+    });
+
+    // Dynamic bandwidth floor and balanced resolution degradation
+    try {
+        const senders = peerConnection.getSenders();
+        const videoSender = senders.find(s => s.track && s.track.kind === "video");
+        if (videoSender && videoSender.getParameters) {
+            const params = videoSender.getParameters();
+            if (params) {
+                if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+                params.degradationPreference = "balanced";
+                params.encodings[0].maxBitrate = 2500000;
+                params.encodings[0].minBitrate = 350000;
+                videoSender.setParameters(params).catch(() => {});
+            }
+        }
+    } catch (_) {}
+
+    // Universal Codec Prioritization: VP8 & H.264 first
+    try {
+        if ('RTCRtpSender' in window && 'getCapabilities' in RTCRtpSender) {
+            const capabilities = RTCRtpSender.getCapabilities('video');
+            if (capabilities && capabilities.codecs) {
+                const sortedCodecs = [...capabilities.codecs].sort((a, b) => {
+                    const aMime = (a.mimeType || "").toLowerCase();
+                    const bMime = (b.mimeType || "").toLowerCase();
+                    if (aMime.includes("vp8") || aMime.includes("h264")) return -1;
+                    if (bMime.includes("vp8") || bMime.includes("h264")) return 1;
+                    return 0;
+                });
+                peerConnection.getTransceivers().forEach(t => {
+                    if (t.setCodecPreferences && t.receiver && t.receiver.track && t.receiver.track.kind === "video") {
+                        try { t.setCodecPreferences(sortedCodecs); } catch (_) {}
+                    }
+                });
+            }
+        }
+    } catch (_) {}
+
     peerConnection.ontrack = (event) => {
-        const remoteVideo = document.getElementById("remote-video");
-        if (remoteVideo && event.streams[0]) {
-            remoteVideo.srcObject = event.streams[0];
+        const remote = document.getElementById("remote-video");
+        if (remote) {
+            if (event.streams && event.streams[0]) {
+                remote.srcObject = event.streams[0];
+            } else {
+                if (!remote.srcObject) remote.srcObject = new MediaStream();
+                remote.srcObject.addTrack(event.track);
+            }
+            remote.play().catch(() => {
+                const resumeOnInteraction = () => {
+                    remote.play().catch(() => {});
+                    document.removeEventListener("click", resumeOnInteraction);
+                    document.removeEventListener("keydown", resumeOnInteraction);
+                };
+                document.addEventListener("click", resumeOnInteraction, { once: true });
+                document.addEventListener("keydown", resumeOnInteraction, { once: true });
+            });
+            remote.onpause = () => {
+                if (peerConnection && (peerConnection.iceConnectionState === "connected" || peerConnection.iceConnectionState === "completed")) {
+                    remote.play().catch(() => {});
+                }
+            };
+            remote.onstalled = () => {
+                if (peerConnection && (peerConnection.iceConnectionState === "connected" || peerConnection.iceConnectionState === "completed")) {
+                    remote.play().catch(() => {});
+                }
+            };
         }
     };
+
     peerConnection.onicecandidate = (event) => {
-        if (event.candidate && currentTargetUid && socket) {
-            socket.emit("webrtc_ice_candidate", { targetUid: currentTargetUid, candidate: event.candidate });
+        if (event.candidate && socket) {
+            socket.emit("webrtc_ice_candidate", { targetUid: activeCallTarget, candidate: event.candidate });
         }
     };
-}
 
-async function startMobileWebRTC(isCaller) {
-    const outOverlay = document.getElementById("mobile-outgoing-call-overlay");
-    if (outOverlay) {
-        outOverlay.classList.add("hidden");
-        outOverlay.style.display = "none";
-    }
-    const inOverlay = document.getElementById("mobile-incoming-call-overlay");
-    if (inOverlay) {
-        inOverlay.classList.add("hidden");
-        inOverlay.style.display = "none";
-    }
-    const callScreen = document.getElementById("mobile-call-screen");
-    if (callScreen) {
-        callScreen.classList.remove("hidden");
-        callScreen.style.display = "flex";
-    }
+    peerConnection.onicecandidateerror = (event) => {
+        if (event.url && event.url.includes("google.com")) {
+            isStunFailoverActive = true;
+        }
+    };
 
-    const known = myContacts.find(c => c.uid === currentTargetUid);
-    const nameToShow = known ? known.name : `UID: ${currentTargetUid}`;
-    const displayEl = document.getElementById("call-target-display");
-    if (displayEl) displayEl.innerText = nameToShow;
+    peerConnection.oniceconnectionstatechange = () => {
+        const state = peerConnection ? peerConnection.iceConnectionState : "";
+        if (state === "failed") {
+            showToast("Connection lost with peer.");
+            endCallCleanup();
+        } else if (state === "disconnected") {
+            setTimeout(() => {
+                if (peerConnection && peerConnection.iceConnectionState === "disconnected") {
+                    showToast("Call ended due to network disconnection.");
+                    endCallCleanup();
+                }
+            }, 6000);
+        }
+    };
 
-    startTimer();
-    CallNotificationService.showOngoing(currentTargetUid, nameToShow, "00:00");
-    await setupLocalMedia(incomingCallType === "video");
-    await setupPeerConnection();
+    callSecondsElapsed = 0;
+    clearInterval(callDurationTimer);
+    const timerEl = document.getElementById("call-timer");
+    callDurationTimer = setInterval(() => {
+        callSecondsElapsed++;
+        const mins = String(Math.floor(callSecondsElapsed / 60)).padStart(2, '0');
+        const secs = String(callSecondsElapsed % 60).padStart(2, '0');
+        const modeLabel = currentCallType === "video" ? "HD Video" : "Audio";
+        if (timerEl) timerEl.innerText = `${mins}:${secs} • ${modeLabel}`;
+
+        if (window.ZingNativeBridge && window.ZingNativeBridge.showOngoingCall && activeCallTarget) {
+            try {
+                let nameToShow = "UID: " + activeCallTarget;
+                const c = myContacts.find(con => con.uid === activeCallTarget);
+                if (c) nameToShow = c.name;
+                window.ZingNativeBridge.showOngoingCall(activeCallTarget, nameToShow, `${mins}:${secs}`);
+            } catch (_) {}
+        }
+    }, 1000);
 
     if (isCaller) {
         try {
             const offer = await peerConnection.createOffer({
                 offerToReceiveAudio: true,
-                offerToReceiveVideo: incomingCallType === "video"
+                offerToReceiveVideo: currentCallType === "video"
             });
             await peerConnection.setLocalDescription(offer);
-            socket.emit("webrtc_offer", { targetUid: currentTargetUid, offer });
+            socket.emit("webrtc_offer", { targetUid: activeCallTarget, offer });
         } catch (err) {
-            console.error("[Mobile WebRTC] Offer error:", err);
+            console.error("[WebRTC] Offer error:", err);
         }
     } else if (pendingOffer) {
         try {
@@ -899,134 +1569,22 @@ async function startMobileWebRTC(isCaller) {
             pendingOffer = null;
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
-            socket.emit("webrtc_answer", { targetUid: currentTargetUid, answer });
+            socket.emit("webrtc_answer", { targetUid: activeCallTarget, answer });
+
             while (iceCandidatesQueue.length > 0) {
-                try {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidatesQueue.shift()));
-                } catch (_) {}
+                await peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidatesQueue.shift()));
             }
         } catch (err) {
-            console.error("[Mobile WebRTC] Pending offer execution error:", err);
+            console.error("[WebRTC] Pending offer execution error:", err);
         }
     }
-}
-
-async function initiateCall(targetUid, type = "video") {
-    const cleanTarget = String(targetUid || "").trim().replace(/\D/g, "");
-    const cleanCaller = String(my10DigitUid || currentUser?.zingUid || "").trim().replace(/\D/g, "");
-
-    if (!cleanTarget || cleanTarget.length !== 10) {
-        showToast("Please enter a valid 10-digit UID");
-        return;
-    }
-
-    if (cleanTarget === cleanCaller) {
-        showToast("You cannot call your own UID");
-        return;
-    }
-
-    if (!socket || !socket.connected) {
-        showToast("Connecting to server...");
-        connectSocket();
-        return;
-    }
-
-    currentTargetUid = cleanTarget;
-    incomingCallType = type;
-
-    const known = myContacts.find(c => c.uid === cleanTarget);
-    const nameToShow = known ? known.name : `UID: ${cleanTarget}`;
-    const avatarLetter = (known?.name || "U").charAt(0).toUpperCase();
-
-    const outName = document.getElementById("outgoing-name");
-    const outAvatar = document.getElementById("outgoing-avatar");
-    const outStatus = document.getElementById("outgoing-status");
-
-    if (outName) outName.innerText = nameToShow;
-    if (outAvatar) outAvatar.innerText = avatarLetter;
-    if (outStatus) outStatus.innerText = `Calling (${type === 'video' ? 'HD Video' : 'Audio'})...`;
-
-    const outOverlay = document.getElementById("mobile-outgoing-call-overlay");
-    if (outOverlay) {
-        outOverlay.classList.remove("hidden");
-        outOverlay.style.display = "flex";
-    }
-    startOutgoingRingtone();
-
-    if (outgoingCallTimer) clearTimeout(outgoingCallTimer);
-    outgoingCallTimer = setTimeout(() => {
-        const outOverlay = document.getElementById("mobile-outgoing-call-overlay");
-        if (outOverlay && !outOverlay.classList.contains("hidden")) {
-            showToast("No answer from " + nameToShow);
-            if (socket && currentTargetUid) {
-                socket.emit("cancel_call", { targetUid: currentTargetUid });
-            }
-            stopRingtone();
-            playCallEndedTone();
-            endCallCleanup();
-        }
-    }, 45000);
-
-    socket.emit("initiate_call", {
-        callerUid: cleanCaller,
-        targetUid: cleanTarget,
-        type: type,
-        callerName: currentUser?.displayName || "Mobile User"
-    });
-}
-
-async function answerCall(targetUid, type = "video") {
-    stopIncomingRingtone();
-    const cleanTarget = String(targetUid || "").trim().replace(/\D/g, "");
-    currentTargetUid = cleanTarget;
-    incomingCallType = type;
-    
-    const inOverlay = document.getElementById("mobile-incoming-call-overlay");
-    if (inOverlay) {
-        inOverlay.classList.add("hidden");
-        inOverlay.style.display = "none";
-    }
-
-    if (socket) {
-        socket.emit("call_response", { targetUid: cleanTarget, status: "accepted" });
-        socket.emit("answer_call", { callerUid: cleanTarget, answererUid: my10DigitUid });
-    }
-    await startMobileWebRTC(false);
-}
-
-function startTimer() {
-    callDurationSeconds = 0;
-    const timerEl = document.getElementById("call-duration-timer");
-    const barTimer = document.getElementById("ongoing-bar-timer");
-    if (callTimer) clearInterval(callTimer);
-    callTimer = setInterval(() => {
-        callDurationSeconds++;
-        const mins = String(Math.floor(callDurationSeconds / 60)).padStart(2, '0');
-        const secs = String(callDurationSeconds % 60).padStart(2, '0');
-        const durStr = `${mins}:${secs}`;
-        if (timerEl) timerEl.innerText = durStr;
-        if (barTimer) barTimer.innerText = durStr;
-
-        const known = myContacts.find(c => c.uid === currentTargetUid);
-        const nameToShow = known ? known.name : `UID: ${currentTargetUid}`;
-        CallNotificationService.showOngoing(currentTargetUid, nameToShow, durStr);
-    }, 1000);
-}
-
-function endCall() {
-    if (socket && currentTargetUid) {
-        socket.emit("webrtc_end_call", { targetUid: currentTargetUid });
-        socket.emit("end_call", { targetUid: currentTargetUid });
-    }
-    stopRingtone();
-    playCallEndedTone();
-    CallNotificationService.dismissAll();
-    endCallCleanup();
 }
 
 function endCallCleanup() {
     stopRingtone();
-    CallNotificationService.dismissAll();
+    clearInterval(callDurationTimer);
+    releaseScreenWakeLock();
+
     if (outgoingCallTimer) {
         clearTimeout(outgoingCallTimer);
         outgoingCallTimer = null;
@@ -1035,257 +1593,258 @@ function endCallCleanup() {
         clearTimeout(incomingCallTimer);
         incomingCallTimer = null;
     }
-    if (callTimer) clearInterval(callTimer);
-    callTimer = null;
+
+    if (peerConnection) {
+        try {
+            peerConnection.ontrack = null;
+            peerConnection.onicecandidate = null;
+            peerConnection.oniceconnectionstatechange = null;
+            peerConnection.onicecandidateerror = null;
+            peerConnection.onnegotiationneeded = null;
+            peerConnection.close();
+        } catch (_) {}
+        peerConnection = null;
+    }
+
     if (localStream) {
-        localStream.getTracks().forEach(t => {
-            try { t.stop(); } catch (_) {}
+        localStream.getTracks().forEach(track => {
+            try {
+                track.stop();
+            } catch (_) {}
         });
         localStream = null;
     }
-    if (peerConnection) {
-        try { peerConnection.close(); } catch (_) {}
-        peerConnection = null;
-    }
+
     const localVideo = document.getElementById("local-video");
     const remoteVideo = document.getElementById("remote-video");
     if (localVideo) localVideo.srcObject = null;
-    if (remoteVideo) remoteVideo.srcObject = null;
-
-    const callScreen = document.getElementById("mobile-call-screen");
-    if (callScreen) {
-        callScreen.classList.add("hidden");
-        callScreen.style.display = "none";
-    }
-    const inOverlay = document.getElementById("mobile-incoming-call-overlay");
-    if (inOverlay) {
-        inOverlay.classList.add("hidden");
-        inOverlay.style.display = "none";
-    }
-    const outOverlay = document.getElementById("mobile-outgoing-call-overlay");
-    if (outOverlay) {
-        outOverlay.classList.add("hidden");
-        outOverlay.style.display = "none";
+    if (remoteVideo) {
+        if (remoteVideo.srcObject) {
+            try {
+                remoteVideo.srcObject.getTracks().forEach(t => t.stop());
+            } catch (_) {}
+        }
+        remoteVideo.srcObject = null;
+        remoteVideo.style.opacity = "";
     }
 
-    currentTargetUid = null;
+    document.getElementById("full-call-screen")?.classList.add("hidden");
+    document.getElementById("audio-call-visualizer")?.classList.add("hidden");
+    document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
+    document.getElementById("incoming-call-overlay")?.classList.add("hidden");
+
+    if (window.ZingNativeBridge && window.ZingNativeBridge.dismissCallNotifications) {
+        try { window.ZingNativeBridge.dismissCallNotifications(); } catch (_) {}
+    }
+
+    isCallInitiating = false;
+    activeCallTarget = null;
     pendingOffer = null;
     iceCandidatesQueue = [];
+
+    // The "Lost Focus Trap" Fix: When call UI closes, immediately restore focus to a live interactive element!
+    setTimeout(() => {
+        autoFocusFirstElement();
+    }, 120);
 }
 
-function openChat(contact) {
-    currentTargetUid = contact.uid;
-    const nameEl = document.getElementById("chat-contact-name");
-    const uidEl = document.getElementById("chat-contact-uid");
-    if (nameEl) nameEl.innerText = contact.name;
-    if (uidEl) uidEl.innerText = `UID: ${contact.uid}`;
-    
-    const chatScreen = document.getElementById("mobile-chat-screen");
-    if (chatScreen) {
-        chatScreen.classList.remove("hidden");
-        chatScreen.style.display = "flex";
+// Global intent bridge hook from MainActivity.java for Accept/Decline/End
+window.handleNativeCallAction = function(action) {
+    console.log("[ZingTalk TV] Native notification action received:", action);
+    if (action === "accept") {
+        document.getElementById("accept-call-btn")?.click();
+    } else if (action === "decline") {
+        document.getElementById("reject-call-btn")?.click();
+    } else if (action === "end") {
+        endCall();
     }
-    renderChatMessages();
-    const chatInput = document.getElementById("mobile-chat-input");
-    if (chatInput) setTimeout(() => chatInput.focus(), 100);
-}
+};
 
-function renderChatMessages() {
-    const box = document.getElementById("mobile-chat-messages");
-    if (!box || !currentTargetUid) return;
-    box.innerHTML = "";
-    const msgs = chatHistory[currentTargetUid] || [];
-    msgs.forEach(m => {
-        const b = document.createElement("div");
-        b.className = `message-bubble ${m.sent ? 'sent' : 'received'}`;
-        b.innerText = m.text;
-        box.appendChild(b);
-    });
-    box.scrollTop = box.scrollHeight;
-}
-
-function sendChatMessage() {
-    const input = document.getElementById("mobile-chat-input");
-    const text = input?.value.trim();
-    if (!text || !currentTargetUid) return;
-    if (!chatHistory[currentTargetUid]) chatHistory[currentTargetUid] = [];
-    chatHistory[currentTargetUid].push({ text, sent: true });
-    renderChatMessages();
-    
-    const payload = {
-        senderUid: my10DigitUid,
-        receiverUid: currentTargetUid,
-        targetUid: currentTargetUid,
-        text: text,
-        id: Date.now()
-    };
-    
-    if (socket && socket.connected) {
-        socket.emit("send_message", payload);
+function endCall() {
+    if (socket && activeCallTarget) {
+        socket.emit("webrtc_end_call", { targetUid: activeCallTarget });
     }
-    input.value = "";
+    stopRingtone();
+    playCallEndedTone();
+    endCallCleanup();
 }
 
-function switchMobileView(viewId) {
-    document.querySelectorAll(".mobile-nav-item").forEach(b => {
-        b.classList.toggle("active", b.dataset.view === viewId);
-    });
-    document.querySelectorAll(".mobile-view").forEach(v => {
-        if (v.id === viewId) {
-            v.classList.remove("hidden");
-            v.style.display = "flex";
-        } else {
-            v.classList.add("hidden");
-            v.style.display = "none";
-        }
-    });
-}
+let isCallInitiating = false;
 
-function loginUser(user) {
-    currentUser = user;
-    const authScreen = document.getElementById("mobile-auth-screen");
-    if (authScreen) {
-        authScreen.classList.add("hidden");
-        authScreen.style.display = "none";
+async function initiateDirectCall(targetUid, type) {
+    if (!targetUid) return;
+    if (!socket || !socket.connected) {
+        showToast("❌ Server not connected. Please wait for AWS Cloud connection.");
+        connectSocket();
+        return;
+    }
+    if (!my10DigitUid) {
+        showToast("❌ Waiting for official server UID assignment...");
+        return;
+    }
+    if (targetUid === my10DigitUid) {
+        showToast("❌ You cannot call your own UID");
+        return;
+    }
+    if (isCallInitiating || peerConnection) {
+        return;
     }
 
-    // Switch cleanly to Contacts View
-    switchMobileView("view-contacts");
+    currentCallType = type || "video";
 
-    const profName = document.getElementById("profile-name");
-    const profEmail = document.getElementById("profile-email");
-    const profAvatar = document.getElementById("profile-avatar");
-    if (profName) profName.innerText = user.displayName || "Guest User";
-    if (profEmail) profEmail.innerText = user.email || "Local Guest";
-    if (profAvatar) profAvatar.innerText = (user.displayName || "G").charAt(0).toUpperCase();
-
-    if (user.zingUid) {
-        updateDisplays(user.zingUid);
-    }
-    connectSocket();
-    loadContacts();
-}
-
-function logoutUser() {
-    localStorage.removeItem("zingTalkMobileSession");
-    currentUser = null;
-    my10DigitUid = null;
-    currentTargetUid = null;
-    if (socket && socket.connected) {
-        try {
-            socket.emit("logout_user", { uid: my10DigitUid });
-            socket.disconnect();
-        } catch (_) {}
-        socket = null;
-    }
-    const authScreen = document.getElementById("mobile-auth-screen");
-    if (authScreen) {
-        authScreen.classList.remove("hidden");
-        authScreen.style.display = "flex";
-    }
-    document.querySelectorAll(".mobile-view").forEach(v => {
-        v.classList.add("hidden");
-        v.style.display = "none";
-    });
-    updateDisplays(null);
-    showToast("Signed out successfully");
-}
-
-function initMobileApp() {
-    // Navigation Tabs (Contacts, Dialpad, Profile)
-    document.querySelectorAll(".mobile-nav-item").forEach(btn => {
-        btn.addEventListener("click", () => {
-            const viewId = btn.dataset.view;
-            if (viewId) switchMobileView(viewId);
-        });
-    });
-
-    // Dialpad Number & Action Clicks
-    const dialInput = document.getElementById("mobile-dial-input");
-    document.querySelectorAll(".dial-btn").forEach(b => {
-        b.addEventListener("click", () => {
-            const k = b.dataset.key;
-            if (k === "C") {
-                dialInput.value = "";
-            } else if (k === "⌫") {
-                dialInput.value = dialInput.value.slice(0, -1);
-            } else if (dialInput.value.length < 10) {
-                dialInput.value += k;
+    // Request hardware permissions and retain localStream to avoid Android camera freeze
+    try {
+        const audioConstraints = {
+            echoCancellation: { ideal: true },
+            noiseSuppression: { ideal: true },
+            autoGainControl: { ideal: true }
+        };
+        if (currentCallType === "video") {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    audio: audioConstraints,
+                    video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 } }
+                });
+            } catch (_) {
+                try {
+                    localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: true });
+                } catch (_) {
+                    currentCallType = "audio";
+                    localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+                }
             }
-        });
-    });
-
-    document.getElementById("mobile-dial-video-btn")?.addEventListener("click", () => {
-        const val = dialInput.value.trim().replace(/\D/g, "");
-        if (val.length === 10) initiateCall(val, "video");
-        else showToast("Enter a 10-digit UID");
-    });
-
-    document.getElementById("mobile-dial-audio-btn")?.addEventListener("click", () => {
-        const val = dialInput.value.trim().replace(/\D/g, "");
-        if (val.length === 10) initiateCall(val, "audio");
-        else showToast("Enter a 10-digit UID");
-    });
-
-    // Contacts Add Modal
-    document.getElementById("open-add-contact-btn")?.addEventListener("click", () => {
-        const modal = document.getElementById("add-contact-modal");
-        if (modal) {
-            modal.classList.remove("hidden");
-            modal.style.display = "flex";
-            document.getElementById("new-contact-name")?.focus();
-        }
-    });
-    document.getElementById("cancel-contact-btn")?.addEventListener("click", () => {
-        const modal = document.getElementById("add-contact-modal");
-        if (modal) {
-            modal.classList.add("hidden");
-            modal.style.display = "none";
-        }
-    });
-    document.getElementById("save-new-contact-btn")?.addEventListener("click", () => {
-        const name = document.getElementById("new-contact-name")?.value.trim();
-        const uid = document.getElementById("new-contact-uid")?.value.trim().replace(/\D/g, '');
-        if (name && uid.length === 10) {
-            myContacts.unshift({ name, uid });
-            saveContacts();
-            const modal = document.getElementById("add-contact-modal");
-            if (modal) {
-                modal.classList.add("hidden");
-                modal.style.display = "none";
-            }
-            document.getElementById("new-contact-name").value = "";
-            document.getElementById("new-contact-uid").value = "";
-            showToast("Contact saved!");
         } else {
-            showToast("Enter valid name and 10-digit UID");
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
         }
-    });
+    } catch (permErr) {
+        console.warn("[Media Permission Error]:", permErr);
+        showToast("❌ Camera/Microphone permission required for call: " + (permErr.message || "Permission denied"));
+        return;
+    }
 
-    // Chat Screen Controls
-    document.getElementById("close-chat-btn")?.addEventListener("click", () => {
-        const chatScreen = document.getElementById("mobile-chat-screen");
-        if (chatScreen) {
-            chatScreen.classList.add("hidden");
-            chatScreen.style.display = "none";
+    isCallInitiating = true;
+    setTimeout(() => { isCallInitiating = false; }, 2000);
+
+    activeCallTarget = targetUid;
+
+    let targetNameToShow = "UID: " + targetUid;
+    const contact = myContacts.find(c => c.uid === targetUid);
+    if (contact) targetNameToShow = contact.name;
+
+    const outgoingName = document.getElementById("outgoing-call-name");
+    if (outgoingName) outgoingName.innerText = targetNameToShow;
+
+    const outgoingType = document.getElementById("outgoing-call-type");
+    if (outgoingType) {
+        outgoingType.innerText = `Connecting ${currentCallType === 'video' ? 'HD Video' : 'Audio'} Call...`;
+    }
+    document.getElementById("outgoing-call-overlay")?.classList.remove("hidden");
+    startOutgoingRingtone();
+
+    if (outgoingCallTimer) clearTimeout(outgoingCallTimer);
+    outgoingCallTimer = setTimeout(() => {
+        const overlay = document.getElementById("outgoing-call-overlay");
+        if (overlay && !overlay.classList.contains("hidden")) {
+            showToast("No answer from " + targetNameToShow);
+            if (socket && activeCallTarget) {
+                socket.emit("cancel_call", { targetUid: activeCallTarget });
+            }
+            stopRingtone();
+            playCallEndedTone();
+            endCallCleanup();
         }
-        currentTargetUid = null;
-    });
-    document.getElementById("mobile-chat-send-btn")?.addEventListener("click", sendChatMessage);
-    document.getElementById("mobile-chat-input")?.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") sendChatMessage();
-    });
-    document.getElementById("chat-audio-btn")?.addEventListener("click", () => {
-        if (currentTargetUid) initiateCall(currentTargetUid, "audio");
-    });
-    document.getElementById("chat-video-btn")?.addEventListener("click", () => {
-        if (currentTargetUid) initiateCall(currentTargetUid, "video");
-    });
+    }, 45000);
 
-    // Call Screen Controls
-    document.getElementById("end-call-btn")?.addEventListener("click", endCall);
-    document.getElementById("flip-camera-btn")?.addEventListener("click", switchCamera);
-    document.getElementById("mute-mic-btn")?.addEventListener("click", () => {
+    socket.emit("initiate_call", {
+        callerUid: my10DigitUid,
+        targetUid: targetUid,
+        callerName: currentUser ? (currentUser.displayName || currentUser.name) : ("User " + my10DigitUid),
+        type: currentCallType
+    });
+}
+
+// ----------------- Alexa Skill Remote Command Handler -----------------
+// Dispatched from the user's Fire TV physical remote via Alexa Skill Webhook (POST /api/alexa)
+function handleAlexaIncomingCommand(cmd) {
+    if (!cmd) return;
+    const action = cmd.action;
+
+    if (action === 'launch') {
+        const loginScreen = document.getElementById("login-screen");
+        if (loginScreen && !loginScreen.classList.contains("hidden")) {
+            if (!currentUser) {
+                const nameInput = document.getElementById("guest-name-input");
+                const name = nameInput?.value.trim() || "Living Room TV";
+                const email = `${name.toLowerCase().replace(/[^a-z0-9]/g, '')}@tv.local`;
+                const user = {
+                    displayName: name,
+                    email: email,
+                    uid: "tv_" + computeDeterministic10DigitUid(email)
+                };
+                localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                loginUserSession(user);
+            }
+        }
+        document.getElementById("login-screen")?.classList.add("hidden");
+        document.getElementById("tv-top-bar")?.classList.remove("hidden");
+        document.getElementById("main-screen")?.classList.remove("hidden");
+    } else if (action === 'audio_call' || action === 'video_call') {
+        const mode = action === 'video_call' ? 'video' : 'audio';
+        const targetUid = cmd.targetUid;
+        if (targetUid) {
+            initiateDirectCall(targetUid, mode);
+        }
+    } else if (action === 'end_call') {
+        endCall();
+    } else if (action === 'answer_call') {
+        const acceptBtn = document.getElementById("accept-call-btn");
+        if (acceptBtn) acceptBtn.click();
+    } else if (action === 'reject_call') {
+        const rejectBtn = document.getElementById("reject-call-btn");
+        if (rejectBtn) rejectBtn.click();
+    } else if (action === 'mute_mic') {
+        if (localStream) {
+            const track = localStream.getAudioTracks()[0];
+            if (track) {
+                isMicMuted = true;
+                track.enabled = false;
+                showToast("Microphone muted");
+            }
+        }
+    } else if (action === 'unmute_mic') {
+        if (localStream) {
+            const track = localStream.getAudioTracks()[0];
+            if (track) {
+                isMicMuted = false;
+                track.enabled = true;
+                showToast("Microphone active");
+            }
+        }
+    } else if (action === 'camera_off') {
+        if (localStream) {
+            const track = localStream.getVideoTracks()[0];
+            if (track) {
+                track.enabled = false;
+                showToast("Camera turned off");
+            }
+        }
+    } else if (action === 'camera_on') {
+        if (localStream) {
+            const track = localStream.getVideoTracks()[0];
+            if (track) {
+                track.enabled = true;
+                showToast("Camera active");
+            }
+        }
+    } else if (action === 'toggle_camera') {
+        if (localStream) {
+            const track = localStream.getVideoTracks()[0];
+            if (track) {
+                track.enabled = !track.enabled;
+                showToast(track.enabled ? "Camera active" : "Camera turned off");
+            }
+        }
+    } else if (action === 'toggle_mic') {
         if (localStream) {
             const track = localStream.getAudioTracks()[0];
             if (track) {
@@ -1294,355 +1853,979 @@ function initMobileApp() {
                 showToast(isMicMuted ? "Microphone muted" : "Microphone active");
             }
         }
+    } else if (action === 'open_guide' || action === 'show_guide') {
+        const guideModal = document.getElementById("guide-modal");
+        if (guideModal) {
+            guideModal.classList.remove("hidden");
+            const scrollArea = document.getElementById("guide-scroll-area");
+            if (scrollArea) focusElement(scrollArea);
+        }
+    } else if (action === 'device_paired') {
+        showToast(`🎙️ Alexa Paired (UID: ${cmd.pairedUid || my10DigitUid})`);
+    } else if (action === 'open_chat') {
+        const targetUid = cmd.targetUid;
+        if (targetUid) {
+            const contact = myContacts.find(c => c.uid === targetUid) || { uid: targetUid, name: cmd.contact || ("UID " + targetUid) };
+            openChat(contact);
+        }
+    } else if (action === 'clear_chat') {
+        if (currentTargetUid) {
+            chatHistory[currentTargetUid] = [];
+            const messagesArea = document.getElementById("messages-area");
+            if (messagesArea) messagesArea.innerHTML = "";
+            saveUserHistoryToStorage();
+            showToast("Chat cleared");
+        }
+    } else if (action === 'open_dialpad') {
+        closeChat();
+        document.getElementById("dial-uid-input")?.focus();
+        showToast("Dialpad ready");
+    } else if (action === 'open_contacts') {
+        closeChat();
+        autoFocusFirstElement();
+        showToast("Contacts directory");
+    } else if (action === 'open_profile') {
+        const name = (currentUser && currentUser.displayName) ? currentUser.displayName : "TV User";
+        const email = (currentUser && currentUser.email) ? currentUser.email : "Local TV";
+        const avatarEl = document.getElementById("modal-avatar");
+        if (avatarEl) avatarEl.innerText = name.charAt(0).toUpperCase();
+        const nameEl = document.getElementById("modal-name");
+        if (nameEl) nameEl.innerText = name;
+        const emailEl = document.getElementById("modal-email");
+        if (emailEl) emailEl.innerText = email;
+        const uidEl = document.getElementById("modal-uid");
+        if (uidEl) uidEl.innerText = my10DigitUid || "Generating...";
+        document.getElementById("profile-modal")?.classList.remove("hidden");
+        showToast(`Your ZingTalk UID: ${my10DigitUid}`);
+    } else if (action === 'type_message') {
+        const text = cmd.message || "";
+        const input = document.getElementById("message-input");
+        if (input) {
+            input.value = text;
+            input.focus();
+        }
+    } else if (action === 'send_message') {
+        const text = cmd.message || "";
+        const input = document.getElementById("message-input");
+        if (input && text) {
+            input.value = text;
+        }
+        if (currentTargetUid) {
+            sendMessageLogic();
+        }
+    } else if (action === 'navigate_home') {
+        closeChat();
+        document.getElementById("guide-modal")?.classList.add("hidden");
+        document.getElementById("profile-modal")?.classList.add("hidden");
+        document.getElementById("policy-modal")?.classList.add("hidden");
+        document.getElementById("forgot-password-modal")?.classList.add("hidden");
+        autoFocusFirstElement();
+        showToast("Returned Home");
+    }
+}
+
+// ----------------- Fire TV Remote Spatial Navigation Engine -----------------
+// ----------------- Fire TV Remote Spatial Navigation Engine -----------------
+export function focusElement(el, shouldScroll = true) {
+    if (!el) return;
+    document.querySelectorAll('.tv-focused').forEach(node => {
+        if (node !== el) node.classList.remove('tv-focused');
     });
-    document.getElementById("toggle-video-btn")?.addEventListener("click", () => {
-        if (localStream) {
-            const track = localStream.getVideoTracks()[0];
-            if (track) {
-                isVideoDisabled = !isVideoDisabled;
-                track.enabled = !isVideoDisabled;
-                showToast(isVideoDisabled ? "Camera off" : "Camera on");
+    el.classList.add('tv-focused');
+    try {
+        el.focus({ preventScroll: !shouldScroll });
+    } catch (_) {
+        el.focus();
+    }
+    if (shouldScroll) {
+        try {
+            el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        } catch (_) {}
+    }
+}
+
+function isElementVisibleAndFocusable(el) {
+    if (!el) return false;
+    if (el.closest('.hidden')) return false;
+    if (el.disabled) return false;
+    if (el.getAttribute('tabindex') === '-1') return false;
+    if (window.getComputedStyle) {
+        const style = window.getComputedStyle(el);
+        if (style) {
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+        }
+    }
+    if (el.offsetParent === null && el.tagName !== 'BODY') {
+        const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+        if (!style || (style.position !== 'fixed' && !el.closest('.tv-modal-backdrop'))) {
+            return false;
+        }
+    }
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+}
+
+function getVisibleFocusableElements() {
+    const activeModal = document.querySelector('.tv-modal-backdrop:not(.hidden)');
+    const callScreen = document.getElementById("full-call-screen");
+    const activeCall = (callScreen && !callScreen.classList.contains("hidden")) ? callScreen : null;
+    const scope = activeModal || activeCall || document;
+
+    return Array.from(scope.querySelectorAll('.tv-focusable')).filter(el => {
+        if (!isElementVisibleAndFocusable(el)) return false;
+        if (!activeModal && el.closest('.tv-modal-backdrop')) return false;
+        return true;
+    });
+}
+
+function autoFocusFirstElement() {
+    const activeModal = document.querySelector('.tv-modal-backdrop:not(.hidden)');
+    if (activeModal) {
+        const modalInputs = activeModal.querySelectorAll('input:not([type="hidden"]), button');
+        for (const input of modalInputs) {
+            if (isElementVisibleAndFocusable(input)) {
+                focusElement(input);
+                return;
             }
         }
-    });
+    }
 
-    // WhatsApp-Style Top Incoming Call Banner Handlers
-    document.getElementById("top-banner-accept-btn")?.addEventListener("click", () => {
-        if (incomingCallerUid) {
-            answerCall(incomingCallerUid, incomingCallType);
-        }
-    });
-    document.getElementById("top-banner-decline-btn")?.addEventListener("click", () => {
-        stopIncomingRingtone();
-        playCallEndedTone();
-        CallNotificationService.dismissAll();
-        const inOverlay = document.getElementById("mobile-incoming-call-overlay");
-        if (inOverlay) {
-            inOverlay.classList.add("hidden");
-            inOverlay.style.display = "none";
-        }
-        if (socket && incomingCallerUid) {
-            socket.emit("call_response", { targetUid: incomingCallerUid, status: "rejected" });
-            socket.emit("cancel_call", { targetUid: incomingCallerUid });
-        }
-        incomingCallerUid = null;
-    });
-    document.getElementById("top-banner-touch-area")?.addEventListener("click", () => {
-        const inOverlay = document.getElementById("mobile-incoming-call-overlay");
-        if (inOverlay) {
-            inOverlay.classList.remove("hidden");
-            inOverlay.style.display = "flex";
-        }
-    });
-
-    // Minimize Call Screen to Persistent Ongoing Bar (Multitasking while in call)
-    document.getElementById("minimize-call-btn")?.addEventListener("click", () => {
-        const callScreen = document.getElementById("mobile-call-screen");
-        if (callScreen) {
-            callScreen.classList.add("hidden");
-            callScreen.style.display = "none";
-        }
-        const bar = document.getElementById("mobile-ongoing-call-bar");
-        if (bar) {
-            bar.classList.remove("hidden");
-            bar.style.display = "flex";
-        }
-        showToast("📞 Call minimized to top bar");
-    });
-    const restoreCallScreen = () => {
-        const callScreen = document.getElementById("mobile-call-screen");
-        if (callScreen) {
-            callScreen.classList.remove("hidden");
-            callScreen.style.display = "flex";
-        }
-        const bar = document.getElementById("mobile-ongoing-call-bar");
-        if (bar) {
-            bar.classList.add("hidden");
-            bar.style.display = "none";
-        }
-    };
-    document.getElementById("ongoing-bar-return-btn")?.addEventListener("click", restoreCallScreen);
-    document.getElementById("ongoing-bar-target")?.addEventListener("click", restoreCallScreen);
-    document.getElementById("ongoing-bar-end-btn")?.addEventListener("click", endCall);
-
-    // Mobile Permissions & Support Verification Modal
-    const openPerms = () => {
-        const pModal = document.getElementById("mobile-permissions-modal");
-        if (pModal) {
-            pModal.classList.remove("hidden");
-            pModal.style.display = "flex";
-            updatePermissionsStatusUI();
-        }
-    };
-    document.getElementById("mobile-permissions-btn")?.addEventListener("click", openPerms);
-    document.getElementById("open-permissions-modal-btn")?.addEventListener("click", openPerms);
-
-    const closePerms = () => {
-        const pModal = document.getElementById("mobile-permissions-modal");
-        if (pModal) {
-            pModal.classList.add("hidden");
-            pModal.style.display = "none";
-        }
-    };
-    document.getElementById("close-permissions-modal-x")?.addEventListener("click", closePerms);
-    document.getElementById("close-permissions-modal-btn")?.addEventListener("click", closePerms);
-
-    document.getElementById("grant-recheck-permissions-btn")?.addEventListener("click", async () => {
-        if (window.ZingNativeBridge && window.ZingNativeBridge.requestAllPermissions) {
-            try { window.ZingNativeBridge.requestAllPermissions(); } catch (_) {}
-        }
-        try {
-            await CallNotificationService.requestPermission();
-        } catch (_) {}
-        try {
-            const testStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-            testStream.getTracks().forEach(t => t.stop());
-        } catch (_) {}
-        await updatePermissionsStatusUI();
-        showToast("✅ Permissions verified!");
-    });
-
-    // Mobile Incoming & Outgoing Call Overlays
-    document.getElementById("mobile-accept-call-btn")?.addEventListener("click", () => {
-        if (incomingCallerUid) {
-            answerCall(incomingCallerUid, incomingCallType);
-        }
-    });
-    document.getElementById("mobile-decline-call-btn")?.addEventListener("click", () => {
-        stopIncomingRingtone();
-        playCallEndedTone();
-        CallNotificationService.dismissAll();
-        const inOverlay = document.getElementById("mobile-incoming-call-overlay");
-        if (inOverlay) {
-            inOverlay.classList.add("hidden");
-            inOverlay.style.display = "none";
-        }
-        if (socket && incomingCallerUid) {
-            socket.emit("call_response", { targetUid: incomingCallerUid, status: "rejected" });
-            socket.emit("cancel_call", { targetUid: incomingCallerUid });
-        }
-        incomingCallerUid = null;
-    });
-    document.getElementById("mobile-cancel-outgoing-btn")?.addEventListener("click", () => {
-        stopOutgoingRingtone();
-        playCallEndedTone();
-        CallNotificationService.dismissAll();
-        const outOverlay = document.getElementById("mobile-outgoing-call-overlay");
-        if (outOverlay) {
-            outOverlay.classList.add("hidden");
-            outOverlay.style.display = "none";
-        }
-        if (socket && currentTargetUid) {
-            socket.emit("cancel_call", { targetUid: currentTargetUid });
-        }
-        endCallCleanup();
-    });
-
-    // Mobile Privacy Policy Modal
-    document.getElementById("open-mobile-policy-btn")?.addEventListener("click", () => {
-        const pModal = document.getElementById("mobile-policy-modal");
-        if (pModal) {
-            pModal.classList.remove("hidden");
-            pModal.style.display = "flex";
-        }
-    });
-    document.getElementById("close-policy-btn")?.addEventListener("click", () => {
-        const pModal = document.getElementById("mobile-policy-modal");
-        if (pModal) {
-            pModal.classList.add("hidden");
-            pModal.style.display = "none";
-        }
-    });
-
-    // Profile & Logout
-    document.getElementById("mobile-logout-btn")?.addEventListener("click", logoutUser);
-    document.getElementById("copy-my-uid-btn")?.addEventListener("click", () => {
-        if (my10DigitUid) {
-            navigator.clipboard.writeText(my10DigitUid).then(() => showToast(`Copied: ${my10DigitUid}`));
-        }
-    });
-
-    // Guest Login Modal Flow (Prompt for Name)
-    const guestBtn = document.getElementById("mobile-guest-btn");
-    const guestModal = document.getElementById("mobile-guest-modal");
-    const confirmGuestBtn = document.getElementById("mobile-confirm-guest-btn");
-    const cancelGuestBtn = document.getElementById("mobile-cancel-guest-btn");
-    const guestNameInput = document.getElementById("mobile-guest-name-input");
-
-    guestBtn?.addEventListener("click", () => {
-        if (guestModal) {
-            guestModal.classList.remove("hidden");
-            guestModal.style.display = "flex";
-            if (guestNameInput) {
-                guestNameInput.value = "";
-                setTimeout(() => guestNameInput.focus(), 100);
+    const loginScreen = document.getElementById("login-screen");
+    if (loginScreen && !loginScreen.classList.contains("hidden")) {
+        const paneEmail = document.getElementById("pane-email");
+        if (paneEmail && !paneEmail.classList.contains("hidden")) {
+            const signupGroup = document.getElementById("email-signup-name-group");
+            if (signupGroup && !signupGroup.classList.contains("hidden")) {
+                const nameInp = document.getElementById("login-name-input");
+                if (isElementVisibleAndFocusable(nameInp)) {
+                    focusElement(nameInp);
+                    return;
+                }
+            }
+            const emailInp = document.getElementById("login-email-input");
+            if (isElementVisibleAndFocusable(emailInp)) {
+                focusElement(emailInp);
+                return;
             }
         }
-    });
-
-    cancelGuestBtn?.addEventListener("click", () => {
-        if (guestModal) {
-            guestModal.classList.add("hidden");
-            guestModal.style.display = "none";
+        const paneGuest = document.getElementById("pane-guest");
+        if (paneGuest && !paneGuest.classList.contains("hidden")) {
+            const guestInp = document.getElementById("guest-name-input");
+            if (isElementVisibleAndFocusable(guestInp)) {
+                focusElement(guestInp);
+                return;
+            }
         }
-    });
+    }
 
-    const handleConfirmGuest = () => {
-        const enteredName = guestNameInput?.value.trim() || "Guest User";
-        const guestUid = computeDeterministic10DigitUid("guest_" + Date.now());
-        const user = {
-            displayName: enteredName,
-            email: null,
-            uid: "guest_" + guestUid,
-            zingUid: guestUid,
-            isGuest: true
-        };
-        if (guestModal) {
-            guestModal.classList.add("hidden");
-            guestModal.style.display = "none";
+    const mainScreen = document.getElementById("main-screen");
+    if (mainScreen && !mainScreen.classList.contains("hidden")) {
+        const activeChat = document.getElementById("tv-active-chat");
+        if (activeChat && !activeChat.classList.contains("hidden")) {
+            const msgInp = document.getElementById("message-input");
+            if (isElementVisibleAndFocusable(msgInp)) {
+                focusElement(msgInp);
+                return;
+            }
         }
-        localStorage.setItem("zingTalkMobileSession", JSON.stringify(user));
-        loginUser(user);
-        showToast(`Welcome ${enteredName}!`);
-    };
+        const dialInp = document.getElementById("dial-uid-input");
+        if (isElementVisibleAndFocusable(dialInp)) {
+            focusElement(dialInp);
+            return;
+        }
+    }
 
-    confirmGuestBtn?.addEventListener("click", handleConfirmGuest);
-    guestNameInput?.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") handleConfirmGuest();
+    const focusables = getVisibleFocusableElements();
+    if (focusables.length > 0) {
+        focusElement(focusables[0]);
+    }
+}
+
+function getCustomNavigationTarget(current, direction) {
+    if (!current) return null;
+    const id = current.id;
+    const isSignUp = !document.getElementById("email-signup-name-group")?.classList.contains("hidden");
+
+    // --- 1. Login Screen ---
+    if (id === "tab-btn-email") {
+        if (direction === "up") return document.getElementById("tab-btn-email");
+        if (direction === "left") return document.getElementById("tab-btn-email");
+        if (direction === "right") return document.getElementById("tab-btn-guest");
+        if (direction === "down") return isSignUp ? document.getElementById("login-name-input") : document.getElementById("login-email-input");
+    }
+    if (id === "tab-btn-guest") {
+        if (direction === "up") return document.getElementById("tab-btn-guest");
+        if (direction === "right") return document.getElementById("tab-btn-guest");
+        if (direction === "left") return document.getElementById("tab-btn-email");
+        if (direction === "down") return document.getElementById("guest-name-input");
+    }
+
+    // Email Form (Strict, predictable two-way vertical flow)
+    if (id === "login-name-input") {
+        if (direction === "up") return document.getElementById("tab-btn-email");
+        if (direction === "down") return document.getElementById("login-email-input");
+    }
+    if (id === "login-email-input") {
+        if (direction === "up") return isSignUp ? document.getElementById("login-name-input") : document.getElementById("tab-btn-email");
+        if (direction === "down") return document.getElementById("login-password-input");
+        if (direction === "right") return document.getElementById("forgot-password-link");
+    }
+    if (id === "login-password-input") {
+        // GUARANTEED: Up always returns directly to email input! Never get trapped in forgot-password
+        if (direction === "up") return document.getElementById("login-email-input");
+        if (direction === "down") return document.getElementById("email-login-submit-btn");
+        if (direction === "right") return document.getElementById("forgot-password-link");
+    }
+    if (id === "forgot-password-link") {
+        if (direction === "up") return document.getElementById("login-email-input");
+        if (direction === "down") return document.getElementById("login-password-input");
+        if (direction === "left") return document.getElementById("login-password-input");
+    }
+    if (id === "email-login-submit-btn") {
+        if (direction === "up") return document.getElementById("login-password-input");
+        if (direction === "down") return document.getElementById("toggle-auth-mode-btn");
+    }
+    if (id === "toggle-auth-mode-btn") {
+        if (direction === "up") return document.getElementById("email-login-submit-btn");
+        if (direction === "down") return document.getElementById("open-policy-btn");
+    }
+    if (id === "open-policy-btn") {
+        if (direction === "down") return document.getElementById("open-policy-btn");
+        if (direction === "up") {
+            const guestPane = document.getElementById("pane-guest");
+            if (guestPane && !guestPane.classList.contains("hidden")) {
+                return document.getElementById("guest-login-btn");
+            }
+            return document.getElementById("toggle-auth-mode-btn");
+        }
+    }
+
+    // Guest Form
+    if (id === "guest-name-input") {
+        if (direction === "up") return document.getElementById("tab-btn-guest");
+        if (direction === "down") return document.getElementById("guest-login-btn");
+    }
+    if (id === "guest-login-btn") {
+        if (direction === "up") return document.getElementById("guest-name-input");
+        if (direction === "down") return document.getElementById("open-policy-btn");
+    }
+
+    // --- 2. Main Screen Layout Navigation ---
+    // Top Bar
+    if (id === "my-profile-chip") {
+        if (direction === "right") return document.getElementById("header-logout-btn");
+        if (direction === "down") return document.getElementById("dial-uid-input");
+    }
+    if (id === "header-logout-btn") {
+        if (direction === "left") return document.getElementById("my-profile-chip");
+        if (direction === "down") {
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("chat-audio-call-btn") || document.getElementById("chat-back-btn");
+            }
+            return document.getElementById("dial-uid-input");
+        }
+    }
+
+    // Sidebar: Direct Dial & Add Contact
+    if (id === "dial-uid-input") {
+        if (direction === "up") return document.getElementById("my-profile-chip");
+        if (direction === "down") return document.getElementById("quick-chat-btn");
+        if (direction === "right") {
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("chat-back-btn") || document.getElementById("message-input");
+            }
+        }
+    }
+    if (id === "quick-chat-btn") {
+        if (direction === "up") return document.getElementById("dial-uid-input");
+        if (direction === "right") return document.getElementById("quick-audio-call-btn");
+        if (direction === "down") return document.getElementById("contact-uid-input");
+    }
+    if (id === "quick-audio-call-btn") {
+        if (direction === "left") return document.getElementById("quick-chat-btn");
+        if (direction === "right") return document.getElementById("quick-video-call-btn");
+        if (direction === "up") return document.getElementById("dial-uid-input");
+        if (direction === "down") return document.getElementById("contact-uid-input");
+    }
+    if (id === "quick-video-call-btn") {
+        if (direction === "left") return document.getElementById("quick-audio-call-btn");
+        if (direction === "up") return document.getElementById("dial-uid-input");
+        if (direction === "down") return document.getElementById("contact-uid-input");
+        if (direction === "right") {
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("messages-area") || document.getElementById("message-input");
+            }
+        }
+    }
+    if (id === "contact-uid-input") {
+        if (direction === "up") return document.getElementById("quick-chat-btn");
+        if (direction === "down") return document.getElementById("contact-name-input");
+        if (direction === "right") {
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("messages-area") || document.getElementById("message-input");
+            }
+        }
+    }
+    if (id === "contact-name-input") {
+        if (direction === "up") return document.getElementById("contact-uid-input");
+        if (direction === "down") return document.getElementById("save-contact-btn");
+    }
+    if (id === "save-contact-btn") {
+        if (direction === "up") return document.getElementById("contact-name-input");
+        if (direction === "down") {
+            const firstContact = document.querySelector("#contacts-list .tv-contact-card");
+            return firstContact || document.getElementById("sidebar-policy-btn");
+        }
+    }
+
+    // Contacts list cards & mini call buttons
+    if (current.classList.contains("tv-contact-card")) {
+        if (direction === "up") {
+            const prevCard = current.previousElementSibling;
+            if (prevCard && prevCard.classList.contains("tv-contact-card")) return prevCard;
+            return document.getElementById("save-contact-btn");
+        }
+        if (direction === "down") {
+            const nextCard = current.nextElementSibling;
+            if (nextCard && nextCard.classList.contains("tv-contact-card")) return nextCard;
+            return document.getElementById("sidebar-policy-btn");
+        }
+        if (direction === "right") {
+            const audioBtn = current.querySelector('.tv-mini-call-btn[data-action="audio"]');
+            if (audioBtn) return audioBtn;
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("message-input") || document.getElementById("chat-back-btn");
+            }
+        }
+    }
+
+    if (current.classList.contains("tv-mini-call-btn")) {
+        const card = current.closest(".tv-contact-card");
+        if (direction === "left") {
+            if (current.dataset.action === "video") {
+                const audioBtn = card?.querySelector('.tv-mini-call-btn[data-action="audio"]');
+                if (audioBtn) return audioBtn;
+            }
+            return card;
+        }
+        if (direction === "right") {
+            if (current.dataset.action === "audio") {
+                const videoBtn = card?.querySelector('.tv-mini-call-btn[data-action="video"]');
+                if (videoBtn) return videoBtn;
+            }
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("message-input") || document.getElementById("chat-back-btn");
+            }
+        }
+        if (direction === "up") {
+            const prevCard = card?.previousElementSibling;
+            if (prevCard && prevCard.classList.contains("tv-contact-card")) return prevCard;
+            return document.getElementById("save-contact-btn");
+        }
+        if (direction === "down") {
+            const nextCard = card?.nextElementSibling;
+            if (nextCard && nextCard.classList.contains("tv-contact-card")) return nextCard;
+            return document.getElementById("sidebar-policy-btn");
+        }
+    }
+
+    if (id === "sidebar-policy-btn") {
+        if (direction === "up") {
+            const lastContact = document.querySelector("#contacts-list .tv-contact-card:last-child");
+            return lastContact || document.getElementById("save-contact-btn");
+        }
+    }
+
+    // --- 3. Active Chat Stage ---
+    if (id === "chat-back-btn") {
+        if (direction === "left") return document.getElementById("quick-chat-btn");
+        if (direction === "right") return document.getElementById("chat-audio-call-btn");
+        if (direction === "down") return document.getElementById("messages-area");
+    }
+    if (id === "chat-audio-call-btn") {
+        if (direction === "left") return document.getElementById("chat-back-btn");
+        if (direction === "right") return document.getElementById("chat-video-call-btn");
+        if (direction === "down") return document.getElementById("messages-area");
+        if (direction === "up") return document.getElementById("header-logout-btn");
+    }
+    if (id === "chat-video-call-btn") {
+        if (direction === "left") return document.getElementById("chat-audio-call-btn");
+        if (direction === "down") return document.getElementById("messages-area");
+        if (direction === "up") return document.getElementById("header-logout-btn");
+    }
+    if (id === "messages-area") {
+        if (direction === "left") return document.querySelector("#contacts-list .tv-contact-card") || document.getElementById("dial-uid-input");
+        if (direction === "up") return document.getElementById("chat-audio-call-btn") || document.getElementById("chat-back-btn");
+        if (direction === "down") return document.getElementById("message-input");
+    }
+    if (id === "message-input") {
+        if (direction === "up") return document.getElementById("messages-area");
+        if (direction === "right") return document.getElementById("send-btn");
+        if (direction === "left") return document.querySelector("#contacts-list .tv-contact-card") || document.getElementById("quick-chat-btn");
+    }
+    if (id === "send-btn") {
+        if (direction === "left") return document.getElementById("message-input");
+        if (direction === "up") return document.getElementById("messages-area");
+    }
+
+    // --- 4. Call Screen Dock ---
+    if (id === "mute-mic-btn") {
+        if (direction === "right") return document.getElementById("toggle-video-btn");
+    }
+    if (id === "toggle-video-btn") {
+        if (direction === "left") return document.getElementById("mute-mic-btn");
+        if (direction === "right") return document.getElementById("end-call-btn");
+    }
+    if (id === "end-call-btn") {
+        if (direction === "left") return document.getElementById("toggle-video-btn");
+    }
+
+    // --- 5. Incoming / Outgoing Overlays ---
+    if (id === "reject-call-btn") {
+        if (direction === "right") return document.getElementById("accept-call-btn");
+    }
+    if (id === "accept-call-btn") {
+        if (direction === "left") return document.getElementById("reject-call-btn");
+    }
+
+    // --- 6. Forgot Password Modal ---
+    if (id === "close-forgot-modal-btn") {
+        if (direction === "down") return document.getElementById("reset-email-input");
+    }
+    if (id === "reset-email-input") {
+        if (direction === "up") return document.getElementById("close-forgot-modal-btn");
+        if (direction === "down") return document.getElementById("send-reset-link-btn");
+    }
+    if (id === "send-reset-link-btn") {
+        if (direction === "up") return document.getElementById("reset-email-input");
+        if (direction === "down") return document.getElementById("cancel-reset-btn");
+    }
+    if (id === "cancel-reset-btn") {
+        if (direction === "up") return document.getElementById("send-reset-link-btn");
+        if (direction === "down") return document.getElementById("close-forgot-modal-btn");
+    }
+
+    // --- 7. Profile Modal ---
+    if (id === "copy-uid-btn") {
+        if (direction === "down") return document.getElementById("profile-policy-btn");
+    }
+    if (id === "profile-policy-btn") {
+        if (direction === "up") return document.getElementById("copy-uid-btn");
+        if (direction === "right") return document.getElementById("close-profile-btn");
+        if (direction === "down") return document.getElementById("modal-logout-btn");
+    }
+    if (id === "close-profile-btn") {
+        if (direction === "left") return document.getElementById("profile-policy-btn");
+        if (direction === "right") return document.getElementById("modal-logout-btn");
+        if (direction === "up") return document.getElementById("copy-uid-btn");
+    }
+    if (id === "modal-logout-btn") {
+        if (direction === "left") return document.getElementById("close-profile-btn");
+        if (direction === "up") return document.getElementById("copy-uid-btn");
+    }
+
+    // --- 8. Policy Modal ---
+    if (id === "close-policy-btn") {
+        if (direction === "down") return document.getElementById("policy-scroll-area");
+    }
+    if (id === "policy-scroll-area") {
+        if (direction === "up") return document.getElementById("close-policy-btn");
+        if (direction === "down") return document.getElementById("policy-ok-btn");
+    }
+    if (id === "policy-ok-btn") {
+        if (direction === "up") return document.getElementById("policy-scroll-area");
+    }
+
+    return null;
+}
+
+function handleDpadNavigation(direction) {
+    const focusables = getVisibleFocusableElements();
+    if (focusables.length === 0) return;
+
+    let current = document.activeElement;
+    if (!current || !focusables.includes(current)) {
+        autoFocusFirstElement();
+        return;
+    }
+
+    // Special scroll handling for TV remote on scrollable areas
+    if (current.id === "policy-scroll-area" || current.id === "messages-area" || current.id === "guide-scroll-area") {
+        if (direction === 'down') {
+            const canScrollDown = current.scrollTop < (current.scrollHeight - current.clientHeight - 8);
+            if (canScrollDown) {
+                current.scrollTop += 90;
+                return;
+            }
+        } else if (direction === 'up') {
+            const canScrollUp = current.scrollTop > 8;
+            if (canScrollUp) {
+                current.scrollTop -= 90;
+                return;
+            }
+        }
+    }
+
+    // 1. Check deterministic, high-priority form/layout navigation targets
+    const customTarget = getCustomNavigationTarget(current, direction);
+    if (customTarget && isElementVisibleAndFocusable(customTarget)) {
+        focusElement(customTarget);
+        return;
+    }
+
+    // 2. High-precision 2D Spatial Geometry fallback (W3C Projection Overlap Algorithm)
+    const currentRect = current.getBoundingClientRect();
+    const currentCenterX = (currentRect.left + currentRect.right) / 2;
+    const currentCenterY = (currentRect.top + currentRect.bottom) / 2;
+
+    let bestElement = null;
+    let bestScore = Infinity;
+
+    for (const target of focusables) {
+        if (target === current) continue;
+        const targetRect = target.getBoundingClientRect();
+        const targetCenterX = (targetRect.left + targetRect.right) / 2;
+        const targetCenterY = (targetRect.top + targetRect.bottom) / 2;
+
+        let isCandidate = false;
+        let primaryDist = 0;
+        let orthogonalGap = 0;
+        let centerOrthogonal = 0;
+
+        if (direction === 'down') {
+            // Target must be strictly below current
+            if (targetCenterY > currentCenterY + 4 && targetRect.bottom > currentRect.bottom + 2) {
+                isCandidate = true;
+                primaryDist = Math.max(0, targetRect.top - currentRect.bottom);
+                const overlap = Math.max(0, Math.min(currentRect.right, targetRect.right) - Math.max(currentRect.left, targetRect.left));
+                orthogonalGap = overlap > 0 ? 0 : Math.max(0, Math.max(currentRect.left - targetRect.right, targetRect.left - currentRect.right));
+                centerOrthogonal = Math.abs(targetCenterX - currentCenterX);
+            }
+        } else if (direction === 'up') {
+            // Target must be strictly above current
+            if (targetCenterY < currentCenterY - 4 && targetRect.top < currentRect.top - 2) {
+                isCandidate = true;
+                primaryDist = Math.max(0, currentRect.top - targetRect.bottom);
+                const overlap = Math.max(0, Math.min(currentRect.right, targetRect.right) - Math.max(currentRect.left, targetRect.left));
+                orthogonalGap = overlap > 0 ? 0 : Math.max(0, Math.max(currentRect.left - targetRect.right, targetRect.left - currentRect.right));
+                centerOrthogonal = Math.abs(targetCenterX - currentCenterX);
+            }
+        } else if (direction === 'right') {
+            // Target must be strictly to the right
+            if (targetCenterX > currentCenterX + 4 && targetRect.right > currentRect.right + 2) {
+                isCandidate = true;
+                primaryDist = Math.max(0, targetRect.left - currentRect.right);
+                const overlap = Math.max(0, Math.min(currentRect.bottom, targetRect.bottom) - Math.max(currentRect.top, targetRect.top));
+                orthogonalGap = overlap > 0 ? 0 : Math.max(0, Math.max(currentRect.top - targetRect.bottom, targetRect.top - currentRect.bottom));
+                centerOrthogonal = Math.abs(targetCenterY - currentCenterY);
+            }
+        } else if (direction === 'left') {
+            // Target must be strictly to the left
+            if (targetCenterX < currentCenterX - 4 && targetRect.left < currentRect.left - 2) {
+                isCandidate = true;
+                primaryDist = Math.max(0, currentRect.left - targetRect.right);
+                const overlap = Math.max(0, Math.min(currentRect.bottom, targetRect.bottom) - Math.max(currentRect.top, targetRect.top));
+                orthogonalGap = overlap > 0 ? 0 : Math.max(0, Math.max(currentRect.top - targetRect.bottom, targetRect.top - currentRect.bottom));
+                centerOrthogonal = Math.abs(targetCenterY - currentCenterY);
+            }
+        }
+
+        if (isCandidate) {
+            // Overlapping elements in the movement axis get heavily prioritized (zero orthogonal penalty)
+            const score = primaryDist + (orthogonalGap * 4) + (centerOrthogonal * 0.5);
+            if (score < bestScore) {
+                bestScore = score;
+                bestElement = target;
+            }
+        }
+    }
+
+    if (bestElement) {
+        focusElement(bestElement);
+    }
+}
+
+function handleTabNavigation(isShift) {
+    const focusables = getVisibleFocusableElements();
+    if (focusables.length === 0) return;
+
+    let current = document.activeElement;
+    let idx = focusables.indexOf(current);
+
+    if (idx === -1) {
+        focusElement(focusables[0]);
+        return;
+    }
+
+    let nextIdx = isShift ? (idx - 1 + focusables.length) % focusables.length : (idx + 1) % focusables.length;
+    focusElement(focusables[nextIdx]);
+}
+
+let backPressCount = 0;
+let backPressTimer = null;
+let callBackPressCount = 0;
+let callBackPressTimer = null;
+
+function handleBackKey(canGoBack) {
+    const openModal = document.querySelector('.tv-modal-backdrop:not(.hidden)');
+    if (openModal) {
+        openModal.classList.add("hidden");
+        autoFocusFirstElement();
+        return;
+    }
+
+    // Call Cut Safety Double-Check (Prevents accidental call disconnect on Fire TV remote)
+    if (!document.getElementById("full-call-screen")?.classList.contains("hidden")) {
+        callBackPressCount++;
+        if (callBackPressCount === 1) {
+            showToast("Press Back again to end call");
+            clearTimeout(callBackPressTimer);
+            callBackPressTimer = setTimeout(() => {
+                callBackPressCount = 0;
+            }, 2500);
+            return;
+        }
+        callBackPressCount = 0;
+        endCall();
+        return;
+    }
+
+    if (!document.getElementById("outgoing-call-overlay")?.classList.contains("hidden")) {
+        document.getElementById("cancel-outgoing-btn")?.click();
+        return;
+    }
+
+    if (!document.getElementById("incoming-call-overlay")?.classList.contains("hidden")) {
+        document.getElementById("reject-call-btn")?.click();
+        return;
+    }
+
+    if (!document.getElementById("tv-active-chat")?.classList.contains("hidden")) {
+        closeChat();
+        return;
+    }
+
+    // Graceful double-back exit to prevent accidental kills on TV/Phone
+    backPressCount++;
+    if (backPressCount === 1) {
+        showToast("Press Back again to exit ZingTalk");
+        clearTimeout(backPressTimer);
+        backPressTimer = setTimeout(() => {
+            backPressCount = 0;
+        }, 2000);
+    } else {
+        if (window.Capacitor?.Plugins?.App?.exitApp) {
+            window.Capacitor.Plugins.App.exitApp();
+        }
+    }
+}
+
+// Capacitor Native Hardware Back Button Event (Prevents Bug 44: Accidental Exit)
+if (window.Capacitor?.Plugins?.App) {
+    window.Capacitor.Plugins.App.addListener('backButton', ({ canGoBack }) => {
+        handleBackKey(canGoBack);
     });
+}
 
-    // Auth Form (Sign Up / Sign In)
-    const toggleBtn = document.getElementById("mobile-auth-toggle-btn");
-    const nameGroup = document.getElementById("mobile-auth-name-group");
-    const submitBtn = document.getElementById("mobile-auth-submit-btn");
+// Global Remote Keydown Event Listener (Amazon Fire TV Remote & D-Pad Engine)
+window.addEventListener("keydown", (e) => {
+    // 0. Ignore IME composition events (Gboard, Asian IMEs, TV virtual keyboard composition)
+    if (e.isComposing) return;
 
-    toggleBtn?.addEventListener("click", () => {
+    const active = document.activeElement;
+    const isInput = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+
+    // Guard against PC keyboard CapsLock (keyCode 20) and Pause/Break (keyCode 19)
+    const isCapsLock = e.key === "CapsLock" || e.code === "CapsLock" || (typeof e.key === "string" && e.key.toLowerCase().includes("caps"));
+    const isPause = e.key === "Pause" || e.code === "Pause" || (typeof e.key === "string" && e.key.toLowerCase().includes("pause"));
+
+    // Universal TV Remote, Fire TV Remote, AWS Device Farm & Physical Keyboard Identification:
+    // UP: ArrowUp, Up (Legacy Android), code: ArrowUp, keyCode 38 (Standard), keyCode 19 (Android KEYCODE_DPAD_UP)
+    const isUp = e.key === "ArrowUp" || e.key === "Up" || e.code === "ArrowUp" || e.keyCode === 38 || e.which === 38 || (!isPause && (e.keyCode === 19 || e.which === 19));
+
+    // DOWN: ArrowDown, Down (Legacy Android), code: ArrowDown, keyCode 40 (Standard), keyCode 20 (Android KEYCODE_DPAD_DOWN)
+    const isDown = e.key === "ArrowDown" || e.key === "Down" || e.code === "ArrowDown" || e.keyCode === 40 || e.which === 40 || (!isCapsLock && (e.keyCode === 20 || e.which === 20));
+
+    // LEFT: ArrowLeft, Left (Legacy Android), code: ArrowLeft, keyCode 37 (Standard), keyCode 21 (Android KEYCODE_DPAD_LEFT)
+    const isLeft = e.key === "ArrowLeft" || e.key === "Left" || e.code === "ArrowLeft" || e.keyCode === 37 || e.which === 37 || e.keyCode === 21 || e.which === 21;
+
+    // RIGHT: ArrowRight, Right (Legacy Android), code: ArrowRight, keyCode 39 (Standard), keyCode 22 (Android KEYCODE_DPAD_RIGHT)
+    const isRight = e.key === "ArrowRight" || e.key === "Right" || e.code === "ArrowRight" || e.keyCode === 39 || e.which === 39 || e.keyCode === 22 || e.which === 22;
+
+    // TAB: Standard Tab cycling
+    const isTab = e.key === "Tab" || e.keyCode === 9 || e.which === 9;
+
+    // ENTER: Enter, Select, Ok, keyCode 13, Android KEYCODE_ENTER (66), Android KEYCODE_DPAD_CENTER (23)
+    const isEnter = e.key === "Enter" || e.code === "Enter" || e.key === "Select" || e.key === "Ok" || e.keyCode === 13 || e.which === 13 || e.keyCode === 66 || e.which === 66 || e.keyCode === 23 || e.which === 23;
+
+    // BACK: Escape, GoBack, Back, Android KEYCODE_BACK (4), Samsung Tizen (10009), Backspace when not in input
+    const isBack = e.key === "Escape" || e.code === "Escape" || e.key === "GoBack" || e.key === "Back" || e.keyCode === 27 || e.which === 27 || e.keyCode === 4 || e.which === 4 || e.keyCode === 10009 || (!isInput && (e.key === "Backspace" || e.keyCode === 8 || e.which === 8));
+
+    // MEDIA PLAY/PAUSE: Fire TV Remote dedicated Play/Pause key (KeyCode 85 / MediaPlayPause)
+    const isPlayPause = e.key === "MediaPlayPause" || e.code === "MediaPlayPause" || e.keyCode === 85 || e.which === 85 || e.key === "PlayPause";
+    if (isPlayPause) {
+        e.preventDefault();
+        // If in an active call, safely toggle microphone mute
+        if (!document.getElementById("full-call-screen")?.classList.contains("hidden")) {
+            document.getElementById("mute-mic-btn")?.click();
+        }
+        return;
+    }
+
+    // MENU KEY: Fire TV Remote dedicated Menu button (KeyCode 82, KeyCode 118, "Menu")
+    const isMenu = e.key === "Menu" || e.code === "ContextMenu" || e.keyCode === 82 || e.which === 82 || e.keyCode === 118 || e.which === 118;
+    if (isMenu) {
+        e.preventDefault();
+        const guideModal = document.getElementById("guide-modal");
+        if (guideModal) {
+            if (guideModal.classList.contains("hidden")) {
+                guideModal.classList.remove("hidden");
+                const scrollArea = document.getElementById("guide-scroll-area");
+                if (scrollArea) focusElement(scrollArea);
+            } else {
+                guideModal.classList.add("hidden");
+                autoFocusFirstElement();
+            }
+        }
+        return;
+    }
+
+    // Long-Press Rapid-Fire Guard (Prevents accidental repeated calls or double clicks when remote button is held)
+    if (e.repeat && (isEnter || isBack)) return;
+
+    // 1. Tab / Shift+Tab cycling across visible focusables
+    if (isTab) {
+        e.preventDefault();
+        handleTabNavigation(e.shiftKey);
+        return;
+    }
+
+    // 2. Hardware / Remote Back key
+    if (isBack) {
+        if (!isInput || active.value.length === 0 || e.key === "Escape" || e.keyCode === 10009) {
+            e.preventDefault();
+            handleBackKey();
+        }
+        return;
+    }
+
+    // 3. Directional Navigation (Up, Down, Left, Right)
+    if (isUp) {
+        e.preventDefault();
+        handleDpadNavigation("up");
+        return;
+    }
+
+    if (isDown) {
+        e.preventDefault();
+        handleDpadNavigation("down");
+        return;
+    }
+
+    if (isLeft) {
+        if (!isInput) {
+            e.preventDefault();
+            handleDpadNavigation("left");
+        } else if (active.selectionStart === 0 && active.selectionEnd === 0) {
+            // Only leave input to the left when cursor is strictly at position 0
+            e.preventDefault();
+            handleDpadNavigation("left");
+        }
+        // Otherwise, allow natural caret cursor movement inside the text
+        return;
+    }
+
+    if (isRight) {
+        if (!isInput) {
+            e.preventDefault();
+            handleDpadNavigation("right");
+        } else if (active.selectionStart === active.value.length && active.selectionEnd === active.value.length) {
+            // Only leave input to the right when cursor is strictly at the end of text
+            e.preventDefault();
+            handleDpadNavigation("right");
+        }
+        // Otherwise, allow natural caret cursor movement inside the text
+        return;
+    }
+
+    // 4. Action / Enter / Select Key
+    if (isEnter) {
+        if (active && active.classList.contains("tv-focusable") && !isInput) {
+            e.preventDefault();
+            active.click();
+            return;
+        }
+
+        if (active && isInput) {
+            // When Enter / Center (OK) is pressed on an input:
+            // If the field already has text entered (e.g. from physical keyboard), Enter advances/submits.
+            // If the field is being selected or opened on Fire TV, do not preventDefault so Android/Fire OS
+            // natively summons the Fire TV virtual on-screen keyboard (IME) for remote or voice typing!
+            if (active.id === "dial-uid-input") {
+                const val = active.value.trim().replace(/\D/g, '');
+                if (val.length === 10) {
+                    e.preventDefault();
+                    document.getElementById("quick-chat-btn")?.click();
+                }
+            } else if (active.id === "contact-uid-input") {
+                const val = active.value.trim().replace(/\D/g, '');
+                if (val.length === 10) {
+                    e.preventDefault();
+                    focusElement(document.getElementById("contact-name-input"));
+                }
+            } else if (active.id === "contact-name-input") {
+                if (active.value.trim().length > 0) {
+                    e.preventDefault();
+                    document.getElementById("save-contact-btn")?.click();
+                }
+            } else if (active.id === "login-name-input") {
+                if (active.value.trim().length > 0) {
+                    e.preventDefault();
+                    focusElement(document.getElementById("login-email-input"));
+                }
+            } else if (active.id === "login-email-input") {
+                if (active.value.trim().length > 0) {
+                    e.preventDefault();
+                    focusElement(document.getElementById("login-password-input"));
+                }
+            } else if (active.id === "login-password-input") {
+                if (active.value.length > 0) {
+                    e.preventDefault();
+                    document.getElementById("email-login-submit-btn")?.click();
+                }
+            } else if (active.id === "guest-name-input") {
+                if (active.value.trim().length > 0) {
+                    e.preventDefault();
+                    document.getElementById("guest-login-btn")?.click();
+                }
+            } else if (active.id === "reset-email-input") {
+                if (active.value.trim().length > 0) {
+                    e.preventDefault();
+                    document.getElementById("send-reset-link-btn")?.click();
+                }
+            } else if (active.id === "message-input") {
+                const text = active.value.trim();
+                if (text.length > 0) {
+                    e.preventDefault();
+                    sendMessageLogic();
+                }
+            }
+        }
+    }
+});
+
+// ----------------- Global Clicks & UI Triggers -----------------
+let isSignUpMode = false;
+
+// Fluid Focus & Touch Support (Syncs Cyan Glow to focused target)
+document.addEventListener("focusin", (e) => {
+    const focusable = e.target?.closest ? e.target.closest(".tv-focusable") : null;
+    if (focusable) {
+        document.querySelectorAll('.tv-focused').forEach(node => {
+            if (node !== focusable) node.classList.remove('tv-focused');
+        });
+        focusable.classList.add('tv-focused');
+    }
+});
+
+document.addEventListener("click", async (e) => {
+    // 1. Login Tabs Switching (Email & Password / Guest Mode)
+    if (e.target.id === "tab-btn-email" || e.target.closest("#tab-btn-email")) {
+        document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".tv-tab-pane").forEach(p => p.classList.add("hidden"));
+        const tabEl = document.getElementById("tab-btn-email");
+        if (tabEl) tabEl.classList.add("active");
+        document.getElementById("pane-email")?.classList.remove("hidden");
+        const isSignUp = !document.getElementById("email-signup-name-group")?.classList.contains("hidden");
+        focusElement(isSignUp ? document.getElementById("login-name-input") : document.getElementById("login-email-input"), false);
+        return;
+    }
+
+    if (e.target.id === "tab-btn-guest" || e.target.closest("#tab-btn-guest")) {
+        document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".tv-tab-pane").forEach(p => p.classList.add("hidden"));
+        const tabEl = document.getElementById("tab-btn-guest");
+        if (tabEl) tabEl.classList.add("active");
+        document.getElementById("pane-guest")?.classList.remove("hidden");
+        focusElement(document.getElementById("guest-name-input"), false);
+        return;
+    }
+
+    // Toggle Email Auth Mode (Sign In vs Sign Up)
+    if (e.target.id === "toggle-auth-mode-btn" || e.target.closest("#toggle-auth-mode-btn")) {
         isSignUpMode = !isSignUpMode;
+        const nameGroup = document.getElementById("email-signup-name-group");
+        const btnText = document.getElementById("email-btn-text");
+        const toggleBtn = document.getElementById("toggle-auth-mode-btn");
+
         if (isSignUpMode) {
             nameGroup?.classList.remove("hidden");
-            if (nameGroup) nameGroup.style.display = "flex";
-            submitBtn.innerText = "Create Account";
-            toggleBtn.innerText = "Sign In";
-            document.getElementById("mobile-auth-toggle-label").innerText = "Already have an account?";
+            if (nameGroup) nameGroup.style.display = "block";
+            if (btnText) btnText.innerText = "Create Account";
+            if (toggleBtn) toggleBtn.innerText = "Already have an account? Sign In";
+            focusElement(document.getElementById("login-name-input"), false);
         } else {
             nameGroup?.classList.add("hidden");
             if (nameGroup) nameGroup.style.display = "none";
-            submitBtn.innerText = "Sign In";
-            toggleBtn.innerText = "Sign Up";
-            document.getElementById("mobile-auth-toggle-label").innerText = "Don't have an account?";
+            if (btnText) btnText.innerText = "Sign In";
+            if (toggleBtn) toggleBtn.innerText = "Don't have an account? Sign Up";
+            focusElement(document.getElementById("login-email-input"), false);
         }
-    });
+        return;
+    }
 
-    submitBtn?.addEventListener("click", async () => {
-        const email = document.getElementById("mobile-auth-email")?.value.trim();
-        const pass = document.getElementById("mobile-auth-pass")?.value.trim();
-        const name = document.getElementById("mobile-auth-name")?.value.trim();
-        if (!email || !pass) {
-            showToast("Enter email and password");
-            return;
+    // Forgot Password Link Click
+    if (e.target.id === "forgot-password-link" || e.target.closest("#forgot-password-link")) {
+        const loginEmail = document.getElementById("login-email-input")?.value.trim() || "";
+        const resetInput = document.getElementById("reset-email-input");
+        const statusEl = document.getElementById("reset-status-message");
+        if (resetInput) resetInput.value = loginEmail;
+        if (statusEl) {
+            statusEl.style.display = "none";
+            statusEl.innerText = "";
         }
-        if (!auth) {
-            showToast("Auth offline. Using guest.");
-            return;
-        }
-        try {
-            if (isSignUpMode) {
-                const cred = await createUserWithEmailAndPassword(auth, email, pass);
-                if (name) {
-                    try { await updateProfile(cred.user, { displayName: name }); } catch (_) {}
-                }
-                let resolvedUid = await lookupUserUidFromFirestore(email, cred.user.uid);
-                if (!resolvedUid) resolvedUid = computeDeterministic10DigitUid(email);
-                const user = {
-                    displayName: name || email.split("@")[0],
-                    email: email,
-                    uid: cred.user.uid,
-                    zingUid: resolvedUid
-                };
-                localStorage.setItem("zingTalkMobileSession", JSON.stringify(user));
-                saveUserUidToFirestore(user, resolvedUid);
-                loginUser(user);
-                showToast("Account created!");
-            } else {
-                const cred = await signInWithEmailAndPassword(auth, email, pass);
-                let resolvedUid = await lookupUserUidFromFirestore(email, cred.user.uid);
-                if (!resolvedUid) resolvedUid = computeDeterministic10DigitUid(email);
-                const user = {
-                    displayName: cred.user.displayName || email.split("@")[0],
-                    email: email,
-                    uid: cred.user.uid,
-                    zingUid: resolvedUid
-                };
-                localStorage.setItem("zingTalkMobileSession", JSON.stringify(user));
-                saveUserUidToFirestore(user, resolvedUid);
-                loginUser(user);
-                showToast("Signed in!");
-            }
-        } catch (err) {
-            showToast(err.message || "Authentication failed");
-        }
-    });
+        document.getElementById("forgot-password-modal")?.classList.remove("hidden");
+        focusElement(resetInput, false);
+        return;
+    }
 
-    // Forgot Password Handlers
-    const forgotBtn = document.getElementById("mobile-forgot-password-btn");
-    const forgotModal = document.getElementById("mobile-forgot-modal");
-    const cancelResetBtn = document.getElementById("mobile-cancel-reset-btn");
-    const sendResetBtn = document.getElementById("mobile-send-reset-btn");
-    const resetEmailInput = document.getElementById("mobile-reset-email");
-    const resetStatus = document.getElementById("mobile-reset-status");
+    // Close Forgot Password Modal
+    if (e.target.id === "close-forgot-modal-btn" || e.target.closest("#close-forgot-modal-btn") || e.target.id === "cancel-reset-btn" || e.target.closest("#cancel-reset-btn")) {
+        document.getElementById("forgot-password-modal")?.classList.add("hidden");
+        focusElement(document.getElementById("login-password-input"), false);
+        return;
+    }
 
-    forgotBtn?.addEventListener("click", () => {
-        const currentEmail = document.getElementById("mobile-auth-email")?.value.trim() || "";
-        if (resetEmailInput) resetEmailInput.value = currentEmail;
-        if (resetStatus) {
-            resetStatus.className = "hidden";
-            resetStatus.textContent = "";
-            resetStatus.style.display = "none";
-        }
-        if (forgotModal) {
-            forgotModal.classList.remove("hidden");
-            forgotModal.style.display = "flex";
-            resetEmailInput?.focus();
-        }
-    });
+    // Send Password Reset Link Action
+    if (e.target.id === "send-reset-link-btn" || e.target.closest("#send-reset-link-btn")) {
+        const email = document.getElementById("reset-email-input")?.value.trim();
+        const statusEl = document.getElementById("reset-status-message");
+        if (statusEl) statusEl.style.display = "none";
 
-    cancelResetBtn?.addEventListener("click", () => {
-        if (forgotModal) {
-            forgotModal.classList.add("hidden");
-            forgotModal.style.display = "none";
-        }
-    });
-
-    sendResetBtn?.addEventListener("click", async () => {
-        const email = resetEmailInput?.value.trim();
         if (!email) {
-            if (resetStatus) {
-                resetStatus.className = "";
-                resetStatus.style.display = "block";
-                resetStatus.style.background = "rgba(239, 68, 68, 0.15)";
-                resetStatus.style.color = "#f87171";
-                resetStatus.style.border = "1px solid rgba(239, 68, 68, 0.4)";
-                resetStatus.textContent = "Please enter your registered email address.";
+            if (statusEl) {
+                statusEl.innerText = "Please enter your registered email address.";
+                statusEl.style.display = "block";
             }
             return;
         }
 
         if (!auth) {
-            if (resetStatus) {
-                resetStatus.className = "";
-                resetStatus.style.display = "block";
-                resetStatus.style.background = "rgba(239, 68, 68, 0.15)";
-                resetStatus.style.color = "#f87171";
-                resetStatus.style.border = "1px solid rgba(239, 68, 68, 0.4)";
-                resetStatus.textContent = "Authentication service is currently offline. Please try again later.";
+            if (statusEl) {
+                statusEl.innerText = "Authentication service is currently offline. Please try again later.";
+                statusEl.style.display = "block";
             }
             return;
         }
 
-        sendResetBtn.disabled = true;
-        sendResetBtn.textContent = "Sending Link...";
-
         try {
+            showToast("Sending reset link...");
             let sentViaCustomBrevo = false;
             try {
                 const sUrl = getEffectiveServerUrl();
@@ -1654,71 +2837,469 @@ function initMobileApp() {
                 const data = await res.json();
                 if (data && data.success) {
                     sentViaCustomBrevo = true;
-                    console.log("[ZingTalk Mobile] Branded password reset dispatched via Brevo successfully!");
+                    console.log("[ZingTalk TV] Branded password reset dispatched via Brevo successfully!");
                 } else {
-                    console.warn("[ZingTalk Mobile] Custom reset mailer notice:", data?.message);
+                    console.warn("[ZingTalk TV] Custom reset mailer notice:", data?.message);
                 }
             } catch (mailerErr) {
-                console.warn("[ZingTalk Mobile] Mailer endpoint unreachable:", mailerErr.message);
+                console.warn("[ZingTalk TV] Mailer endpoint unreachable:", mailerErr.message);
             }
 
             if (!sentViaCustomBrevo) {
                 await sendPasswordResetEmail(auth, email);
             }
-            if (resetStatus) {
-                resetStatus.className = "";
-                resetStatus.style.display = "block";
-                resetStatus.style.background = "rgba(0, 210, 157, 0.15)";
-                resetStatus.style.color = "#00d29d";
-                resetStatus.style.border = "1px solid rgba(0, 210, 157, 0.4)";
-                resetStatus.innerHTML = "✅ Password reset email sent! Check your inbox and spam folder.";
+            if (statusEl) {
+                statusEl.innerHTML = `<span style="color: #00d29d; font-weight: 700;">✅ Password reset email sent! Check your inbox and spam folder.</span>`;
+                statusEl.style.display = "block";
             }
-            showToast("Password reset link sent to " + email);
+            showToast("Reset email sent to " + email);
             setTimeout(() => {
-                if (forgotModal) {
-                    forgotModal.classList.add("hidden");
-                    forgotModal.style.display = "none";
-                }
-                sendResetBtn.disabled = false;
-                sendResetBtn.textContent = "Send Reset Link";
-            }, 3000);
+                document.getElementById("forgot-password-modal")?.classList.add("hidden");
+                document.getElementById("login-password-input")?.focus();
+            }, 3200);
         } catch (err) {
             console.error("[Password Reset Error]:", err);
-            let msg = err.message || "Failed to send reset link.";
+            let msg = err.message || "Failed to send password reset email.";
             if (err.code === "auth/user-not-found") {
                 msg = "No registered account found with this email.";
             } else if (err.code === "auth/invalid-email") {
                 msg = "Please enter a valid email address.";
             }
-            if (resetStatus) {
-                resetStatus.className = "";
-                resetStatus.style.display = "block";
-                resetStatus.style.background = "rgba(239, 68, 68, 0.15)";
-                resetStatus.style.color = "#f87171";
-                resetStatus.style.border = "1px solid rgba(239, 68, 68, 0.4)";
-                resetStatus.textContent = msg;
+            if (statusEl) {
+                statusEl.innerText = msg;
+                statusEl.style.display = "block";
             }
-            sendResetBtn.disabled = false;
-            sendResetBtn.textContent = "Send Reset Link";
+            showToast(msg);
         }
-    });
-
-    // Check saved session
-    const saved = localStorage.getItem("zingTalkMobileSession");
-    if (saved) {
-        try {
-            const parsed = JSON.parse(saved);
-            if (parsed) loginUser(parsed);
-        } catch (_) {}
+        return;
     }
 
-    // Initialize notification & permission checks
-    CallNotificationService.requestPermission();
-    updatePermissionsStatusUI();
-}
+    // Email / Password Login Action
+    if (e.target.id === "email-login-submit-btn" || e.target.closest("#email-login-submit-btn")) {
+        const email = document.getElementById("login-email-input")?.value.trim();
+        const password = document.getElementById("login-password-input")?.value.trim();
+        const name = document.getElementById("login-name-input")?.value.trim() || "";
+        const errorEl = document.getElementById("login-message");
 
-if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initMobileApp);
-} else {
-    initMobileApp();
-}
+        if (errorEl) errorEl.style.display = "none";
+
+        if (!email || !password) {
+            if (errorEl) {
+                errorEl.innerText = "Please enter both email and password.";
+                errorEl.style.display = "block";
+            }
+            return;
+        }
+
+        if (auth) {
+            try {
+                if (isSignUpMode) {
+                    if (password.length < 6) {
+                        if (errorEl) {
+                            errorEl.innerText = "Password must be at least 6 characters long.";
+                            errorEl.style.display = "block";
+                        }
+                        return;
+                    }
+                    const cred = await createUserWithEmailAndPassword(auth, email, password);
+                    if (name) {
+                        try { await updateProfile(cred.user, { displayName: name }); } catch (_) {}
+                    }
+                    let resolvedUid = null;
+                    try {
+                        resolvedUid = await lookupUserUidFromFirestore(cred.user.email, cred.user.uid);
+                    } catch (_) {}
+                    if (!resolvedUid) {
+                        resolvedUid = computeDeterministic10DigitUid(cred.user.email || cred.user.uid);
+                    }
+                    const user = {
+                        displayName: name || cred.user.displayName || email.split("@")[0],
+                        email: cred.user.email,
+                        uid: cred.user.uid,
+                        zingUid: resolvedUid
+                    };
+                    my10DigitUid = resolvedUid;
+                    updateUidDisplays(resolvedUid);
+                    loadUserStorageData(resolvedUid);
+                    saveUserUidToFirestore(user, resolvedUid);
+                    localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                    loginUserSession(user);
+                    showToast("Account created successfully!");
+                } else {
+                    const cred = await signInWithEmailAndPassword(auth, email, password);
+                    let resolvedUid = null;
+                    try {
+                        resolvedUid = await lookupUserUidFromFirestore(cred.user.email, cred.user.uid);
+                    } catch (_) {}
+                    if (!resolvedUid) {
+                        resolvedUid = computeDeterministic10DigitUid(cred.user.email || cred.user.uid);
+                    }
+                    const user = {
+                        displayName: cred.user.displayName || email.split("@")[0],
+                        email: cred.user.email,
+                        uid: cred.user.uid,
+                        zingUid: resolvedUid
+                    };
+                    my10DigitUid = resolvedUid;
+                    updateUidDisplays(resolvedUid);
+                    loadUserStorageData(resolvedUid);
+                    saveUserUidToFirestore(user, resolvedUid);
+                    localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                    loginUserSession(user);
+                    showToast("Signed in successfully!");
+                }
+            } catch (err) {
+                console.error("[Firebase Auth Error]:", err);
+                let msg = err.message || "Authentication failed.";
+                if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password" || err.code === "auth/user-not-found") {
+                    msg = "Invalid email or password. Please verify your credentials.";
+                } else if (err.code === "auth/email-already-in-use") {
+                    msg = "This email is already registered. Please click 'Sign In' below.";
+                } else if (err.code === "auth/weak-password") {
+                    msg = "Password should be at least 6 characters.";
+                } else if (err.code === "auth/invalid-email") {
+                    msg = "Please enter a valid email address.";
+                } else if (err.code === "auth/network-request-failed") {
+                    msg = "Network error. Please check your internet connection.";
+                }
+                if (errorEl) {
+                    errorEl.innerText = msg;
+                    errorEl.style.display = "block";
+                }
+                showToast(msg);
+            }
+        } else {
+            if (errorEl) {
+                errorEl.innerText = "Firebase Authentication is unavailable. Please check your network.";
+                errorEl.style.display = "block";
+            }
+        }
+        return;
+    }
+
+    // Guest Mode Login Action (Official Firebase Anonymous Authentication)
+    if (e.target.id === "guest-login-btn" || e.target.closest("#guest-login-btn")) {
+        const nameInput = document.getElementById("guest-name-input");
+        const name = nameInput?.value.trim() || "Guest User";
+        const errorEl = document.getElementById("login-message");
+        if (errorEl) errorEl.style.display = "none";
+
+        // Check if running in Native Capacitor Android App
+        if (window.Capacitor?.isNativePlatform && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins?.FirebaseAuthentication) {
+            try {
+                showToast("Connecting to server...");
+                const result = await window.Capacitor.Plugins.FirebaseAuthentication.signInAnonymously();
+                if (result && result.user) {
+                    const user = {
+                        displayName: name,
+                        email: null,
+                        uid: result.user.uid,
+                        isAnonymous: true
+                    };
+                    localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                    loginUserSession(user);
+                    showToast(`Welcome ${name}!`);
+                    return;
+                }
+            } catch (nativeErr) {
+                console.warn("[Firebase] Native Anonymous Auth failed:", nativeErr);
+            }
+        }
+
+        // Web / Browser Official Firebase Anonymous Authentication
+        if (auth) {
+            try {
+                showToast("Connecting to server...");
+                const cred = await signInAnonymously(auth);
+                if (name) {
+                    try { await updateProfile(cred.user, { displayName: name }); } catch (_) {}
+                }
+                const user = {
+                    displayName: name || cred.user.displayName || "Guest User",
+                    email: null,
+                    uid: cred.user.uid,
+                    isAnonymous: true
+                };
+                localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                loginUserSession(user);
+                showToast(`Welcome ${name}!`);
+            } catch (err) {
+                console.error("[Firebase Anonymous Auth Error]:", err);
+                const msg = err.message || "Failed to sign in as guest via Firebase.";
+                if (errorEl) {
+                    errorEl.innerText = msg;
+                    errorEl.style.display = "block";
+                }
+                showToast(msg);
+            }
+        } else {
+            const guestId = "guest_" + Date.now();
+            const user = {
+                displayName: name,
+                email: null,
+                uid: guestId,
+                isAnonymous: true
+            };
+            localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+            loginUserSession(user);
+        }
+        return;
+    }
+
+    // Direct Dial Quick Connect (Chat / Audio / Video)
+    if (e.target.id === "quick-chat-btn" || e.target.closest("#quick-chat-btn")) {
+        const uid = document.getElementById("dial-uid-input")?.value.trim().replace(/\D/g, '');
+        if (!uid || uid.length !== 10) {
+            showToast("❌ Please enter a valid 10-digit UID");
+            return;
+        }
+        if (uid === my10DigitUid) {
+            showToast(`❌ You cannot chat with your own UID [${uid}].`);
+            return;
+        }
+        const known = myContacts.find(c => c.uid === uid);
+        const contactObj = known || { uid: uid, name: "User " + uid };
+        openChat(contactObj);
+        return;
+    }
+
+    if (e.target.id === "quick-audio-call-btn" || e.target.closest("#quick-audio-call-btn")) {
+        const uid = document.getElementById("dial-uid-input")?.value.trim().replace(/\D/g, '');
+        if (!uid || uid.length !== 10) {
+            showToast("❌ Please enter a valid 10-digit UID");
+            return;
+        }
+        if (uid === my10DigitUid) {
+            showToast(`❌ You cannot call your own UID [${uid}].`);
+            return;
+        }
+        initiateDirectCall(uid, "audio");
+        return;
+    }
+
+    if (e.target.id === "quick-video-call-btn" || e.target.closest("#quick-video-call-btn")) {
+        const uid = document.getElementById("dial-uid-input")?.value.trim().replace(/\D/g, '');
+        if (!uid || uid.length !== 10) {
+            showToast("❌ Please enter a valid 10-digit UID");
+            return;
+        }
+        if (uid === my10DigitUid) {
+            showToast(`❌ You cannot call your own UID [${uid}].`);
+            return;
+        }
+        initiateDirectCall(uid, "video");
+        return;
+    }
+
+    // Save Contact
+    if (e.target.id === "save-contact-btn" || e.target.closest("#save-contact-btn")) {
+        const uid = document.getElementById("contact-uid-input")?.value.trim().replace(/\D/g, '');
+        const name = document.getElementById("contact-name-input")?.value.trim();
+
+        if (!uid || uid.length !== 10) {
+            showToast("❌ Please enter a valid 10-digit UID");
+            return;
+        }
+        if (!name) {
+            showToast("❌ Please enter a contact name");
+            return;
+        }
+        if (uid === my10DigitUid) {
+            showToast("❌ You cannot save your own UID");
+            return;
+        }
+
+        const newContact = { uid, name };
+        const updated = myContacts.filter(c => c.uid !== uid);
+        updated.push(newContact);
+        myContacts = updated;
+        saveUserContactsToStorage();
+        renderContacts(myContacts);
+        showToast(`✅ Saved contact: ${name}`);
+
+        if (socket && socket.connected) {
+            socket.emit("save_contact", { myUid: my10DigitUid, targetUid: uid, customName: name });
+        }
+
+        if (document.getElementById("contact-uid-input")) document.getElementById("contact-uid-input").value = "";
+        if (document.getElementById("contact-name-input")) document.getElementById("contact-name-input").value = "";
+
+        // Automatically open the chat with this new contact right away!
+        openChat(newContact);
+        return;
+    }
+
+    // Chat Screen Triggers
+    if (e.target.id === "chat-back-btn" || e.target.closest("#chat-back-btn")) {
+        closeChat();
+        return;
+    }
+
+    if (e.target.id === "send-btn" || e.target.closest("#send-btn")) {
+        sendMessageLogic();
+        return;
+    }
+
+    if (e.target.id === "chat-audio-call-btn" || e.target.closest("#chat-audio-call-btn")) {
+        if (currentTargetUid) initiateDirectCall(currentTargetUid, "audio");
+        return;
+    }
+
+    if (e.target.id === "chat-video-call-btn" || e.target.closest("#chat-video-call-btn")) {
+        if (currentTargetUid) initiateDirectCall(currentTargetUid, "video");
+        return;
+    }
+
+    // Call Screen Controls
+    if (e.target.id === "mute-mic-btn" || e.target.closest("#mute-mic-btn")) {
+        if (localStream) {
+            const track = localStream.getAudioTracks()[0];
+            if (track) {
+                isMicMuted = !isMicMuted;
+                track.enabled = !isMicMuted;
+                showToast(isMicMuted ? "Microphone muted" : "Microphone active");
+            }
+        }
+        return;
+    }
+
+    if (e.target.id === "toggle-video-btn" || e.target.closest("#toggle-video-btn")) {
+        if (localStream) {
+            const track = localStream.getVideoTracks()[0];
+            if (track) {
+                track.enabled = !track.enabled;
+                showToast(track.enabled ? "Camera active" : "Camera turned off");
+            }
+        }
+        return;
+    }
+
+    if (e.target.id === "end-call-btn" || e.target.closest("#end-call-btn")) {
+        endCall();
+        return;
+    }
+
+    // Call Response Overlays
+    if (e.target.id === "accept-call-btn" || e.target.closest("#accept-call-btn")) {
+        stopRingtone();
+        document.getElementById("incoming-call-overlay")?.classList.add("hidden");
+        try {
+            await startWebRTC(false);
+            if (socket) socket.emit("call_response", { targetUid: activeCallTarget, status: "accepted" });
+        } catch (err) {
+            console.error("[Call Accept Error]:", err);
+            showToast("Failed to start media: " + err.message);
+            if (socket) socket.emit("call_response", { targetUid: activeCallTarget, status: "rejected" });
+            activeCallTarget = null;
+            endCallCleanup();
+        }
+        return;
+    }
+
+    if (e.target.id === "reject-call-btn" || e.target.closest("#reject-call-btn")) {
+        stopRingtone();
+        playCallEndedTone();
+        document.getElementById("incoming-call-overlay")?.classList.add("hidden");
+        if (socket && activeCallTarget) {
+            socket.emit("call_response", { targetUid: activeCallTarget, status: "rejected" });
+        }
+        activeCallTarget = null;
+        endCallCleanup();
+        return;
+    }
+
+    if (e.target.id === "cancel-outgoing-btn" || e.target.closest("#cancel-outgoing-btn") || e.target.id === "cancel-outgoing-call-btn" || e.target.closest("#cancel-outgoing-call-btn")) {
+        stopRingtone();
+        playCallEndedTone();
+        document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
+        if (socket && activeCallTarget) {
+            socket.emit("cancel_call", { targetUid: activeCallTarget });
+        }
+        activeCallTarget = null;
+        isCallInitiating = false;
+        endCallCleanup();
+        return;
+    }
+
+    // Profile & Logout
+    if (e.target.id === "my-profile-chip" || e.target.closest("#my-profile-chip")) {
+        const name = (currentUser && currentUser.displayName) ? currentUser.displayName : "TV User";
+        const email = (currentUser && currentUser.email) ? currentUser.email : "Local TV";
+        document.getElementById("modal-avatar").innerText = name.charAt(0).toUpperCase();
+        document.getElementById("modal-name").innerText = name;
+        document.getElementById("modal-email").innerText = email;
+        document.getElementById("modal-uid").innerText = my10DigitUid || "Generating...";
+        document.getElementById("profile-modal")?.classList.remove("hidden");
+        if (my10DigitUid) {
+            saveUserUidToFirestore(currentUser, my10DigitUid);
+        }
+        setTimeout(() => focusElement(document.getElementById("copy-uid-btn")), 60);
+        return;
+    }
+
+    if (e.target.id === "close-profile-btn" || e.target.closest("#close-profile-btn")) {
+        document.getElementById("profile-modal")?.classList.add("hidden");
+        setTimeout(() => focusElement(document.getElementById("my-profile-chip"), false), 60);
+        return;
+    }
+
+    if (e.target.id === "header-logout-btn" || e.target.closest("#header-logout-btn") || e.target.id === "modal-logout-btn" || e.target.closest("#modal-logout-btn")) {
+        logoutUserSession();
+        return;
+    }
+
+    if (e.target.id === "copy-uid-btn" || e.target.closest("#copy-uid-btn")) {
+        if (my10DigitUid) {
+            navigator.clipboard.writeText(my10DigitUid).then(() => {
+                showToast("10-Digit UID copied: " + my10DigitUid);
+            }).catch(() => {
+                showToast("UID: " + my10DigitUid);
+            });
+        }
+        return;
+    }
+
+    // How to Use Guide Modal
+    if (e.target.id === "header-guide-btn" || e.target.closest("#header-guide-btn")) {
+        document.getElementById("guide-modal")?.classList.remove("hidden");
+        setTimeout(() => focusElement(document.getElementById("guide-ok-btn"), false), 60);
+        return;
+    }
+
+    if (e.target.id === "close-guide-modal-btn" || e.target.closest("#close-guide-modal-btn") || e.target.id === "guide-ok-btn" || e.target.closest("#guide-ok-btn")) {
+        document.getElementById("guide-modal")?.classList.add("hidden");
+        autoFocusFirstElement();
+        return;
+    }
+
+    // Policy Modal
+    if (e.target.id === "open-policy-btn" || e.target.closest("#open-policy-btn") || e.target.id === "sidebar-policy-btn" || e.target.closest("#sidebar-policy-btn") || e.target.id === "profile-policy-btn" || e.target.closest("#profile-policy-btn") || e.target.closest(".tv-policy-btn-trigger")) {
+        document.getElementById("profile-modal")?.classList.add("hidden");
+        document.getElementById("policy-modal")?.classList.remove("hidden");
+        setTimeout(() => focusElement(document.getElementById("policy-ok-btn"), false), 60);
+        return;
+    }
+
+    if (e.target.id === "close-policy-btn" || e.target.closest("#close-policy-btn") || e.target.id === "policy-ok-btn" || e.target.closest("#policy-ok-btn")) {
+        document.getElementById("policy-modal")?.classList.add("hidden");
+        autoFocusFirstElement();
+        return;
+    }
+});
+
+// Strict Numeric 10-Digit Sanitizers for Quick Dial & Contact Add
+document.getElementById("dial-uid-input")?.addEventListener("input", (e) => {
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
+});
+
+document.getElementById("contact-uid-input")?.addEventListener("input", (e) => {
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
+});
+
+
+
+// Initial Fire TV Leanback D-Pad Auto-Focus
+window.addEventListener("load", () => {
+    setTimeout(autoFocusFirstElement, 150);
+});
+setTimeout(autoFocusFirstElement, 300);

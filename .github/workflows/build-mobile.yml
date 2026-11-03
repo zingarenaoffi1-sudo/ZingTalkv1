@@ -31,8 +31,7 @@ jobs:
 
       - name: Install Dependencies & Prepare Mobile Assets
         run: |
-          npm install
-          npm install --save @capacitor/core @capacitor/cli @capacitor/android @capacitor-firebase/authentication
+          npm install --no-audit --prefer-offline --legacy-peer-deps
           npm run build
           # Ensure mobile dist is copied as primary for mobile build
           rm -rf dist/*
@@ -88,7 +87,7 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace || ./gradlew assembleDebug --no-daemon --stacktrace
           APK_FILE=$(find app/build/outputs/apk/release -name "*release*.apk" ! -name "*-unsigned.apk" -type f 2>/dev/null | head -n 1)
           if [ -z "$APK_FILE" ]; then
             APK_FILE=$(find app/build/outputs/apk -name "*.apk" -type f | head -n 1)

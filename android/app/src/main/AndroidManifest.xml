@@ -42,7 +42,7 @@
     <uses-feature android:name="android.hardware.wifi" android:required="false" />
 
     
-    <uses-feature android:name="android.hardware.touchscreen" android:required="true" />
+    
 
     <application 
         android:banner="@drawable/banner" 
@@ -57,7 +57,7 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
-        <activity android:screenOrientation="portrait" 
+        <activity android:screenOrientation="landscape"   
             
             android:keepScreenOn="true"
             android:showWhenLocked="true"
