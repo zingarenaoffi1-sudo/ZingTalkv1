@@ -319,20 +319,188 @@ export function saveUserUnreadToStorage() {
     } catch (_) {}
 }
 
-let ringtoneInterval = null;
+// ----------------- WhatsApp-Style Call Audio & Ringtone Engine -----------------
+let callAudioCtx = null;
+let outgoingRingInterval = null;
+let incomingRingInterval = null;
+
+function getCallAudioContext() {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return null;
+        if (!callAudioCtx || callAudioCtx.state === "closed") {
+            callAudioCtx = new AudioCtx();
+        }
+        if (callAudioCtx.state === "suspended") {
+            callAudioCtx.resume().catch(() => {});
+        }
+        return callAudioCtx;
+    } catch (_) {
+        return null;
+    }
+}
+
+// 1. WhatsApp Outgoing Calling Tone (Dual 440Hz + 480Hz pulses)
+function playOutgoingBeepPair() {
+    const ctx = getCallAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    function createTone(startTime, duration) {
+        try {
+            const osc1 = ctx.createOscillator();
+            const osc2 = ctx.createOscillator();
+            const gainNode = ctx.createGain();
+            const filter = ctx.createBiquadFilter();
+
+            filter.type = "lowpass";
+            filter.frequency.setValueAtTime(2200, startTime);
+
+            osc1.type = "sine";
+            osc1.frequency.setValueAtTime(440, startTime);
+
+            osc2.type = "sine";
+            osc2.frequency.setValueAtTime(480, startTime);
+
+            gainNode.gain.setValueAtTime(0.0001, startTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.12, startTime + 0.025);
+            gainNode.gain.setValueAtTime(0.12, startTime + duration - 0.035);
+            gainNode.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+            osc1.connect(filter);
+            osc2.connect(filter);
+            filter.connect(gainNode);
+            gainNode.connect(ctx.destination);
+
+            osc1.start(startTime);
+            osc2.start(startTime);
+            osc1.stop(startTime + duration);
+            osc2.stop(startTime + duration);
+        } catch (_) {}
+    }
+
+    createTone(now, 0.35);
+    createTone(now + 0.53, 0.35);
+}
+
+export function startOutgoingRingtone() {
+    stopOutgoingRingtone();
+    stopIncomingRingtone();
+    playOutgoingBeepPair();
+    outgoingRingInterval = setInterval(() => {
+        playOutgoingBeepPair();
+    }, 2800);
+}
+
+export function stopOutgoingRingtone() {
+    if (outgoingRingInterval) {
+        clearInterval(outgoingRingInterval);
+        outgoingRingInterval = null;
+    }
+}
+
+// 2. WhatsApp Incoming Marimba Melodic Ringtone
+function playMarimbaNote(ctx, freq, startTime, duration, gainVal = 0.22) {
+    try {
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc1.type = "sine";
+        osc1.frequency.setValueAtTime(freq, startTime);
+
+        osc2.type = "triangle";
+        osc2.frequency.setValueAtTime(freq * 2, startTime);
+
+        gain.gain.setValueAtTime(0.0001, startTime);
+        gain.gain.exponentialRampToValueAtTime(gainVal, startTime + 0.006);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+        const subGain = ctx.createGain();
+        subGain.gain.setValueAtTime(0.18, startTime);
+        osc2.connect(subGain);
+        subGain.connect(gain);
+
+        osc1.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc1.start(startTime);
+        osc2.start(startTime);
+        osc1.stop(startTime + duration);
+        osc2.stop(startTime + duration);
+    } catch (_) {}
+}
+
+function playWhatsAppIncomingPhrase() {
+    const ctx = getCallAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    // Classic WhatsApp Marimba arpeggio rhythm
+    playMarimbaNote(ctx, 659.25, now + 0.00, 0.14); // E5
+    playMarimbaNote(ctx, 830.61, now + 0.14, 0.14); // G#5
+    playMarimbaNote(ctx, 987.77, now + 0.28, 0.14); // B5
+    playMarimbaNote(ctx, 1318.51, now + 0.42, 0.22); // E6
+    playMarimbaNote(ctx, 987.77, now + 0.66, 0.16); // B5
+    playMarimbaNote(ctx, 1318.51, now + 0.84, 0.38); // E6
+
+    playMarimbaNote(ctx, 880.00, now + 1.28, 0.14); // A5
+    playMarimbaNote(ctx, 1108.73, now + 1.42, 0.14); // C#6
+    playMarimbaNote(ctx, 1318.51, now + 1.56, 0.22); // E6
+    playMarimbaNote(ctx, 1760.00, now + 1.76, 0.45); // A6
+}
+
+export function startIncomingRingtone() {
+    stopIncomingRingtone();
+    stopOutgoingRingtone();
+    playWhatsAppIncomingPhrase();
+    incomingRingInterval = setInterval(() => {
+        playWhatsAppIncomingPhrase();
+    }, 3200);
+}
+
+export function stopIncomingRingtone() {
+    if (incomingRingInterval) {
+        clearInterval(incomingRingInterval);
+        incomingRingInterval = null;
+    }
+}
+
+// 3. WhatsApp Call Ended Tone (Three quick descending beeps)
+export function playCallEndedTone() {
+    stopOutgoingRingtone();
+    stopIncomingRingtone();
+    try {
+        const ctx = getCallAudioContext();
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const beeps = [
+            { freq: 480, start: now, dur: 0.08 },
+            { freq: 400, start: now + 0.12, dur: 0.08 },
+            { freq: 320, start: now + 0.24, dur: 0.16 }
+        ];
+        beeps.forEach(b => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(b.freq, b.start);
+            gain.gain.setValueAtTime(0.14, b.start);
+            gain.gain.exponentialRampToValueAtTime(0.001, b.start + b.dur);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(b.start);
+            osc.stop(b.start + b.dur);
+        });
+    } catch (_) {}
+}
+
 export function startRingtone() {
-    stopRingtone();
-    playIncomingChime();
-    ringtoneInterval = setInterval(() => {
-        playIncomingChime();
-    }, 2500);
+    startIncomingRingtone();
 }
 
 export function stopRingtone() {
-    if (ringtoneInterval) {
-        clearInterval(ringtoneInterval);
-        ringtoneInterval = null;
-    }
+    stopIncomingRingtone();
+    stopOutgoingRingtone();
 }
 
 // Purge legacy unscoped cache keys from previous versions
@@ -714,6 +882,7 @@ export function registerSocketListeners(s) {
         const msg = data && data.message ? data.message : "Call failed.";
         showToast("❌ " + msg);
         stopRingtone();
+        playCallEndedTone();
         document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
         document.getElementById("incoming-call-overlay")?.classList.add("hidden");
         isCallInitiating = false;
@@ -744,13 +913,14 @@ export function registerSocketListeners(s) {
         }
         document.getElementById("incoming-call-overlay")?.classList.remove("hidden");
         document.getElementById("accept-call-btn")?.focus();
-        startRingtone();
+        startIncomingRingtone();
 
         if (incomingCallTimer) clearTimeout(incomingCallTimer);
         incomingCallTimer = setTimeout(() => {
             const overlay = document.getElementById("incoming-call-overlay");
             if (overlay && !overlay.classList.contains("hidden")) {
                 stopRingtone();
+                playCallEndedTone();
                 overlay.classList.add("hidden");
                 activeCallTarget = null;
                 endCallCleanup();
@@ -761,6 +931,7 @@ export function registerSocketListeners(s) {
 
     s.on("call_cancelled", () => {
         stopRingtone();
+        playCallEndedTone();
         document.getElementById("incoming-call-overlay")?.classList.add("hidden");
         document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
         activeCallTarget = null;
@@ -777,6 +948,7 @@ export function registerSocketListeners(s) {
                 await startWebRTC(true);
             }
         } else {
+            playCallEndedTone();
             showToast("Call declined");
             activeCallTarget = null;
             isCallInitiating = false;
@@ -840,6 +1012,8 @@ export function registerSocketListeners(s) {
     });
 
     s.on("webrtc_call_ended", () => {
+        stopRingtone();
+        playCallEndedTone();
         endCallCleanup();
         showToast("Call ended");
     });
@@ -1451,6 +1625,8 @@ function endCall() {
     if (socket && activeCallTarget) {
         socket.emit("webrtc_end_call", { targetUid: activeCallTarget });
     }
+    stopRingtone();
+    playCallEndedTone();
     endCallCleanup();
 }
 
@@ -1524,6 +1700,7 @@ async function initiateDirectCall(targetUid, type) {
         outgoingType.innerText = `Connecting ${currentCallType === 'video' ? 'HD Video' : 'Audio'} Call...`;
     }
     document.getElementById("outgoing-call-overlay")?.classList.remove("hidden");
+    startOutgoingRingtone();
 
     if (outgoingCallTimer) clearTimeout(outgoingCallTimer);
     outgoingCallTimer = setTimeout(() => {
@@ -1533,6 +1710,8 @@ async function initiateDirectCall(targetUid, type) {
             if (socket && activeCallTarget) {
                 socket.emit("cancel_call", { targetUid: activeCallTarget });
             }
+            stopRingtone();
+            playCallEndedTone();
             endCallCleanup();
         }
     }, 45000);
@@ -2992,6 +3171,7 @@ document.addEventListener("click", async (e) => {
 
     if (e.target.id === "reject-call-btn" || e.target.closest("#reject-call-btn")) {
         stopRingtone();
+        playCallEndedTone();
         document.getElementById("incoming-call-overlay")?.classList.add("hidden");
         if (socket && activeCallTarget) {
             socket.emit("call_response", { targetUid: activeCallTarget, status: "rejected" });
@@ -3003,6 +3183,7 @@ document.addEventListener("click", async (e) => {
 
     if (e.target.id === "cancel-outgoing-btn" || e.target.closest("#cancel-outgoing-btn") || e.target.id === "cancel-outgoing-call-btn" || e.target.closest("#cancel-outgoing-call-btn")) {
         stopRingtone();
+        playCallEndedTone();
         document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
         if (socket && activeCallTarget) {
             socket.emit("cancel_call", { targetUid: activeCallTarget });
