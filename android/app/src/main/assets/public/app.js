@@ -215,6 +215,200 @@ function renderContacts() {
     });
 }
 
+let activeWebNotification = null;
+
+export const CallNotificationService = {
+    async requestPermission() {
+        if (window.ZingNativeBridge && window.ZingNativeBridge.requestAllPermissions) {
+            try { window.ZingNativeBridge.requestAllPermissions(); } catch (_) {}
+        }
+        if (typeof Notification !== "undefined" && Notification.permission === "default") {
+            try { await Notification.requestPermission(); } catch (_) {}
+        }
+    },
+
+    showIncoming(callerUid, callerName, callType) {
+        const title = callerName || `UID: ${callerUid}`;
+        const subtitle = `Incoming ZingTalk ${callType === 'video' ? 'HD Video' : 'Audio'} Call...`;
+
+        // 1. In-App WhatsApp-style Top Dropdown Banner
+        const banner = document.getElementById("mobile-top-call-banner");
+        const bannerName = document.getElementById("top-banner-name");
+        const bannerType = document.getElementById("top-banner-type");
+        const bannerAvatar = document.getElementById("top-banner-avatar");
+
+        if (banner) {
+            if (bannerName) bannerName.innerText = title;
+            if (bannerType) bannerType.innerText = subtitle;
+            if (bannerAvatar) bannerAvatar.innerText = (title || "U").charAt(0).toUpperCase();
+            banner.classList.remove("hidden");
+            banner.style.display = "flex";
+        }
+
+        // 2. Android Native Heads-Up System Notification with Accept/Decline action buttons
+        if (window.ZingNativeBridge && window.ZingNativeBridge.showIncomingCall) {
+            try {
+                window.ZingNativeBridge.showIncomingCall(callerUid, title, callType);
+            } catch (err) {
+                console.warn("[NativeBridge] showIncomingCall notice:", err);
+            }
+        }
+
+        // 3. Web Notification (for browser / desktop / PWA)
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            try {
+                if (activeWebNotification) activeWebNotification.close();
+                activeWebNotification = new Notification(title, {
+                    body: subtitle,
+                    icon: "assets/icon.png",
+                    tag: "zingtalk-call",
+                    requireInteraction: true
+                });
+                activeWebNotification.onclick = () => {
+                    window.focus();
+                    const inOverlay = document.getElementById("mobile-incoming-call-overlay");
+                    if (inOverlay) {
+                        inOverlay.classList.remove("hidden");
+                        inOverlay.style.display = "flex";
+                    }
+                };
+            } catch (_) {}
+        }
+    },
+
+    showOngoing(targetUid, targetName, durationStr) {
+        const title = targetName || `UID: ${targetUid}`;
+        
+        // Hide incoming banner
+        const banner = document.getElementById("mobile-top-call-banner");
+        if (banner) {
+            banner.classList.add("hidden");
+            banner.style.display = "none";
+        }
+
+        // Update In-App Ongoing Call Bar
+        const barTarget = document.getElementById("ongoing-bar-target");
+        const barTimer = document.getElementById("ongoing-bar-timer");
+        if (barTarget) barTarget.innerText = title;
+        if (barTimer) barTimer.innerText = durationStr;
+
+        // Android Native Ongoing Status Notification in status bar
+        if (window.ZingNativeBridge && window.ZingNativeBridge.showOngoingCall) {
+            try {
+                window.ZingNativeBridge.showOngoingCall(targetUid, title, durationStr);
+            } catch (err) {
+                console.warn("[NativeBridge] showOngoingCall notice:", err);
+            }
+        }
+    },
+
+    dismissAll() {
+        const banner = document.getElementById("mobile-top-call-banner");
+        if (banner) {
+            banner.classList.add("hidden");
+            banner.style.display = "none";
+        }
+
+        const bar = document.getElementById("mobile-ongoing-call-bar");
+        if (bar) {
+            bar.classList.add("hidden");
+            bar.style.display = "none";
+        }
+
+        if (window.ZingNativeBridge && window.ZingNativeBridge.dismissCallNotifications) {
+            try { window.ZingNativeBridge.dismissCallNotifications(); } catch (_) {}
+        }
+
+        if (activeWebNotification) {
+            try { activeWebNotification.close(); } catch (_) {}
+            activeWebNotification = null;
+        }
+    }
+};
+
+// Global Native Intent Hook: Called by MainActivity.java when user taps Accept / Decline / End from Android notification
+window.handleNativeCallAction = function(action) {
+    console.log("[ZingTalk Mobile] Native Notification action received:", action);
+    if (action === "accept") {
+        if (incomingCallerUid) {
+            answerCall(incomingCallerUid, incomingCallType);
+        }
+    } else if (action === "decline") {
+        if (incomingCallerUid && socket) {
+            socket.emit("call_response", { targetUid: incomingCallerUid, status: "declined" });
+        }
+        stopRingtone();
+        playCallEndedTone();
+        CallNotificationService.dismissAll();
+        const inOverlay = document.getElementById("mobile-incoming-call-overlay");
+        if (inOverlay) {
+            inOverlay.classList.add("hidden");
+            inOverlay.style.display = "none";
+        }
+        incomingCallerUid = null;
+    } else if (action === "end") {
+        endCall();
+    }
+};
+
+export async function updatePermissionsStatusUI() {
+    const micBadge = document.getElementById("perm-mic-badge");
+    const camBadge = document.getElementById("perm-cam-badge");
+    const notifBadge = document.getElementById("perm-notif-badge");
+
+    // Notifications status
+    let notifGranted = false;
+    if (window.ZingNativeBridge && window.ZingNativeBridge.areNotificationsEnabled) {
+        try { notifGranted = window.ZingNativeBridge.areNotificationsEnabled(); } catch (_) {}
+    } else if (typeof Notification !== "undefined") {
+        notifGranted = (Notification.permission === "granted");
+    }
+    if (notifBadge) {
+        if (notifGranted) {
+            notifBadge.className = "perm-status granted";
+            notifBadge.innerText = "Granted";
+        } else {
+            notifBadge.className = "perm-status needed";
+            notifBadge.innerText = "Tap to Enable";
+        }
+    }
+
+    // Camera and Microphone status
+    if (navigator.permissions && navigator.permissions.query) {
+        try {
+            const micP = await navigator.permissions.query({ name: "microphone" });
+            if (micBadge) {
+                if (micP.state === "granted") {
+                    micBadge.className = "perm-status granted";
+                    micBadge.innerText = "Granted";
+                } else if (micP.state === "denied") {
+                    micBadge.className = "perm-status needed";
+                    micBadge.innerText = "Blocked";
+                } else {
+                    micBadge.className = "perm-status";
+                    micBadge.innerText = "Ready on Call";
+                }
+            }
+        } catch (_) {}
+
+        try {
+            const camP = await navigator.permissions.query({ name: "camera" });
+            if (camBadge) {
+                if (camP.state === "granted") {
+                    camBadge.className = "perm-status granted";
+                    camBadge.innerText = "Granted";
+                } else if (camP.state === "denied") {
+                    camBadge.className = "perm-status needed";
+                    camBadge.innerText = "Blocked";
+                } else {
+                    camBadge.className = "perm-status";
+                    camBadge.innerText = "Ready on Call";
+                }
+            }
+        } catch (_) {}
+    }
+}
+
 function connectSocket() {
     const serverUrl = getEffectiveServerUrl();
     if (socket && socket.connected) {
@@ -471,6 +665,9 @@ function connectSocket() {
         document.getElementById("mobile-incoming-call-overlay")?.classList.remove("hidden");
         startIncomingRingtone();
 
+        // Trigger WhatsApp-style in-app drop-down banner & Android system heads-up notification
+        CallNotificationService.showIncoming(data.callerUid, nameToShow, incomingCallType);
+
         if (incomingCallTimer) clearTimeout(incomingCallTimer);
         incomingCallTimer = setTimeout(() => {
             const inOverlay = document.getElementById("mobile-incoming-call-overlay");
@@ -479,6 +676,7 @@ function connectSocket() {
                 playCallEndedTone();
                 inOverlay.classList.add("hidden");
                 inOverlay.style.display = "none";
+                CallNotificationService.dismissAll();
                 showToast("Missed call from " + nameToShow);
                 incomingCallerUid = null;
             }
@@ -488,6 +686,7 @@ function connectSocket() {
     socket.on("call_cancelled", () => {
         stopRingtone();
         playCallEndedTone();
+        CallNotificationService.dismissAll();
         document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
         document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
         endCallCleanup();
@@ -497,6 +696,7 @@ function connectSocket() {
     socket.on("call_error", (data) => {
         stopRingtone();
         playCallEndedTone();
+        CallNotificationService.dismissAll();
         document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
         document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
         endCallCleanup();
@@ -678,6 +878,7 @@ async function startMobileWebRTC(isCaller) {
     if (displayEl) displayEl.innerText = nameToShow;
 
     startTimer();
+    CallNotificationService.showOngoing(currentTargetUid, nameToShow, "00:00");
     await setupLocalMedia(incomingCallType === "video");
     await setupPeerConnection();
 
@@ -796,12 +997,19 @@ async function answerCall(targetUid, type = "video") {
 function startTimer() {
     callDurationSeconds = 0;
     const timerEl = document.getElementById("call-duration-timer");
+    const barTimer = document.getElementById("ongoing-bar-timer");
     if (callTimer) clearInterval(callTimer);
     callTimer = setInterval(() => {
         callDurationSeconds++;
         const mins = String(Math.floor(callDurationSeconds / 60)).padStart(2, '0');
         const secs = String(callDurationSeconds % 60).padStart(2, '0');
-        if (timerEl) timerEl.innerText = `${mins}:${secs}`;
+        const durStr = `${mins}:${secs}`;
+        if (timerEl) timerEl.innerText = durStr;
+        if (barTimer) barTimer.innerText = durStr;
+
+        const known = myContacts.find(c => c.uid === currentTargetUid);
+        const nameToShow = known ? known.name : `UID: ${currentTargetUid}`;
+        CallNotificationService.showOngoing(currentTargetUid, nameToShow, durStr);
     }, 1000);
 }
 
@@ -812,11 +1020,13 @@ function endCall() {
     }
     stopRingtone();
     playCallEndedTone();
+    CallNotificationService.dismissAll();
     endCallCleanup();
 }
 
 function endCallCleanup() {
     stopRingtone();
+    CallNotificationService.dismissAll();
     if (outgoingCallTimer) {
         clearTimeout(outgoingCallTimer);
         outgoingCallTimer = null;
@@ -1096,6 +1306,102 @@ function initMobileApp() {
         }
     });
 
+    // WhatsApp-Style Top Incoming Call Banner Handlers
+    document.getElementById("top-banner-accept-btn")?.addEventListener("click", () => {
+        if (incomingCallerUid) {
+            answerCall(incomingCallerUid, incomingCallType);
+        }
+    });
+    document.getElementById("top-banner-decline-btn")?.addEventListener("click", () => {
+        stopIncomingRingtone();
+        playCallEndedTone();
+        CallNotificationService.dismissAll();
+        const inOverlay = document.getElementById("mobile-incoming-call-overlay");
+        if (inOverlay) {
+            inOverlay.classList.add("hidden");
+            inOverlay.style.display = "none";
+        }
+        if (socket && incomingCallerUid) {
+            socket.emit("call_response", { targetUid: incomingCallerUid, status: "rejected" });
+            socket.emit("cancel_call", { targetUid: incomingCallerUid });
+        }
+        incomingCallerUid = null;
+    });
+    document.getElementById("top-banner-touch-area")?.addEventListener("click", () => {
+        const inOverlay = document.getElementById("mobile-incoming-call-overlay");
+        if (inOverlay) {
+            inOverlay.classList.remove("hidden");
+            inOverlay.style.display = "flex";
+        }
+    });
+
+    // Minimize Call Screen to Persistent Ongoing Bar (Multitasking while in call)
+    document.getElementById("minimize-call-btn")?.addEventListener("click", () => {
+        const callScreen = document.getElementById("mobile-call-screen");
+        if (callScreen) {
+            callScreen.classList.add("hidden");
+            callScreen.style.display = "none";
+        }
+        const bar = document.getElementById("mobile-ongoing-call-bar");
+        if (bar) {
+            bar.classList.remove("hidden");
+            bar.style.display = "flex";
+        }
+        showToast("📞 Call minimized to top bar");
+    });
+    const restoreCallScreen = () => {
+        const callScreen = document.getElementById("mobile-call-screen");
+        if (callScreen) {
+            callScreen.classList.remove("hidden");
+            callScreen.style.display = "flex";
+        }
+        const bar = document.getElementById("mobile-ongoing-call-bar");
+        if (bar) {
+            bar.classList.add("hidden");
+            bar.style.display = "none";
+        }
+    };
+    document.getElementById("ongoing-bar-return-btn")?.addEventListener("click", restoreCallScreen);
+    document.getElementById("ongoing-bar-target")?.addEventListener("click", restoreCallScreen);
+    document.getElementById("ongoing-bar-end-btn")?.addEventListener("click", endCall);
+
+    // Mobile Permissions & Support Verification Modal
+    const openPerms = () => {
+        const pModal = document.getElementById("mobile-permissions-modal");
+        if (pModal) {
+            pModal.classList.remove("hidden");
+            pModal.style.display = "flex";
+            updatePermissionsStatusUI();
+        }
+    };
+    document.getElementById("mobile-permissions-btn")?.addEventListener("click", openPerms);
+    document.getElementById("open-permissions-modal-btn")?.addEventListener("click", openPerms);
+
+    const closePerms = () => {
+        const pModal = document.getElementById("mobile-permissions-modal");
+        if (pModal) {
+            pModal.classList.add("hidden");
+            pModal.style.display = "none";
+        }
+    };
+    document.getElementById("close-permissions-modal-x")?.addEventListener("click", closePerms);
+    document.getElementById("close-permissions-modal-btn")?.addEventListener("click", closePerms);
+
+    document.getElementById("grant-recheck-permissions-btn")?.addEventListener("click", async () => {
+        if (window.ZingNativeBridge && window.ZingNativeBridge.requestAllPermissions) {
+            try { window.ZingNativeBridge.requestAllPermissions(); } catch (_) {}
+        }
+        try {
+            await CallNotificationService.requestPermission();
+        } catch (_) {}
+        try {
+            const testStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+            testStream.getTracks().forEach(t => t.stop());
+        } catch (_) {}
+        await updatePermissionsStatusUI();
+        showToast("✅ Permissions verified!");
+    });
+
     // Mobile Incoming & Outgoing Call Overlays
     document.getElementById("mobile-accept-call-btn")?.addEventListener("click", () => {
         if (incomingCallerUid) {
@@ -1105,6 +1411,7 @@ function initMobileApp() {
     document.getElementById("mobile-decline-call-btn")?.addEventListener("click", () => {
         stopIncomingRingtone();
         playCallEndedTone();
+        CallNotificationService.dismissAll();
         const inOverlay = document.getElementById("mobile-incoming-call-overlay");
         if (inOverlay) {
             inOverlay.classList.add("hidden");
@@ -1119,6 +1426,7 @@ function initMobileApp() {
     document.getElementById("mobile-cancel-outgoing-btn")?.addEventListener("click", () => {
         stopOutgoingRingtone();
         playCallEndedTone();
+        CallNotificationService.dismissAll();
         const outOverlay = document.getElementById("mobile-outgoing-call-overlay");
         if (outOverlay) {
             outOverlay.classList.add("hidden");
@@ -1403,6 +1711,10 @@ function initMobileApp() {
             if (parsed) loginUser(parsed);
         } catch (_) {}
     }
+
+    // Initialize notification & permission checks
+    CallNotificationService.requestPermission();
+    updatePermissionsStatusUI();
 }
 
 if (document.readyState === "loading") {

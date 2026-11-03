@@ -18,6 +18,8 @@ android {
 
     
 
+    
+
     namespace = "com.zingtalk.com"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {

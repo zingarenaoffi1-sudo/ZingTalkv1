@@ -849,3 +849,267 @@ body.mobile-body {
 .call-circle-btn:active {
     transform: scale(0.92);
 }
+
+/* WhatsApp-Style Top Incoming Call Notification Banner */
+.mobile-top-call-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(135deg, #0b221a 0%, #112e23 100%);
+    border-bottom: 2px solid #00d29d;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65);
+    padding: calc(env(safe-area-inset-top, 12px) + 6px) 16px 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    z-index: 10000;
+    animation: bannerSlideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes bannerSlideDown {
+    from {
+        transform: translateY(-100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.top-banner-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #00d29d 0%, #008765 100%);
+    color: #04140e;
+    font-size: 20px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 0 12px rgba(0, 210, 157, 0.4);
+}
+
+.top-banner-info {
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.top-banner-title {
+    font-size: 15px;
+    font-weight: 800;
+    color: #ffffff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.top-banner-subtitle {
+    font-size: 12px;
+    color: #00d29d;
+    font-weight: 600;
+    margin-top: 2px;
+}
+
+.top-banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.top-banner-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    transition: transform 0.15s ease;
+}
+
+.top-banner-btn:active {
+    transform: scale(0.9);
+}
+
+.top-banner-btn.decline {
+    background: #ff4757;
+    color: #ffffff;
+}
+
+.top-banner-btn.accept {
+    background: #00d29d;
+    color: #04120e;
+}
+
+/* Persistent Ongoing Call Top Status Bar */
+.mobile-ongoing-call-bar {
+    background: linear-gradient(90deg, #092419 0%, #0c3323 100%);
+    border-bottom: 1px solid rgba(0, 210, 157, 0.4);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 25;
+    position: sticky;
+    top: 0;
+}
+
+.ongoing-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.ongoing-pulse-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #00d29d;
+    box-shadow: 0 0 10px #00d29d;
+    animation: ongoingDotPulse 1.4s infinite;
+}
+
+@keyframes ongoingDotPulse {
+    0% { transform: scale(0.9); opacity: 0.7; }
+    50% { transform: scale(1.3); opacity: 1; }
+    100% { transform: scale(0.9); opacity: 0.7; }
+}
+
+.ongoing-bar-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ongoing-target-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.ongoing-call-timer {
+    font-size: 13px;
+    font-weight: 700;
+    color: #00d29d;
+    font-variant-numeric: tabular-nums;
+}
+
+.ongoing-bar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ongoing-action-btn {
+    padding: 5px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    border: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+}
+
+.ongoing-action-btn.return {
+    background: rgba(0, 210, 157, 0.2);
+    color: #00d29d;
+    border: 1px solid rgba(0, 210, 157, 0.4);
+}
+
+.ongoing-action-btn.end {
+    background: #ff4757;
+    color: #ffffff;
+}
+
+/* Floating Minimize Call Button inside Call Screen */
+.call-minimize-floating-btn {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 16px) + 8px);
+    left: 16px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 30;
+    backdrop-filter: blur(8px);
+}
+
+.call-minimize-floating-btn:active {
+    background: rgba(0, 0, 0, 0.8);
+    transform: scale(0.92);
+}
+
+/* Permissions Modal Card Styles */
+.perm-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.perm-icon {
+    font-size: 22px;
+    line-height: 1;
+    margin-top: 2px;
+}
+
+.perm-details {
+    flex: 1;
+}
+
+.perm-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+}
+
+.perm-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.perm-status {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(0, 210, 157, 0.15);
+    color: var(--accent-cyan);
+    border: 1px solid rgba(0, 210, 157, 0.35);
+}
+
+.perm-status.needed {
+    background: rgba(255, 71, 87, 0.15);
+    color: #ff4757;
+    border-color: rgba(255, 71, 87, 0.35);
+}
+
+.perm-desc {
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+

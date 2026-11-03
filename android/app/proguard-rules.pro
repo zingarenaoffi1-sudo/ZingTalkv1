@@ -395,3 +395,16 @@
 -keep class android.webkit.** { *; }
 -keep class org.webrtc.** { *; }
 -dontwarn org.webrtc.**
+
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,JavascriptInterface
+-keep class com.getcapacitor.** { *; }
+-keep class * extends com.getcapacitor.Plugin { *; }
+-keepclassmembers class * extends com.getcapacitor.Plugin { public <methods>; }
+-keep class com.google.firebase.** { *; }
+-keep class com.google.android.gms.** { *; }
+-dontwarn com.google.firebase.**
+-dontwarn com.google.android.gms.**
+-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }
+-keep class android.webkit.** { *; }
+-keep class org.webrtc.** { *; }
+-dontwarn org.webrtc.**

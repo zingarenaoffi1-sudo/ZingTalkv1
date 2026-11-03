@@ -906,12 +906,32 @@ export function registerSocketListeners(s) {
         document.getElementById("accept-call-btn")?.focus();
         startIncomingRingtone();
 
+        // Native Android Heads-Up Notification & Web Notification
+        if (window.ZingNativeBridge && window.ZingNativeBridge.showIncomingCall) {
+            try {
+                window.ZingNativeBridge.showIncomingCall(data.callerUid, callerNameToShow, currentCallType);
+            } catch (_) {}
+        }
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            try {
+                new Notification(callerNameToShow, {
+                    body: `Incoming ZingTalk ${currentCallType === 'video' ? 'HD Video' : 'Audio'} Call...`,
+                    icon: "assets/icon.png",
+                    tag: "zingtalk-call",
+                    requireInteraction: true
+                });
+            } catch (_) {}
+        }
+
         if (incomingCallTimer) clearTimeout(incomingCallTimer);
         incomingCallTimer = setTimeout(() => {
             const overlay = document.getElementById("incoming-call-overlay");
             if (overlay && !overlay.classList.contains("hidden")) {
                 stopRingtone();
                 playCallEndedTone();
+                if (window.ZingNativeBridge && window.ZingNativeBridge.dismissCallNotifications) {
+                    try { window.ZingNativeBridge.dismissCallNotifications(); } catch (_) {}
+                }
                 overlay.classList.add("hidden");
                 activeCallTarget = null;
                 endCallCleanup();
@@ -923,6 +943,9 @@ export function registerSocketListeners(s) {
     s.on("call_cancelled", () => {
         stopRingtone();
         playCallEndedTone();
+        if (window.ZingNativeBridge && window.ZingNativeBridge.dismissCallNotifications) {
+            try { window.ZingNativeBridge.dismissCallNotifications(); } catch (_) {}
+        }
         document.getElementById("incoming-call-overlay")?.classList.add("hidden");
         document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
         activeCallTarget = null;
@@ -1518,6 +1541,15 @@ async function startWebRTC(isCaller) {
         const secs = String(callSecondsElapsed % 60).padStart(2, '0');
         const modeLabel = currentCallType === "video" ? "HD Video" : "Audio";
         if (timerEl) timerEl.innerText = `${mins}:${secs} • ${modeLabel}`;
+
+        if (window.ZingNativeBridge && window.ZingNativeBridge.showOngoingCall && activeCallTarget) {
+            try {
+                let nameToShow = "UID: " + activeCallTarget;
+                const c = myContacts.find(con => con.uid === activeCallTarget);
+                if (c) nameToShow = c.name;
+                window.ZingNativeBridge.showOngoingCall(activeCallTarget, nameToShow, `${mins}:${secs}`);
+            } catch (_) {}
+        }
     }, 1000);
 
     if (isCaller) {
@@ -1601,6 +1633,10 @@ function endCallCleanup() {
     document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
     document.getElementById("incoming-call-overlay")?.classList.add("hidden");
 
+    if (window.ZingNativeBridge && window.ZingNativeBridge.dismissCallNotifications) {
+        try { window.ZingNativeBridge.dismissCallNotifications(); } catch (_) {}
+    }
+
     isCallInitiating = false;
     activeCallTarget = null;
     pendingOffer = null;
@@ -1611,6 +1647,18 @@ function endCallCleanup() {
         autoFocusFirstElement();
     }, 120);
 }
+
+// Global intent bridge hook from MainActivity.java for Accept/Decline/End
+window.handleNativeCallAction = function(action) {
+    console.log("[ZingTalk TV] Native notification action received:", action);
+    if (action === "accept") {
+        document.getElementById("accept-call-btn")?.click();
+    } else if (action === "decline") {
+        document.getElementById("reject-call-btn")?.click();
+    } else if (action === "end") {
+        endCall();
+    }
+};
 
 function endCall() {
     if (socket && activeCallTarget) {
