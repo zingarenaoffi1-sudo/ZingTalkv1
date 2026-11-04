@@ -1413,7 +1413,6 @@ async function startWebRTC(isCaller) {
     }
 
     hasLocalCamera = Boolean(localStream && localStream.getVideoTracks().length > 0);
-    const localVideo = document.getElementById("local-video");
     const noCameraPlaceholder = document.getElementById("no-camera-pip-placeholder");
 
     if (currentCallType === "audio") {
@@ -1978,7 +1977,18 @@ function handleAlexaIncomingCommand(cmd) {
 }
 
 // ----------------- Fire TV Remote Spatial Navigation Engine -----------------
-// ----------------- Fire TV Remote Spatial Navigation Engine -----------------
+export function switchToLoginTab(tab) {
+    document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".tv-tab-pane").forEach(p => p.classList.add("hidden"));
+    if (tab === "email") {
+        document.getElementById("tab-btn-email")?.classList.add("active");
+        document.getElementById("pane-email")?.classList.remove("hidden");
+    } else if (tab === "guest") {
+        document.getElementById("tab-btn-guest")?.classList.add("active");
+        document.getElementById("pane-guest")?.classList.remove("hidden");
+    }
+}
+
 export function focusElement(el, shouldScroll = true) {
     if (!el) return;
     document.querySelectorAll('.tv-focused').forEach(node => {
@@ -2006,12 +2016,6 @@ function isElementVisibleAndFocusable(el) {
         const style = window.getComputedStyle(el);
         if (style) {
             if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-        }
-    }
-    if (el.offsetParent === null && el.tagName !== 'BODY') {
-        const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
-        if (!style || (style.position !== 'fixed' && !el.closest('.tv-modal-backdrop'))) {
-            return false;
         }
     }
     const rect = el.getBoundingClientRect();
@@ -2103,14 +2107,26 @@ function getCustomNavigationTarget(current, direction) {
     if (id === "tab-btn-email") {
         if (direction === "up") return document.getElementById("tab-btn-email");
         if (direction === "left") return document.getElementById("tab-btn-email");
-        if (direction === "right") return document.getElementById("tab-btn-guest");
-        if (direction === "down") return isSignUp ? document.getElementById("login-name-input") : document.getElementById("login-email-input");
+        if (direction === "right") {
+            switchToLoginTab("guest");
+            return document.getElementById("tab-btn-guest");
+        }
+        if (direction === "down") {
+            switchToLoginTab("email");
+            return isSignUp ? document.getElementById("login-name-input") : document.getElementById("login-email-input");
+        }
     }
     if (id === "tab-btn-guest") {
         if (direction === "up") return document.getElementById("tab-btn-guest");
         if (direction === "right") return document.getElementById("tab-btn-guest");
-        if (direction === "left") return document.getElementById("tab-btn-email");
-        if (direction === "down") return document.getElementById("guest-name-input");
+        if (direction === "left") {
+            switchToLoginTab("email");
+            return document.getElementById("tab-btn-email");
+        }
+        if (direction === "down") {
+            switchToLoginTab("guest");
+            return document.getElementById("guest-name-input");
+        }
     }
 
     // Email Form (Strict, predictable two-way vertical flow)
@@ -2614,8 +2630,9 @@ window.addEventListener("keydown", (e) => {
     // TAB: Standard Tab cycling
     const isTab = e.key === "Tab" || e.keyCode === 9 || e.which === 9;
 
-    // ENTER: Enter, Select, Ok, keyCode 13, Android KEYCODE_ENTER (66), Android KEYCODE_DPAD_CENTER (23)
-    const isEnter = e.key === "Enter" || e.code === "Enter" || e.key === "Select" || e.key === "Ok" || e.keyCode === 13 || e.which === 13 || e.keyCode === 66 || e.which === 66 || e.keyCode === 23 || e.which === 23;
+    // ENTER: Enter, Select, Ok, keyCode 13, Android KEYCODE_ENTER (66), Android KEYCODE_DPAD_CENTER (23), Space when not in input
+    const isSpace = !isInput && (e.key === " " || e.code === "Space" || e.keyCode === 32 || e.which === 32);
+    const isEnter = e.key === "Enter" || e.code === "Enter" || e.key === "Select" || e.key === "Ok" || e.keyCode === 13 || e.which === 13 || e.keyCode === 66 || e.which === 66 || e.keyCode === 23 || e.which === 23 || isSpace;
 
     // BACK: Escape, GoBack, Back, Android KEYCODE_BACK (4), Samsung Tizen (10009), Backspace when not in input
     const isBack = e.key === "Escape" || e.code === "Escape" || e.key === "GoBack" || e.key === "Back" || e.keyCode === 27 || e.which === 27 || e.keyCode === 4 || e.which === 4 || e.keyCode === 10009 || (!isInput && (e.key === "Backspace" || e.keyCode === 8 || e.which === 8));
@@ -2685,12 +2702,22 @@ window.addEventListener("keydown", (e) => {
         if (!isInput) {
             e.preventDefault();
             handleDpadNavigation("left");
-        } else if (active.selectionStart === 0 && active.selectionEnd === 0) {
-            // Only leave input to the left when cursor is strictly at position 0
-            e.preventDefault();
-            handleDpadNavigation("left");
+        } else {
+            let canLeave = false;
+            try {
+                if (typeof active.selectionStart === "number") {
+                    canLeave = (active.selectionStart === 0 && active.selectionEnd === 0);
+                } else {
+                    canLeave = true;
+                }
+            } catch (_) {
+                canLeave = true;
+            }
+            if (canLeave) {
+                e.preventDefault();
+                handleDpadNavigation("left");
+            }
         }
-        // Otherwise, allow natural caret cursor movement inside the text
         return;
     }
 
@@ -2698,28 +2725,36 @@ window.addEventListener("keydown", (e) => {
         if (!isInput) {
             e.preventDefault();
             handleDpadNavigation("right");
-        } else if (active.selectionStart === active.value.length && active.selectionEnd === active.value.length) {
-            // Only leave input to the right when cursor is strictly at the end of text
-            e.preventDefault();
-            handleDpadNavigation("right");
+        } else {
+            let canLeave = false;
+            try {
+                if (typeof active.selectionStart === "number") {
+                    canLeave = (active.selectionStart === active.value.length && active.selectionEnd === active.value.length);
+                } else {
+                    canLeave = true;
+                }
+            } catch (_) {
+                canLeave = true;
+            }
+            if (canLeave) {
+                e.preventDefault();
+                handleDpadNavigation("right");
+            }
         }
-        // Otherwise, allow natural caret cursor movement inside the text
         return;
     }
 
     // 4. Action / Enter / Select Key
     if (isEnter) {
-        if (active && active.classList.contains("tv-focusable") && !isInput) {
+        const targetBtn = active ? (active.classList.contains("tv-focusable") ? active : active.closest(".tv-focusable")) : null;
+        if (targetBtn && !isInput) {
             e.preventDefault();
-            active.click();
+            targetBtn.click();
             return;
         }
 
         if (active && isInput) {
             // When Enter / Center (OK) is pressed on an input:
-            // If the field already has text entered (e.g. from physical keyboard), Enter advances/submits.
-            // If the field is being selected or opened on Fire TV, do not preventDefault so Android/Fire OS
-            // natively summons the Fire TV virtual on-screen keyboard (IME) for remote or voice typing!
             if (active.id === "dial-uid-input") {
                 const val = active.value.trim().replace(/\D/g, '');
                 if (val.length === 10) {
@@ -2738,25 +2773,17 @@ window.addEventListener("keydown", (e) => {
                     document.getElementById("save-contact-btn")?.click();
                 }
             } else if (active.id === "login-name-input") {
-                if (active.value.trim().length > 0) {
-                    e.preventDefault();
-                    focusElement(document.getElementById("login-email-input"));
-                }
+                e.preventDefault();
+                focusElement(document.getElementById("login-email-input"));
             } else if (active.id === "login-email-input") {
-                if (active.value.trim().length > 0) {
-                    e.preventDefault();
-                    focusElement(document.getElementById("login-password-input"));
-                }
+                e.preventDefault();
+                focusElement(document.getElementById("login-password-input"));
             } else if (active.id === "login-password-input") {
-                if (active.value.length > 0) {
-                    e.preventDefault();
-                    document.getElementById("email-login-submit-btn")?.click();
-                }
+                e.preventDefault();
+                document.getElementById("email-login-submit-btn")?.click();
             } else if (active.id === "guest-name-input") {
-                if (active.value.trim().length > 0) {
-                    e.preventDefault();
-                    document.getElementById("guest-login-btn")?.click();
-                }
+                e.preventDefault();
+                document.getElementById("guest-login-btn")?.click();
             } else if (active.id === "reset-email-input") {
                 if (active.value.trim().length > 0) {
                     e.preventDefault();
@@ -2790,22 +2817,14 @@ document.addEventListener("focusin", (e) => {
 document.addEventListener("click", async (e) => {
     // 1. Login Tabs Switching (Email & Password / Guest Mode)
     if (e.target.id === "tab-btn-email" || e.target.closest("#tab-btn-email")) {
-        document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
-        document.querySelectorAll(".tv-tab-pane").forEach(p => p.classList.add("hidden"));
-        const tabEl = document.getElementById("tab-btn-email");
-        if (tabEl) tabEl.classList.add("active");
-        document.getElementById("pane-email")?.classList.remove("hidden");
+        switchToLoginTab("email");
         const isSignUp = !document.getElementById("email-signup-name-group")?.classList.contains("hidden");
         focusElement(isSignUp ? document.getElementById("login-name-input") : document.getElementById("login-email-input"), false);
         return;
     }
 
     if (e.target.id === "tab-btn-guest" || e.target.closest("#tab-btn-guest")) {
-        document.querySelectorAll(".tv-login-tab").forEach(t => t.classList.remove("active"));
-        document.querySelectorAll(".tv-tab-pane").forEach(p => p.classList.add("hidden"));
-        const tabEl = document.getElementById("tab-btn-guest");
-        if (tabEl) tabEl.classList.add("active");
-        document.getElementById("pane-guest")?.classList.remove("hidden");
+        switchToLoginTab("guest");
         focusElement(document.getElementById("guest-name-input"), false);
         return;
     }
@@ -3077,13 +3096,17 @@ document.addEventListener("click", async (e) => {
                 loginUserSession(user);
                 showToast(`Welcome ${name}!`);
             } catch (err) {
-                console.error("[Firebase Anonymous Auth Error]:", err);
-                const msg = err.message || "Failed to sign in as guest via Firebase.";
-                if (errorEl) {
-                    errorEl.innerText = msg;
-                    errorEl.style.display = "block";
-                }
-                showToast(msg);
+                console.warn("[Firebase Anonymous Auth Notice]:", err.message, "- Falling back to local guest session");
+                const guestId = "guest_" + Date.now();
+                const user = {
+                    displayName: name || "Guest User",
+                    email: null,
+                    uid: guestId,
+                    isAnonymous: true
+                };
+                localStorage.setItem("zingTalkTvSession", JSON.stringify(user));
+                loginUserSession(user);
+                showToast(`Welcome ${name}!`);
             }
         } else {
             const guestId = "guest_" + Date.now();
@@ -3357,6 +3380,10 @@ document.getElementById("contact-uid-input")?.addEventListener("input", (e) => {
 });
 
 
+
+// Tab focus listener for D-Pad / Keyboard
+document.getElementById("tab-btn-email")?.addEventListener("focus", () => switchToLoginTab("email"));
+document.getElementById("tab-btn-guest")?.addEventListener("focus", () => switchToLoginTab("guest"));
 
 // Initial Fire TV Leanback D-Pad Auto-Focus
 window.addEventListener("load", () => {
