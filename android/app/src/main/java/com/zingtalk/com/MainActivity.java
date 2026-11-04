@@ -41,7 +41,7 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         createNotificationChannels();
-        checkAndRequestPermissions();
+        // Camera & Mic permissions are strictly requested on-demand when a call is initiated or answered
 
         try {
             WebView webView = this.getBridge().getWebView();
@@ -161,6 +161,36 @@ public class MainActivity extends BridgeActivity {
                 } catch (Exception ignored) {}
             }
 
+            if (!needed.isEmpty()) {
+                ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), PERMISSION_REQ_CODE);
+            }
+        }
+    }
+
+    public void requestPermissionsForCall(String callType) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            java.util.List<String> needed = new java.util.ArrayList<>();
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                needed.add(Manifest.permission.RECORD_AUDIO);
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.MODIFY_AUDIO_SETTINGS) != PackageManager.PERMISSION_GRANTED) {
+                needed.add(Manifest.permission.MODIFY_AUDIO_SETTINGS);
+            }
+            if ("video".equalsIgnoreCase(callType)) {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                    needed.add(Manifest.permission.CAMERA);
+                }
+            }
+            if (Build.VERSION.SDK_INT >= 31) {
+                if (ContextCompat.checkSelfPermission(this, "android.permission.BLUETOOTH_CONNECT") != PackageManager.PERMISSION_GRANTED) {
+                    needed.add("android.permission.BLUETOOTH_CONNECT");
+                }
+            }
+            if (Build.VERSION.SDK_INT >= 33) {
+                if (ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+                    needed.add("android.permission.POST_NOTIFICATIONS");
+                }
+            }
             if (!needed.isEmpty()) {
                 ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), PERMISSION_REQ_CODE);
             }
@@ -299,6 +329,16 @@ public class MainActivity extends BridgeActivity {
                 @Override
                 public void run() {
                     checkAndRequestPermissions();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void requestCallPermissions(final String callType) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    requestPermissionsForCall(callType);
                 }
             });
         }

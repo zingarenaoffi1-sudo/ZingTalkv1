@@ -226,7 +226,19 @@
         <!-- 3. FULLSCREEN HD VIDEO / AUDIO CALL STAGE -->
         <div id="full-call-screen" class="tv-call-viewport hidden">
             <video id="remote-video" autoplay playsinline webkit-playsinline class="tv-fullscreen-video"></video>
-            <video id="local-video" autoplay playsinline webkit-playsinline muted class="tv-pip-video"></video>
+            <!-- PIP Video / Camera Fallback Container -->
+            <div id="local-pip-container" class="tv-pip-container">
+                <video id="local-video" autoplay playsinline webkit-playsinline muted class="tv-pip-video"></video>
+                <div id="no-camera-pip-placeholder" class="tv-no-camera-pip hidden">
+                    <div class="tv-no-camera-icon-wrap">
+                        <svg width="32" height="32" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M19 10.5V7c0-.55-.45-1-1-1H7.83l2 2H18v7.17l2 2V10.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.55-.18L19.73 21 21 19.73 3.27 2zM5 16V8h1.27l8 8H5z"/>
+                        </svg>
+                    </div>
+                    <span class="tv-no-camera-title">No Camera Detected</span>
+                    <span class="tv-no-camera-sub">Voice Active • Receiving Video</span>
+                </div>
+            </div>
 
             <!-- Audio Call Center Avatar Visualizer -->
             <div id="audio-call-visualizer" class="tv-audio-visualizer-box hidden">

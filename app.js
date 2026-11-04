@@ -514,6 +514,7 @@ let localStream = null;
 let peerConnection = null;
 let activeCallTarget = null;
 let currentCallType = "video";
+let hasLocalCamera = true;
 let isMicMuted = false;
 let callDurationTimer = null;
 let callSecondsElapsed = 0;
@@ -1379,20 +1380,25 @@ async function startWebRTC(isCaller) {
 
     let streamObtained = localStream;
     if (!streamObtained) {
+        if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
+            try { window.ZingNativeBridge.requestCallPermissions(currentCallType); } catch (_) {}
+        }
         if (currentCallType === "video") {
             try {
                 streamObtained = await navigator.mediaDevices.getUserMedia({
                     audio: audioConstraints,
                     video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 } }
                 });
+                hasLocalCamera = true;
             } catch (vidErr) {
                 console.warn("[WebRTC] Video media request failed, attempting standard video fallback:", vidErr);
                 try {
                     streamObtained = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: true });
+                    hasLocalCamera = true;
                 } catch (fallbackErr) {
-                    console.warn("[WebRTC] Camera unavailable on this device, gracefully falling back to Audio Call:", fallbackErr);
-                    currentCallType = "audio";
-                    showToast("Camera not available on this device. Switched to HD Audio Call.");
+                    console.warn("[WebRTC] Camera unavailable on this device, continuing Video Call with audio transmission:", fallbackErr);
+                    hasLocalCamera = false;
+                    showToast("No camera detected on this TV. Voice active • Receiving remote video.");
                 }
             }
         }
@@ -1403,6 +1409,9 @@ async function startWebRTC(isCaller) {
                     audio: audioConstraints,
                     video: false
                 });
+                if (currentCallType === "video") {
+                    hasLocalCamera = false;
+                }
             } catch (audErr) {
                 showToast("Microphone access required: " + audErr.message);
                 endCall();
@@ -1412,22 +1421,39 @@ async function startWebRTC(isCaller) {
         localStream = streamObtained;
     }
 
+    hasLocalCamera = Boolean(localStream && localStream.getVideoTracks().length > 0);
+    const localVideo = document.getElementById("local-video");
+    const noCameraPlaceholder = document.getElementById("no-camera-pip-placeholder");
+
     if (currentCallType === "audio") {
         if (localVideo) localVideo.classList.add("hidden");
+        if (noCameraPlaceholder) noCameraPlaceholder.classList.add("hidden");
         if (remoteVideo) remoteVideo.style.opacity = "0";
         if (audioVisualizer) {
             audioVisualizer.classList.remove("hidden");
             if (audioPeerName) audioPeerName.innerText = peerNameToShow;
         }
     } else {
-        if (localVideo) localVideo.classList.remove("hidden");
         if (remoteVideo) remoteVideo.style.opacity = "1";
         if (audioVisualizer) audioVisualizer.classList.add("hidden");
-    }
 
-    if (localVideo && currentCallType === "video") {
-        localVideo.srcObject = localStream;
-        localVideo.play().catch(() => {});
+        if (hasLocalCamera) {
+            if (localVideo) {
+                localVideo.classList.remove("hidden");
+                localVideo.srcObject = localStream;
+                localVideo.play().catch(() => {});
+            }
+            if (noCameraPlaceholder) noCameraPlaceholder.classList.add("hidden");
+        } else {
+            // TV device has no camera connected
+            if (localVideo) {
+                localVideo.classList.add("hidden");
+                localVideo.srcObject = null;
+            }
+            if (noCameraPlaceholder) {
+                noCameraPlaceholder.classList.remove("hidden");
+            }
+        }
     }
 
     peerConnection = new RTCPeerConnection(rtcConfig);
@@ -1436,15 +1462,28 @@ async function startWebRTC(isCaller) {
         track.onended = () => {
             if (track.kind === "video") {
                 console.warn("[WebRTC] Local video track ended (hardware disconnect/unplug).");
-                showToast("Camera disconnected or unavailable.");
+                showToast("Camera disconnected.");
                 const localVideo = document.getElementById("local-video");
                 if (localVideo) localVideo.classList.add("hidden");
+                const noCamEl = document.getElementById("no-camera-pip-placeholder");
+                if (noCamEl) noCamEl.classList.remove("hidden");
             } else if (track.kind === "audio") {
                 console.warn("[WebRTC] Local audio track ended.");
                 showToast("Microphone disconnected.");
             }
         };
     });
+
+    // If this is a video call, but local stream has no video track (e.g. Fire TV without camera),
+    // add a video transceiver with direction 'recvonly' so WebRTC SDP explicitly receives remote video!
+    if (currentCallType === "video" && localStream.getVideoTracks().length === 0) {
+        try {
+            peerConnection.addTransceiver('video', { direction: 'recvonly' });
+            console.log("[WebRTC] Added recvonly video transceiver for camera-less TV video call");
+        } catch (tErr) {
+            console.warn("[WebRTC] Notice adding recvonly transceiver:", tErr);
+        }
+    }
 
     // Dynamic bandwidth floor and balanced resolution degradation
     try {
@@ -1576,7 +1615,10 @@ async function startWebRTC(isCaller) {
         try {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(pendingOffer));
             pendingOffer = null;
-            const answer = await peerConnection.createAnswer();
+            const answer = await peerConnection.createAnswer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: currentCallType === "video"
+            });
             await peerConnection.setLocalDescription(answer);
             socket.emit("webrtc_answer", { targetUid: activeCallTarget, answer });
 
@@ -1593,6 +1635,9 @@ function endCallCleanup() {
     stopRingtone();
     clearInterval(callDurationTimer);
     releaseScreenWakeLock();
+
+    const noCameraPlaceholder = document.getElementById("no-camera-pip-placeholder");
+    if (noCameraPlaceholder) noCameraPlaceholder.classList.add("hidden");
 
     if (outgoingCallTimer) {
         clearTimeout(outgoingCallTimer);
@@ -1701,6 +1746,10 @@ async function initiateDirectCall(targetUid, type) {
 
     currentCallType = type || "video";
 
+    if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
+        try { window.ZingNativeBridge.requestCallPermissions(currentCallType); } catch (_) {}
+    }
+
     // Request hardware permissions and retain localStream to avoid Android camera freeze
     try {
         const audioConstraints = {
@@ -1714,20 +1763,24 @@ async function initiateDirectCall(targetUid, type) {
                     audio: audioConstraints,
                     video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 } }
                 });
+                hasLocalCamera = true;
             } catch (_) {
                 try {
                     localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: true });
+                    hasLocalCamera = true;
                 } catch (_) {
-                    currentCallType = "audio";
+                    hasLocalCamera = false;
                     localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+                    showToast("No camera detected on this TV. Connecting with TV voice + remote video.");
                 }
             }
         } else {
             localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+            hasLocalCamera = false;
         }
     } catch (permErr) {
         console.warn("[Media Permission Error]:", permErr);
-        showToast("❌ Camera/Microphone permission required for call: " + (permErr.message || "Permission denied"));
+        showToast("❌ Microphone permission required for call: " + (permErr.message || "Permission denied"));
         return;
     }
 
@@ -3190,7 +3243,11 @@ document.addEventListener("click", async (e) => {
             if (track) {
                 track.enabled = !track.enabled;
                 showToast(track.enabled ? "Camera active" : "Camera turned off");
+            } else {
+                showToast("No camera detected on this TV device");
             }
+        } else {
+            showToast("No camera detected on this TV device");
         }
         return;
     }
@@ -3204,6 +3261,9 @@ document.addEventListener("click", async (e) => {
     if (e.target.id === "accept-call-btn" || e.target.closest("#accept-call-btn")) {
         stopRingtone();
         document.getElementById("incoming-call-overlay")?.classList.add("hidden");
+        if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
+            try { window.ZingNativeBridge.requestCallPermissions(currentCallType); } catch (_) {}
+        }
         try {
             await startWebRTC(false);
             if (socket) socket.emit("call_response", { targetUid: activeCallTarget, status: "accepted" });

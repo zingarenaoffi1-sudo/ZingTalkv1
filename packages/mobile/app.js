@@ -808,10 +808,32 @@ async function setupLocalMedia(videoWanted = true) {
     try {
         localStream = await navigator.mediaDevices.getUserMedia(constraints);
     } catch (_) {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        } catch (audErr) {
+            console.warn("[Mobile Media] Audio acquisition error:", audErr);
+        }
     }
     const localVideo = document.getElementById("local-video");
-    if (localVideo) localVideo.srcObject = localStream;
+    const noCamPlaceholder = document.getElementById("no-camera-pip-placeholder");
+    const hasVideo = localStream && localStream.getVideoTracks().length > 0;
+    if (hasVideo) {
+        if (localVideo) {
+            localVideo.style.display = "block";
+            localVideo.srcObject = localStream;
+        }
+        if (noCamPlaceholder) noCamPlaceholder.classList.add("hidden");
+    } else {
+        if (localVideo) {
+            localVideo.style.display = "none";
+            localVideo.srcObject = null;
+        }
+        if (noCamPlaceholder && videoWanted) {
+            noCamPlaceholder.classList.remove("hidden");
+        } else if (noCamPlaceholder) {
+            noCamPlaceholder.classList.add("hidden");
+        }
+    }
 }
 
 async function switchCamera() {
@@ -841,6 +863,12 @@ async function setupPeerConnection() {
     peerConnection = new RTCPeerConnection(rtcConfig);
     if (localStream) {
         localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    }
+    // If video call but no local video track, add recvonly transceiver so remote video is received
+    if (incomingCallType === "video" && (!localStream || localStream.getVideoTracks().length === 0)) {
+        try {
+            peerConnection.addTransceiver('video', { direction: 'recvonly' });
+        } catch (_) {}
     }
     peerConnection.ontrack = (event) => {
         const remoteVideo = document.getElementById("remote-video");
@@ -934,6 +962,10 @@ async function initiateCall(targetUid, type = "video") {
     currentTargetUid = cleanTarget;
     incomingCallType = type;
 
+    if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
+        try { window.ZingNativeBridge.requestCallPermissions(type); } catch (_) {}
+    }
+
     const known = myContacts.find(c => c.uid === cleanTarget);
     const nameToShow = known ? known.name : `UID: ${cleanTarget}`;
     const avatarLetter = (known?.name || "U").charAt(0).toUpperCase();
@@ -980,6 +1012,10 @@ async function answerCall(targetUid, type = "video") {
     const cleanTarget = String(targetUid || "").trim().replace(/\D/g, "");
     currentTargetUid = cleanTarget;
     incomingCallType = type;
+
+    if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
+        try { window.ZingNativeBridge.requestCallPermissions(type); } catch (_) {}
+    }
     
     const inOverlay = document.getElementById("mobile-incoming-call-overlay");
     if (inOverlay) {
@@ -1049,8 +1085,10 @@ function endCallCleanup() {
     }
     const localVideo = document.getElementById("local-video");
     const remoteVideo = document.getElementById("remote-video");
+    const noCamPlaceholder = document.getElementById("no-camera-pip-placeholder");
     if (localVideo) localVideo.srcObject = null;
     if (remoteVideo) remoteVideo.srcObject = null;
+    if (noCamPlaceholder) noCamPlaceholder.classList.add("hidden");
 
     const callScreen = document.getElementById("mobile-call-screen");
     if (callScreen) {
@@ -1712,8 +1750,7 @@ function initMobileApp() {
         } catch (_) {}
     }
 
-    // Initialize notification & permission checks
-    CallNotificationService.requestPermission();
+    // Check permission status UI only (permissions are requested on-demand when call starts)
     updatePermissionsStatusUI();
 }
 
