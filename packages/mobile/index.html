@@ -258,16 +258,25 @@
 
         <!-- Mobile Privacy Policy Modal -->
         <div id="mobile-policy-modal" class="mobile-modal-overlay hidden">
-            <div class="mobile-modal-card" style="max-height: 80vh; overflow-y: auto;">
-                <h3 class="mobile-modal-title">🔒 ZingTalk Privacy Policy</h3>
+            <div class="mobile-modal-card" style="max-height: 85vh; overflow-y: auto;">
+                <h3 class="mobile-modal-title">🔒 Privacy Policy & Terms</h3>
                 <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
-                    <p style="margin-bottom: 8px;"><strong style="color: var(--accent-cyan);">Zero Server Storage:</strong> Text chats and call logs are never stored on any cloud database or server disk.</p>
-                    <p style="margin-bottom: 8px;"><strong style="color: var(--accent-cyan);">Encrypted P2P Calling:</strong> All audio and video streams flow directly peer-to-peer using WebRTC DTLS-SRTP encryption.</p>
-                    <p style="margin-bottom: 8px;"><strong style="color: var(--accent-cyan);">Anonymous 10-Digit UID:</strong> No mobile phone numbers, SIM cards, or personal identifiers are required.</p>
-                    <p style="margin-bottom: 8px;"><strong style="color: var(--accent-cyan);">Device Independence:</strong> Mobile apps use direct touch controls. Alexa voice integration is exclusively engineered for Amazon Fire TV living room remotes.</p>
-                    <p><strong style="color: var(--accent-cyan);">Developer Support:</strong> Developer & Publisher: ZingTalk Developer Team (<code>support.zing.app@gmail.com</code>).</p>
+                    <div style="background: rgba(244, 63, 94, 0.12); border: 1px solid rgba(244, 63, 94, 0.35); padding: 10px 12px; border-radius: 8px; margin-bottom: 10px;">
+                        <strong style="color: #ff6b81;">⚠️ COPPA Rule & Strict Age 13+:</strong> ZingTalk is strictly for individuals aged 13 and older. Children under 13 are prohibited from registering or using ZingTalk. We do not collect data from children under 13.
+                    </div>
+                    <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); padding: 10px 12px; border-radius: 8px; margin-bottom: 10px;">
+                        <strong style="color: #fbbf24;">📢 Advertisements (Ads):</strong> ZingTalk displays third-party ads (Google AdMob, Unity, Amazon) to keep voice/video calls and chat 100% free for everyone.
+                    </div>
+                    <p style="margin-bottom: 8px;"><strong style="color: var(--accent-cyan);">Zero Server Storage:</strong> Audio and video calls are direct peer-to-peer (WebRTC DTLS-SRTP encrypted). Calls are <strong>NEVER recorded</strong> or listened to.</p>
+                    <p style="margin-bottom: 8px;"><strong style="color: var(--accent-cyan);">Local Contacts:</strong> Contacts reside strictly in your local device memory (<code>localStorage</code>) and are never stored on any cloud database.</p>
+                    <p style="margin-bottom: 8px;"><strong style="color: var(--accent-cyan);">Anonymous 10-Digit UID:</strong> No phone numbers or SIM cards needed.</p>
+                    <p style="margin-bottom: 12px;"><strong style="color: var(--accent-cyan);">Support & Deletion:</strong> Email <code>support.zing.app@gmail.com</code> for any inquiry or account deletion requests.</p>
+                    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                        <a href="/privacy" target="_blank" class="auth-guest-btn" style="flex: 1; text-align: center; text-decoration: none; padding: 8px; font-size: 12px;">Full Privacy Policy</a>
+                        <a href="/terms" target="_blank" class="auth-guest-btn" style="flex: 1; text-align: center; text-decoration: none; padding: 8px; font-size: 12px;">Terms of Service</a>
+                    </div>
                 </div>
-                <button type="button" id="close-policy-btn" class="auth-submit-btn" style="margin-top: 10px;">Close Policy</button>
+                <button type="button" id="close-policy-btn" class="auth-submit-btn" style="margin-top: 6px;">Close Policy</button>
             </div>
         </div>
 

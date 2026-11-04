@@ -3129,6 +3129,25 @@ function renderServerStatus(req, res) {
     return res.status(200).type('html').send(html);
 }
 
+// Legal Compliance & Privacy Endpoints (Google Play Store & Store Review Compliance)
+app.get(['/privacy', '/privacy-policy', '/privacy.html'], (req, res) => {
+    const privacyPath = path.join(__dirname, 'privacy.html');
+    if (fs.existsSync(privacyPath)) return res.sendFile(privacyPath);
+    return res.status(404).send('Privacy Policy not found');
+});
+
+app.get(['/terms', '/terms-of-service', '/terms.html'], (req, res) => {
+    const termsPath = path.join(__dirname, 'terms.html');
+    if (fs.existsSync(termsPath)) return res.sendFile(termsPath);
+    return res.status(404).send('Terms of Service not found');
+});
+
+app.get(['/delete-account', '/account-deletion'], (req, res) => {
+    const privacyPath = path.join(__dirname, 'privacy.html');
+    if (fs.existsSync(privacyPath)) return res.sendFile(privacyPath);
+    return res.status(404).send('Account Deletion Policy not found');
+});
+
 // Multi-Client SPA & Route Fallback
 app.get('/', (req, res) => renderServerStatus(req, res));
 app.get('/admin', (req, res) => renderServerStatus(req, res));

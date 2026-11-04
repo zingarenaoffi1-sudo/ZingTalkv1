@@ -561,7 +561,7 @@ if (!fs.existsSync(androidPublicDir)) {
     fs.mkdirSync(androidPublicDir, { recursive: true });
 }
 const platformSourceDir = targetPlatform === 'mobile' ? path.join('packages', 'mobile') : path.join('packages', 'tv');
-const filesToSync = ['index.html', 'style.css', 'app.js', 'manifest.json', 'capacitor.js', 'socket.io.min.js'];
+const filesToSync = ['index.html', 'style.css', 'app.js', 'manifest.json', 'capacitor.js', 'socket.io.min.js', 'privacy.html', 'terms.html'];
 filesToSync.forEach(f => {
     let src = path.join(platformSourceDir, f);
     if (!fs.existsSync(src)) {

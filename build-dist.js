@@ -11,7 +11,9 @@ const filesToCopy = [
     'style.css',
     'app.js',
     'manifest.json',
-    'service-worker.js'
+    'service-worker.js',
+    'privacy.html',
+    'terms.html'
 ];
 
 const androidPublicDir = path.join(__dirname, 'android', 'app', 'src', 'main', 'assets', 'public');
@@ -37,10 +39,14 @@ packages.forEach(pkg => {
     if (!fs.existsSync(pkgDist)) {
         fs.mkdirSync(pkgDist, { recursive: true });
     }
-    ['index.html', 'style.css', 'app.js', 'manifest.json', 'capacitor.config.json'].forEach(f => {
-        const src = path.join(pkgDir, f);
+    ['index.html', 'style.css', 'app.js', 'manifest.json', 'capacitor.config.json', 'privacy.html', 'terms.html'].forEach(f => {
+        let src = path.join(pkgDir, f);
+        if (!fs.existsSync(src)) {
+            src = path.join(__dirname, f);
+        }
         if (fs.existsSync(src)) {
             fs.copyFileSync(src, path.join(pkgDist, f));
+            fs.copyFileSync(src, path.join(pkgDir, f));
         }
     });
 });
