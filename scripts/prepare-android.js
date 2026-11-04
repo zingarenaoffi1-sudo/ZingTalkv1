@@ -400,6 +400,26 @@ if (!fs.existsSync(bannerDest) && fs.existsSync(bannerSrc)) {
     fs.copyFileSync(bannerSrc, bannerDest);
 }
 
+// 1.25 Synchronize platform-specific launcher icons
+const pkgAssetsDir = path.join('packages', targetPlatform, 'assets');
+const androidResDir = path.join('android', 'app', 'src', 'main', 'res');
+const densities = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi'];
+densities.forEach(d => {
+    const srcMipmap = path.join(pkgAssetsDir, `mipmap-${d}`);
+    const destMipmap = path.join(androidResDir, `mipmap-${d}`);
+    if (fs.existsSync(srcMipmap)) {
+        if (!fs.existsSync(destMipmap)) fs.mkdirSync(destMipmap, { recursive: true });
+        ['ic_launcher.png', 'ic_launcher_round.png', 'ic_launcher_foreground.png'].forEach(iconFile => {
+            const s = path.join(srcMipmap, iconFile);
+            const t = path.join(destMipmap, iconFile);
+            if (fs.existsSync(s)) {
+                fs.copyFileSync(s, t);
+            }
+        });
+    }
+});
+console.log(`[prepare-android] ✅ Synchronized launcher icons for [${targetPlatform}]`);
+
 // 1.3 Configure Android App Display Name in strings.xml (ZingTalk TV vs ZingTalk)
 const stringsPath = path.join('android', 'app', 'src', 'main', 'res', 'values', 'strings.xml');
 if (fs.existsSync(stringsPath)) {

@@ -3148,6 +3148,42 @@ app.get(['/delete-account', '/account-deletion'], (req, res) => {
     return res.status(404).send('Account Deletion Policy not found');
 });
 
+// Amazon Appstore Fire TV Screenshots Gallery
+app.get(['/screenshots', '/screenshots/'], (req, res) => {
+    const screens = [
+        { file: '1_firetv_dashboard_contacts.png', title: '1. Fire TV Dashboard & Contacts' },
+        { file: '2_firetv_hd_video_call.png', title: '2. Fullscreen HD Video Call & Fallback PIP' },
+        { file: '3_firetv_incoming_call.png', title: '3. TV Incoming Call Alert Modal' },
+        { file: '4_firetv_chat_messaging.png', title: '4. TV Real-Time Messaging & Virtual Keyboard' },
+        { file: '5_firetv_hd_audio_call.png', title: '5. HD Audio Call with Radar Visualizer' }
+    ];
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>ZingTalk Fire TV - Amazon Appstore Screenshots</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      body { background: #0a0f1d; color: #fff; font-family: system-ui, sans-serif; padding: 30px 20px; max-width: 1200px; margin: auto; }
+      h1 { color: #00d29d; margin-bottom: 6px; }
+      p { color: #94a3b8; margin-top: 0; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 24px; margin-top: 24px; }
+      .card { background: #131b2e; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+      img { width: 100%; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); aspect-ratio: 16/9; object-fit: cover; }
+      .btn { display: inline-block; background: #00d29d; color: #0a0f1d; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-weight: 700; text-align: center; }
+      .btn:hover { background: #00f0b4; }
+    </style></head><body>
+      <h1>ZingTalk Fire TV - Amazon Appstore Screenshots (1920x1080)</h1>
+      <p>Official 16:9 landscape screenshots ready for Amazon Developer Portal submission.</p>
+      <div class="grid">
+        ${screens.map(s => `
+          <div class="card">
+            <h3 style="margin: 0; font-size: 15px;">${s.title}</h3>
+            <img src="/screenshots/firetv/${s.file}" alt="${s.title}">
+            <a class="btn" href="/screenshots/firetv/${s.file}" download="${s.file}">⬇️ Download Screenshot (1920x1080)</a>
+          </div>
+        `).join('')}
+      </div>
+    </body></html>`;
+    res.send(html);
+});
+
 // Multi-Client SPA & Route Fallback
 app.get('/', (req, res) => renderServerStatus(req, res));
 app.get('/admin', (req, res) => renderServerStatus(req, res));

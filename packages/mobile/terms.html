@@ -1,11 +1,433 @@
-<!-- Redirect or Mirror to Root Terms of Service -->
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta http-equiv="refresh" content="0; url=/terms">
-    <script>window.location.href = '/terms';</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZingTalk - Terms of Service</title>
+    <meta name="description" content="Official Terms of Service for ZingTalk (Mobile and TV). Includes eligibility, COPPA 13+ age restriction, advertising policies, and VoIP usage rules.">
+    <link rel="icon" type="image/png" href="assets/icon.png">
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-surface: #121826;
+            --bg-card: #182234;
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-cyan: #00e5ff;
+            --accent-blue: #3b82f6;
+            --accent-emerald: #10b981;
+            --accent-amber: #f59e0b;
+            --accent-rose: #f43f5e;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.7;
+            padding: 0;
+        }
+
+        header {
+            background: linear-gradient(180deg, rgba(59, 130, 246, 0.12) 0%, rgba(10, 14, 23, 0.95) 100%), var(--bg-surface);
+            border-bottom: 1px solid var(--border-color);
+            padding: 48px 24px 36px;
+            text-align: center;
+        }
+
+        .header-content {
+            max-width: 860px;
+            margin: 0 auto;
+        }
+
+        .logo-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            padding: 8px 18px;
+            border-radius: 9999px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--accent-cyan);
+            margin-bottom: 18px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        h1 {
+            font-size: 36px;
+            font-weight: 800;
+            color: #ffffff;
+            margin-bottom: 12px;
+            letter-spacing: -0.5px;
+        }
+
+        .meta-bar {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 24px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 14px;
+        }
+
+        .meta-item strong {
+            color: var(--text-primary);
+        }
+
+        main {
+            max-width: 860px;
+            margin: 40px auto 80px;
+            padding: 0 24px;
+        }
+
+        /* Prominent Alert Callout Boxes */
+        .callout-box {
+            border-radius: var(--radius-lg);
+            padding: 24px 28px;
+            margin-bottom: 32px;
+            border: 1px solid;
+            background: var(--bg-card);
+        }
+
+        .callout-danger {
+            background: rgba(244, 63, 94, 0.08);
+            border-color: rgba(244, 63, 94, 0.35);
+        }
+
+        .callout-danger h3 {
+            color: #ff6b81;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+
+        .callout-warning {
+            background: rgba(245, 158, 11, 0.08);
+            border-color: rgba(245, 158, 11, 0.35);
+        }
+
+        .callout-warning h3 {
+            color: #fbbf24;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+
+        .section-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 32px;
+            margin-bottom: 28px;
+        }
+
+        h2 {
+            font-size: 22px;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        h3 {
+            font-size: 17px;
+            font-weight: 600;
+            color: var(--accent-cyan);
+            margin: 20px 0 10px;
+        }
+
+        p {
+            color: var(--text-secondary);
+            font-size: 15px;
+            margin-bottom: 14px;
+        }
+
+        p strong {
+            color: var(--text-primary);
+        }
+
+        ul, ol {
+            color: var(--text-secondary);
+            font-size: 15px;
+            padding-left: 24px;
+            margin-bottom: 16px;
+        }
+
+        li {
+            margin-bottom: 8px;
+        }
+
+        li strong {
+            color: var(--text-primary);
+        }
+
+        code {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--accent-cyan);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-family: monospace;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 14px;
+            margin-top: 24px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-radius: var(--radius-md);
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: var(--accent-cyan);
+            color: #050811;
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        footer {
+            border-top: 1px solid var(--border-color);
+            background: var(--bg-surface);
+            padding: 32px 24px;
+            text-align: center;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        footer a {
+            color: var(--accent-cyan);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
 </head>
 <body>
-    <p>Redirecting to <a href="/terms">ZingTalk Terms of Service</a>...</p>
+
+    <header>
+        <div class="header-content">
+            <div class="logo-badge">
+                <span>📄 Legal Agreement & Usage Terms</span>
+            </div>
+            <h1>ZingTalk Terms of Service</h1>
+            <p style="color: var(--text-secondary); max-width: 650px; margin: 0 auto;">
+                Please read these Terms of Service carefully before downloading, registering for, or using ZingTalk on Mobile or TV platforms.
+            </p>
+            <div class="meta-bar">
+                <div class="meta-item"><strong>Last Updated:</strong> November 04, 2026</div>
+                <div class="meta-item"><strong>Support Contact:</strong> <code>support.zing.app@gmail.com</code></div>
+            </div>
+        </div>
+    </header>
+
+    <main>
+
+        <!-- 1. COPPA & STRICT AGE REQUIREMENT CALLOUT -->
+        <div class="callout-box callout-danger" id="age-requirement">
+            <h3>⚠️ Strict Eligibility & Age Requirement (COPPA 13+ Rule)</h3>
+            <p>
+                <strong>You must be at least 13 years of age to use ZingTalk.</strong>
+            </p>
+            <p>
+                In strict compliance with the United States <strong>Children's Online Privacy Protection Act (COPPA)</strong> and international digital age of consent standards, <strong>ZingTalk is NOT intended, marketed, or licensed for individuals under the age of 13.</strong>
+            </p>
+            <ul style="margin-bottom: 10px;">
+                <li>By creating an account, clicking "I Agree", or using ZingTalk, you represent, warrant, and certify that you are <strong>at least 13 years old</strong> (or at least 16 in the European Economic Area / UK).</li>
+                <li>If you are between 13 and 18 years of age (or the age of majority in your jurisdiction), you represent that your parent or legal guardian has reviewed and explicitly accepted these Terms on your behalf.</li>
+                <li><strong>Strict Ban on Underage Users:</strong> Any account created by or on behalf of a child under 13 years old is strictly prohibited, unauthorized, and subject to instantaneous, irreversible termination upon discovery.</li>
+            </ul>
+        </div>
+
+        <!-- 2. ADVERTISING & MONETIZATION DISCLOSURE CALLOUT -->
+        <div class="callout-box callout-warning" id="ad-agreement">
+            <h3>📢 Commercial Advertising & Free Service Agreement</h3>
+            <p>
+                <strong>ZingTalk is a free communication utility supported by commercial advertisements.</strong>
+            </p>
+            <p>
+                In consideration for granting you free access to peer-to-peer audio calls, HD video calls, instant messaging, and multi-device synchronization, <strong>you expressly agree that ZingTalk may display third-party advertisements, banners, interstitial promotions, and video ads</strong> within the application.
+            </p>
+            <ul style="margin-bottom: 10px;">
+                <li>Advertisements are served by certified third-party advertising partners and mobile ad networks.</li>
+                <li><strong>No Ad Blocking or Circumvention:</strong> You agree not to block, filter, suppress, tamper with, or circumvent any advertisements displayed by ZingTalk, whether through ad-blocking software, modified APKs, or network proxy injection. Doing so constitutes a material breach of these Terms and will result in immediate account termination.</li>
+            </ul>
+        </div>
+
+        <!-- 3. ACCEPTANCE OF TERMS -->
+        <div class="section-card">
+            <h2>1. Acceptance of Terms</h2>
+            <p>
+                These Terms of Service ("Terms") constitute a legally binding agreement between you ("User", "you", or "your") and <strong>ZingTalk Developer Team</strong> ("ZingTalk", "we", "us", or "our").
+            </p>
+            <p>
+                By downloading, installing, accessing, or using the ZingTalk application on Android Mobile or Smart TV, you acknowledge that you have read, understood, and agreed to be bound by these Terms and our companion <a href="privacy.html" style="color: var(--accent-cyan); font-weight: 600;">Privacy Policy</a>. <strong>If you do not agree to all provisions of these Terms, you must immediately uninstall and discontinue all use of ZingTalk.</strong>
+            </p>
+        </div>
+
+        <!-- 4. USER ACCOUNTS & 10-DIGIT UID -->
+        <div class="section-card">
+            <h2>2. User Accounts & Unique Identifiers (UID)</h2>
+            <ul>
+                <li><strong>Account Registration:</strong> To use ZingTalk, you may register an account using your email address and password, or connect as a temporary guest. You agree to provide accurate, current information.</li>
+                <li><strong>10-Digit Numeric UID:</strong> ZingTalk assigns each user an anonymous 10-digit numeric Unique Identifier (UID) (e.g. <code>2156774755</code>). This UID serves as your public address book identifier, eliminating the need to expose personal phone numbers or SIM card credentials.</li>
+                <li><strong>Account Security:</strong> You are solely responsible for maintaining the confidentiality of your login credentials and for all activities that occur under your account. You agree to notify us immediately at <code>support.zing.app@gmail.com</code> of any unauthorized use or security compromise.</li>
+            </ul>
+        </div>
+
+        <!-- 5. ACCEPTABLE USE POLICY & PROHIBITED CONDUCT -->
+        <div class="section-card">
+            <h2>3. Acceptable Use Policy & Prohibited Conduct</h2>
+            <p>You agree to use ZingTalk strictly for lawful, personal, or family communication. You agree NOT to:</p>
+            <ul>
+                <li>Use ZingTalk for any unlawful, illegal, fraudulent, or malicious purpose.</li>
+                <li>Transmit, broadcast, or display any content that is abusive, harassing, defamatory, obscene, pornographic, promoting violence, or violating intellectual property rights.</li>
+                <li>Harass, stalk, threaten, or spam other ZingTalk users via calls or chat messages.</li>
+                <li>Impersonate any person or entity, or falsely claim affiliation with ZingTalk or any other entity.</li>
+                <li>Decompile, reverse engineer, disassemble, decrypt, or extract the source code or APK binary of ZingTalk.</li>
+                <li>Use automated bots, scripts, spiders, or scrapers to access the service, spam call channels, or generate fake traffic.</li>
+                <li>Interfere with, disrupt, or overload ZingTalk servers, signaling relays, or connected network infrastructure.</li>
+            </ul>
+            <p>
+                Violation of any of these rules entitles ZingTalk to immediately suspend or permanently ban your account without prior notice.
+            </p>
+        </div>
+
+        <!-- 6. PEER-TO-PEER VOIP & CALL PRIVACY -->
+        <div class="section-card">
+            <h2>4. Peer-to-Peer Calling Architecture & Privacy</h2>
+            <ul>
+                <li><strong>Encrypted P2P Media:</strong> ZingTalk voice and video calls utilize direct <strong>WebRTC (DTLS-SRTP)</strong> peer-to-peer media streaming. Your audio and video flow directly between your device and your call partner.</li>
+                <li><strong>Zero Server Audio/Video Recording:</strong> ZingTalk servers do not listen to, record, intercept, or store your voice calls or video streams under any circumstances.</li>
+                <li><strong>Call Quality Disclaimer:</strong> Because calls are peer-to-peer over the internet, audio and video quality depend on your local Wi-Fi, cellular data speed, network latency, and firewall settings. ZingTalk cannot guarantee uninterrupted, latency-free, or artifact-free call connections.</li>
+            </ul>
+        </div>
+
+        <!-- 7. CRITICAL NO EMERGENCY SERVICES DISCLAIMER -->
+        <div class="section-card">
+            <h2>5. Critical Notice: NO Emergency Services (911/112/100/999)</h2>
+            <p>
+                <strong>ZINGTALK IS NOT A REPLACEMENT FOR TRADITIONAL TELEPHONE SERVICES AND CANNOT BE USED FOR EMERGENCY CALLING.</strong>
+            </p>
+            <p>
+                ZingTalk does not support or connect to any emergency service dispatchers, law enforcement, fire protection, or hospital medical responders under national or international standards (including <strong>911</strong> in the United States, <strong>112</strong> in the European Union, <strong>100 / 108</strong> in India, or <strong>999</strong> in the United Kingdom).
+            </p>
+            <p>
+                You must always ensure that you have access to a standard mobile phone, landline telephone, or cellular operator network to place emergency calls.
+            </p>
+        </div>
+
+        <!-- 8. INTELLECTUAL PROPERTY RIGHTS -->
+        <div class="section-card">
+            <h2>6. Intellectual Property Rights</h2>
+            <p>
+                All rights, title, and interest in and to ZingTalk—including but not limited to the ZingTalk name, logo, graphic designs, UI components, codebase, algorithms, documentation, and sound effects—are the exclusive property of <strong>ZingTalk Developer Team</strong>.
+            </p>
+            <p>
+                Subject to your compliance with these Terms, ZingTalk grants you a personal, revocable, non-exclusive, non-transferable, non-sublicensable license to install and use the application on your personal Android or TV devices.
+            </p>
+        </div>
+
+        <!-- 9. ACCOUNT TERMINATION & DELETION -->
+        <div class="section-card">
+            <h2>7. Account Termination & Deletion</h2>
+            <ul>
+                <li><strong>Termination by You:</strong> You may discontinue using ZingTalk at any time. You may request permanent deletion of your account and credentials by emailing <a href="mailto:support.zing.app@gmail.com?subject=Delete%20My%20ZingTalk%20Account" style="color: var(--accent-cyan); font-weight: 700;">support.zing.app@gmail.com</a>. Requests are processed within 48 hours.</li>
+                <li><strong>Termination by Us:</strong> We reserve the right to suspend or terminate your account, restrict your access to the service, or ban your UID at any time, with or without notice, if we have reason to believe you have violated these Terms, engaged in fraudulent activities, circumvented ads, or violated the COPPA 13+ age restriction.</li>
+            </ul>
+        </div>
+
+        <!-- 10. DISCLAIMER OF WARRANTIES -->
+        <div class="section-card">
+            <h2>8. Disclaimer of Warranties</h2>
+            <p>
+                ZINGTALK IS PROVIDED STRICTLY ON AN <strong>"AS IS"</strong> AND <strong>"AS AVAILABLE"</strong> BASIS WITHOUT WARRANTIES OF ANY KIND, WHETHER EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE.
+            </p>
+            <p>
+                TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, ZINGTALK DEVELOPER TEAM EXPRESSLY DISCLAIMS ALL WARRANTIES, INCLUDING IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. WE DO NOT WARRANT THAT THE SERVICE WILL BE UNINTERRUPTED, TIMELY, SECURE, OR ERROR-FREE, OR THAT ANY DEFECTS WILL BE CORRECTED.
+            </p>
+        </div>
+
+        <!-- 11. LIMITATION OF LIABILITY -->
+        <div class="section-card">
+            <h2>9. Limitation of Liability</h2>
+            <p>
+                TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL ZINGTALK DEVELOPER TEAM, ITS CONTRIBUTORS, OR AFFILIATES BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES (INCLUDING LOSS OF PROFITS, DATA LOSS, DEVICE DAMAGE, SERVICE INTERRUPTION, OR GOODWILL LOSS) ARISING OUT OF OR IN CONNECTION WITH YOUR ACCESS TO OR USE OF (OR INABILITY TO USE) ZINGTALK, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+            </p>
+        </div>
+
+        <!-- 12. GOVERNING LAW & AMENDMENTS -->
+        <div class="section-card">
+            <h2>10. Governing Law & Amendments</h2>
+            <p>
+                These Terms shall be governed by and construed in accordance with applicable laws, without regard to conflict of law principles. Any dispute arising under these Terms shall first be attempted to be resolved amicably through good-faith negotiation.
+            </p>
+            <p>
+                We reserve the right to modify these Terms at any time. Updated Terms will be published on this page with a revised "Last Updated" timestamp. Your continued use of ZingTalk following any changes constitutes your binding acceptance of the updated Terms.
+            </p>
+        </div>
+
+        <!-- 13. CONTACT INFORMATION -->
+        <div class="section-card">
+            <h2>11. Contact Information</h2>
+            <p>
+                For legal inquiries, terms clarification, abuse reports, or developer support, please contact us:
+            </p>
+            <div style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border-color); padding: 18px 24px; border-radius: var(--radius-md); margin-top: 14px;">
+                <p style="margin-bottom: 6px;"><strong>App Name:</strong> ZingTalk (Mobile & TV)</p>
+                <p style="margin-bottom: 6px;"><strong>Developer Team:</strong> ZingTalk Engineering Team</p>
+                <p style="margin-bottom: 6px;"><strong>Official Support Email:</strong> <a href="mailto:support.zing.app@gmail.com" style="color: var(--accent-cyan); font-weight: 700;">support.zing.app@gmail.com</a></p>
+                <p style="margin-bottom: 0;"><strong>Official Support Portal:</strong> <a href="https://support-zing.github.io/ZingTalk/" style="color: var(--accent-cyan);" target="_blank">https://support-zing.github.io/ZingTalk/</a></p>
+            </div>
+            <div class="btn-group">
+                <a href="privacy.html" class="btn btn-primary">🔒 View Privacy Policy</a>
+            </div>
+        </div>
+
+    </main>
+
+    <footer>
+        <p>&copy; 2026 ZingTalk Developer Team. All rights reserved.</p>
+        <p style="margin-top: 6px;">
+            <a href="privacy.html">Privacy Policy</a> &bull; 
+            <a href="terms.html">Terms of Service</a> &bull; 
+            <a href="mailto:support.zing.app@gmail.com">Contact Support</a>
+        </p>
+    </footer>
+
 </body>
 </html>

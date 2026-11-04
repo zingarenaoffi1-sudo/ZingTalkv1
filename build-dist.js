@@ -100,9 +100,15 @@ function copyDirSync(src, dest) {
 copyDirSync(path.join(__dirname, 'assets'), path.join(distDir, 'assets'));
 copyDirSync(path.join(__dirname, 'assets'), path.join(androidPublicDir, 'assets'));
 packages.forEach(pkg => {
-    copyDirSync(path.join(__dirname, 'assets'), path.join(__dirname, 'packages', pkg, 'dist', 'assets'));
-    copyDirSync(path.join(__dirname, 'assets'), path.join(__dirname, 'packages', pkg, 'assets'));
+    const pkgAssetSrc = path.join(__dirname, 'packages', pkg, 'assets');
+    const pkgAssetDist = path.join(__dirname, 'packages', pkg, 'dist', 'assets');
+    if (fs.existsSync(pkgAssetSrc)) {
+        copyDirSync(pkgAssetSrc, pkgAssetDist);
+    } else {
+        copyDirSync(path.join(__dirname, 'assets'), pkgAssetDist);
+    }
 });
+copyDirSync(path.join(__dirname, 'screenshots'), path.join(distDir, 'screenshots'));
 
 // Ensure Cordova stubs
 const cordovaStubPath = path.join(androidPublicDir, 'cordova.js');
