@@ -5,6 +5,8 @@ on:
     paths:
       - 'packages/mobile/**'
       - 'scripts/**'
+      - 'android/**'
+      - 'build-dist.js'
       - '.github/workflows/build-mobile.yml'
     branches: [ "main", "master" ]
   workflow_dispatch:
@@ -37,7 +39,7 @@ jobs:
         run: |
           npm install --no-audit --prefer-offline --legacy-peer-deps
           npm run build
-          # Ensure mobile dist is copied as primary for mobile build
+          # Ensure mobile dist is copied as primary for mobile/tablet build
           rm -rf dist/*
           cp -r packages/mobile/* dist/ 2>/dev/null || true
           cp -r packages/mobile/dist/* dist/ 2>/dev/null || true
@@ -56,6 +58,8 @@ jobs:
             cp google-services.json android/app/google-services.json
           fi
           npx cap sync android
+          mkdir -p android/app/src/main/assets/public
+          cp -r packages/mobile/* android/app/src/main/assets/public/ 2>/dev/null || true
 
       - name: Inject Mobile Brand Icons
         run: |

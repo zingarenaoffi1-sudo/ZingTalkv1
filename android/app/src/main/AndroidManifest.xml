@@ -1,47 +1,54 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- ZingTalk VoIP & Audio/Video Call Permissions (Google Play & Store Review Compliance) -->
-    <!-- 1. Real-time Audio Communication -->
+    <!-- Support All Screen Sizes & Densities (7", 8", 8.9", 10.1", 11" Fire Tablets, Phones & TVs) -->
+    <supports-screens
+        android:smallScreens="true"
+        android:normalScreens="true"
+        android:largeScreens="true"
+        android:xlargeScreens="true"
+        android:anyDensity="true"
+        android:resizeable="true" />
+
+    <!-- 1. Real-time Audio & HD Video Communication Permissions -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-
-    <!-- 2. Real-time HD Video Calling -->
     <uses-permission android:name="android.permission.CAMERA" />
-
-    <!-- 3. Network Signaling & WebRTC Peer Connections -->
-    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-
-    <!-- 4. WhatsApp-style Incoming & Ongoing Call Notifications (Android 13+ / API 33+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
-
-    <!-- 5. Screen State & Audio Routing for Calls -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- Hardware Feature Requirements (Non-mandatory so TVs and Tablets can install) -->
+    <!-- 2. All Implied Hardware Features Explicitly Optional so Every Fire Tablet (2011-2025) & Device is Compatible -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
-    <uses-feature android:name="android.software.leanback" android:required="false" />
-    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-    <uses-feature android:name="android.hardware.faketouch" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.location.network" android:required="false" />
+    <uses-feature android:name="android.hardware.screen.portrait" android:required="false" />
+    <uses-feature android:name="android.hardware.screen.landscape" android:required="false" />
+    <!-- Fire TV Dedicated Leanback Requirements -->
+    <uses-feature android:name="android.software.leanback" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.faketouch" android:required="false" />
 
-    
-    
-
-    <application 
-        android:banner="@drawable/banner" 
-        android:networkSecurityConfig="@xml/network_security_config" 
-        android:usesCleartextTraffic="true" 
-        android:largeHeap="true" 
+    <application
+        android:banner="@drawable/banner"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="true"
+        android:largeHeap="true"
         android:hardwareAccelerated="true"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -50,17 +57,18 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
-        <activity android:screenOrientation="landscape"                           
-            
+        <activity
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:resizeableActivity="true"
             android:keepScreenOn="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:windowSoftInputMode="adjustPan"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
-            android:name=".MainActivity"
-            android:label="@string/title_activity_main"
-            android:theme="@style/AppTheme.NoActionBarLaunch"
-            android:launchMode="singleTask"
             android:exported="true">
 
             <intent-filter>
@@ -78,7 +86,7 @@
             android:grantUriPermissions="true">
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths"></meta-data>
+                android:resource="@xml/file_paths" />
         </provider>
     </application>
 

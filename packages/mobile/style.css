@@ -1180,3 +1180,53 @@ body.mobile-body {
     line-height: 1.4;
 }
 
+/* ==========================================================================
+   Fire Tablet & Large Screen Responsive Support (7", 8", 10", 11" Tablets)
+   ========================================================================== */
+@media (min-width: 600px) {
+    .mobile-header {
+        padding-left: max(24px, calc(50vw - 420px));
+        padding-right: max(24px, calc(50vw - 420px));
+    }
+
+    .mobile-view {
+        padding-left: max(24px, calc(50vw - 420px));
+        padding-right: max(24px, calc(50vw - 420px));
+    }
+
+    #mobile-contacts-list,
+    #mobile-recent-calls,
+    #mobile-chats-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 12px;
+    }
+
+    .contact-item,
+    .recent-call-item,
+    .chat-list-item {
+        margin-bottom: 0;
+    }
+
+    .dialpad-container {
+        max-width: 440px;
+        margin: 0 auto;
+    }
+
+    .auth-card,
+    .modal-card {
+        max-width: 460px;
+    }
+
+    .mobile-bottom-nav {
+        padding-left: max(24px, calc(50vw - 360px));
+        padding-right: max(24px, calc(50vw - 360px));
+    }
+
+    .chat-messages-area,
+    .chat-input-bar,
+    .chat-screen-header {
+        padding-left: max(24px, calc(50vw - 420px));
+        padding-right: max(24px, calc(50vw - 420px));
+    }
+}

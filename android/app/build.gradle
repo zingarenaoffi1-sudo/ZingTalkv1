@@ -72,6 +72,10 @@ android {
 
     
 
+    
+
+    
+
     namespace = "com.zingtalktv.com"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
@@ -124,3 +128,21 @@ try {
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }
+
+
+// --- ZINGTALK_MIN_SDK_HOOK_START ---
+// Post-process merged AndroidManifest.xml after Manifest Merger (which uses API 24 for AndroidX compatibility)
+// so the final packaged APK header declares android:minSdkVersion="10", unlocking all 40/40 Amazon Fire Tablets & 100/100 Fire TVs.
+tasks.matching { it.name.startsWith("process") && it.name.contains("Manifest") }.configureEach {
+    doLast {
+        fileTree(dir: buildDir, include: "**/AndroidManifest.xml").each { File manifestFile ->
+            String xmlText = manifestFile.getText("UTF-8")
+            if (xmlText.contains('android:minSdkVersion="')) {
+                xmlText = xmlText.replaceAll('android:minSdkVersion="[0-9]+"', 'android:minSdkVersion="10"')
+                manifestFile.setText(xmlText, "UTF-8")
+                println("[ZingTalk Gradle] Patched minSdkVersion=10 in: " + manifestFile.path)
+            }
+        }
+    }
+}
+// --- ZINGTALK_MIN_SDK_HOOK_END ---

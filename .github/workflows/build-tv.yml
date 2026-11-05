@@ -8,6 +8,8 @@ on:
       - 'app.js'
       - 'style.css'
       - 'scripts/**'
+      - 'android/**'
+      - 'build-dist.js'
       - '.github/workflows/build-tv.yml'
     branches: [ "main", "master" ]
   workflow_dispatch:

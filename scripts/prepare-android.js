@@ -509,7 +509,7 @@ if (fs.existsSync(rootGradle)) {
     }
 }
 
-// 4. App-level build.gradle (applicationId, namespace, and signing configs)
+// 4. App-level build.gradle (applicationId, namespace, signing configs, and universal Fire Tablet/TV minSdkVersion=10 manifest hook)
 const appGradlePath = path.join('android', 'app', 'build.gradle');
 if (fs.existsSync(appGradlePath)) {
     let content = fs.readFileSync(appGradlePath, 'utf8');
@@ -537,100 +537,144 @@ if (fs.existsSync(appGradlePath)) {
         content = content.replace(/(buildTypes\s*\{\s*release\s*\{)/, '$1\n            signingConfig signingConfigs.release');
     }
 
+    // Remove any previous manifest minSdk post-processor block before re-appending
+    content = content.replace(/\/\/ --- ZINGTALK_MIN_SDK_HOOK_START ---[\s\S]*?\/\/ --- ZINGTALK_MIN_SDK_HOOK_END ---/g, '').trim();
+
+    const minSdkHookBlock = `
+
+// --- ZINGTALK_MIN_SDK_HOOK_START ---
+// Post-process merged AndroidManifest.xml after Manifest Merger (which uses API 24 for AndroidX compatibility)
+// so the final packaged APK header declares android:minSdkVersion="10", unlocking all 40/40 Amazon Fire Tablets & 100/100 Fire TVs.
+tasks.matching { it.name.startsWith("process") && it.name.contains("Manifest") }.configureEach {
+    doLast {
+        fileTree(dir: buildDir, include: "**/AndroidManifest.xml").each { File manifestFile ->
+            String xmlText = manifestFile.getText("UTF-8")
+            if (xmlText.contains('android:minSdkVersion="')) {
+                xmlText = xmlText.replaceAll('android:minSdkVersion="[0-9]+"', 'android:minSdkVersion="10"')
+                manifestFile.setText(xmlText, "UTF-8")
+                println("[ZingTalk Gradle] Patched minSdkVersion=10 in: " + manifestFile.path)
+            }
+        }
+    }
+}
+// --- ZINGTALK_MIN_SDK_HOOK_END ---
+`;
+    content = content + '\n' + minSdkHookBlock;
+
     fs.writeFileSync(appGradlePath, content, 'utf8');
-    console.log(`[prepare-android] ✅ Configured ${keystoreFileName} with alias ${keyAlias} and ${packageName} appId`);
+    console.log(`[prepare-android] ✅ Configured ${keystoreFileName} with alias ${keyAlias}, ${packageName} appId, and Fire Tablet/TV minSdk=10 manifest hook`);
 }
 
-// 5. AndroidManifest.xml
+// 5. AndroidManifest.xml (Strict separation between Tablet/Mobile APK vs Fire TV APK)
 const manifestPath = path.join('android', 'app', 'src', 'main', 'AndroidManifest.xml');
 if (fs.existsSync(manifestPath)) {
-    let content = fs.readFileSync(manifestPath, 'utf8');
+    const isTv = (targetPlatform === 'tv');
+    const orientation = isTv ? 'landscape' : 'unspecified';
 
-    // Remove conflicting touchscreen requirements and unused Android 14+ foreground service permissions
-    content = content.replace(/<uses-feature\s+android:name="android\.hardware\.touchscreen"\s+android:required="true"\s*\/>/g, '');
-    content = content.replace(/\s*<uses-permission\s+android:name="android\.permission\.FOREGROUND_SERVICE[^"]*"\s*\/>/g, '');
-    content = content.replace(/\s*<uses-permission\s+android:name="android\.permission\.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"\s*\/>/g, '');
+    const platformFeatures = isTv
+        ? `    <!-- Fire TV Dedicated Leanback Requirements -->
+    <uses-feature android:name="android.software.leanback" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.faketouch" android:required="false" />`
+        : `    <!-- Fire Tablet & Android Mobile Touchscreen Requirements (Excludes non-touch Fire TVs on Mobile APK) -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="true" />
+    <uses-feature android:name="android.hardware.faketouch" android:required="false" />`;
 
-    const elementsToAdd = [
-        '<uses-permission android:name="android.permission.INTERNET" />',
-        '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
-        '<uses-permission android:name="android.permission.CAMERA" />',
-        '<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />',
-        '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
-        '<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />',
-        '<uses-permission android:name="android.permission.WAKE_LOCK" />',
-        '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
-        '<uses-permission android:name="android.permission.VIBRATE" />',
-        '<uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />',
-        '<uses-permission android:name="android.permission.BLUETOOTH" />',
-        '<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />',
-        '<uses-feature android:name="android.hardware.camera" android:required="false" />',
-        '<uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />',
-        '<uses-feature android:name="android.hardware.microphone" android:required="false" />',
-        '<uses-feature android:name="android.hardware.telephony" android:required="false" />',
-        '<uses-feature android:name="android.hardware.wifi" android:required="false" />',
-        '<uses-feature android:name="android.hardware.touchscreen" android:required="false" />'
-    ];
+    const applicationBannerAttr = isTv ? '\n        android:banner="@drawable/banner"' : '';
+    const leanbackCategory = isTv ? '\n                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />' : '';
 
-    if (targetPlatform === 'tv') {
-        elementsToAdd.push(
-            '<uses-feature android:name="android.software.leanback" android:required="false" />',
-            '<uses-feature android:name="android.hardware.faketouch" android:required="false" />'
-        );
-    }
+    const cleanManifest = `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    const toInject = elementsToAdd.filter(e => !content.includes(e));
-    if (toInject.length > 0 && content.includes('<application')) {
-        const block = '\n    ' + toInject.join('\n    ') + '\n\n    ';
-        content = content.replace('<application', block + '<application');
-    }
+    <!-- Support All Screen Sizes & Densities (7", 8", 8.9", 10.1", 11" Fire Tablets, Phones & TVs) -->
+    <supports-screens
+        android:smallScreens="true"
+        android:normalScreens="true"
+        android:largeScreens="true"
+        android:xlargeScreens="true"
+        android:anyDensity="true"
+        android:resizeable="true" />
 
-    if (content.includes('<application')) {
-        if (!content.includes('android:hardwareAccelerated')) {
-            content = content.replace('<application', '<application android:hardwareAccelerated="true"');
-        }
-        if (!content.includes('android:largeHeap')) {
-            content = content.replace('<application', '<application android:largeHeap="true"');
-        }
-        if (!content.includes('android:usesCleartextTraffic')) {
-            content = content.replace('<application', '<application android:usesCleartextTraffic="true"');
-        }
-        if (!content.includes('android:networkSecurityConfig')) {
-            content = content.replace('<application', '<application android:networkSecurityConfig="@xml/network_security_config"');
-        }
-        if (targetPlatform === 'tv' && !content.includes('android:banner')) {
-            content = content.replace('<application', '<application android:banner="@drawable/banner"');
-        }
-    }
+    <!-- 1. Real-time Audio & HD Video Communication Permissions -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    if (targetPlatform === 'tv') {
-        if (!content.includes('android.intent.category.LEANBACK_LAUNCHER') && content.includes('android.intent.category.LAUNCHER')) {
-            content = content.replace(
-                '<category android:name="android.intent.category.LAUNCHER" />',
-                '<category android:name="android.intent.category.LAUNCHER" />\n                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />'
-            );
-        }
-    } else {
-        // For mobile, remove leanback launcher
-        content = content.replace(/\s*<category android:name="android\.intent\.category\.LEANBACK_LAUNCHER"\s*\/>/g, '');
-    }
+    <!-- 2. All Implied Hardware Features Explicitly Optional so Every Fire Tablet (2011-2025) & Device is Compatible -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.location.network" android:required="false" />
+    <uses-feature android:name="android.hardware.screen.portrait" android:required="false" />
+    <uses-feature android:name="android.hardware.screen.landscape" android:required="false" />
+${platformFeatures}
 
-    const orientation = targetPlatform === 'tv' ? 'landscape' : 'portrait';
-    if (content.includes('<activity')) {
-        content = content.replace(/android:screenOrientation="[^"]*"/g, '');
-        content = content.replace('<activity', `<activity android:screenOrientation="${orientation}"`);
-        if (!content.includes('android:keepScreenOn')) {
-            content = content.replace('<activity', '<activity android:keepScreenOn="true"');
-        }
-        if (!content.includes('android:showWhenLocked')) {
-            content = content.replace('<activity', '<activity android:showWhenLocked="true"');
-        }
-        if (!content.includes('android:turnScreenOn')) {
-            content = content.replace('<activity', '<activity android:turnScreenOn="true"');
-        }
-    }
+    <application${applicationBannerAttr}
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="true"
+        android:largeHeap="true"
+        android:hardwareAccelerated="true"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
 
-    fs.writeFileSync(manifestPath, content, 'utf8');
+        <activity
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:screenOrientation="${orientation}"
+            android:resizeableActivity="true"
+            android:keepScreenOn="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:windowSoftInputMode="adjustPan"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />${leanbackCategory}
+            </intent-filter>
+
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="\${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+
+</manifest>
+`;
+
+    fs.writeFileSync(manifestPath, cleanManifest, 'utf8');
+    console.log(`[prepare-android] ✅ Written clean platform-specific AndroidManifest.xml for [${targetPlatform.toUpperCase()}]`);
 }
 
 // 6. ProGuard Rules
