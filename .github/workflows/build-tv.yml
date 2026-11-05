@@ -60,7 +60,7 @@ jobs:
       - name: Inject Fire TV Icons & Leanback Banner
         run: |
           mkdir -p android/app/src/main/res/drawable
-          if [ -f "assets/icon.png" ]; then
+          if [ ! -f "android/app/src/main/res/drawable/banner.png" ] && [ -f "assets/icon.png" ]; then
             cp assets/icon.png android/app/src/main/res/drawable/banner.png
           fi
           for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
@@ -81,7 +81,7 @@ jobs:
           fi
           if [ -f "zingtalk-tv-release.keystore" ]; then
             cp zingtalk-tv-release.keystore android/app/zingtalk-tv-release.keystore
-          else
+          elif [ ! -f "android/app/zingtalk-tv-release.keystore" ]; then
             keytool -genkeypair -v -keyalg RSA -keysize 2048 -validity 25550 \
               -keystore android/app/zingtalk-tv-release.keystore \
               -alias zingtalk-tv \
@@ -96,14 +96,13 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace || ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace
           APK_FILE=$(find app/build/outputs/apk/release -name "*release*.apk" ! -name "*-unsigned.apk" -type f 2>/dev/null | head -n 1)
           if [ -z "$APK_FILE" ]; then
-            APK_FILE=$(find app/build/outputs/apk -name "*.apk" -type f | head -n 1)
+            echo "Error: Signed Release APK was not generated!"
+            exit 1
           fi
-          if [ -n "$APK_FILE" ]; then
-            cp "$APK_FILE" ../ZingTalk-FireTV.apk
-          fi
+          cp "$APK_FILE" ../ZingTalk-FireTV.apk
 
       - name: Upload Official ZingTalk Fire TV APK
         uses: actions/upload-artifact@v4

@@ -57,6 +57,26 @@ public class MainActivity extends BridgeActivity {
 
                 // Add JavascriptInterface for native notifications & permission status
                 webView.addJavascriptInterface(new ZingNativeBridge(this, webView), "ZingNativeBridge");
+
+                // Automatically grant WebRTC Camera & Microphone permissions inside Android/Fire TV WebView
+                final WebChromeClient existingChromeClient = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ? webView.getWebChromeClient() : null;
+                webView.setWebChromeClient(new WebChromeClient() {
+                    @Override
+                    public void onPermissionRequest(final PermissionRequest request) {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    request.grant(request.getResources());
+                                } catch (Exception e) {
+                                    if (existingChromeClient != null) {
+                                        existingChromeClient.onPermissionRequest(request);
+                                    }
+                                }
+                            }
+                        });
+                    }
+                });
             }
         } catch (Exception ignored) {}
 

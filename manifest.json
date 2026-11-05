@@ -1,10 +1,10 @@
 {
-  "short_name": "ZingTalk",
-  "name": "ZingTalk Real-Time Chat & HD Calling",
-  "start_url": "/",
+  "short_name": "ZingTalk TV",
+  "name": "ZingTalk TV Real-Time Communication",
+  "start_url": "./",
   "display": "standalone",
-  "theme_color": "#008069",
-  "background_color": "#ffffff",
+  "theme_color": "#070c14",
+  "background_color": "#070c14",
   "icons": [
     {
       "src": "assets/icon.png",

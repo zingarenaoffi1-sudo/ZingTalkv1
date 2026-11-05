@@ -149,19 +149,46 @@ function updateDisplays(uid) {
     if (full) full.innerText = uid ? `UID: ${uid}` : "UID: Connecting...";
 }
 
+function getContactsStorageKey() {
+    const uid = my10DigitUid || currentUser?.zingUid;
+    return uid ? `zingTalkMobileContacts_${uid}` : "zingTalkMobileContacts";
+}
+
+function getHistoryStorageKey() {
+    const uid = my10DigitUid || currentUser?.zingUid;
+    return uid ? `zingTalkMobileHistory_${uid}` : "zingTalkMobileHistory";
+}
+
 function loadContacts() {
     try {
-        const stored = localStorage.getItem("zingTalkMobileContacts");
+        const key = getContactsStorageKey();
+        let stored = localStorage.getItem(key);
+        if (!stored && key !== "zingTalkMobileContacts") {
+            stored = localStorage.getItem("zingTalkMobileContacts");
+        }
         myContacts = stored ? JSON.parse(stored) : [];
     } catch (_) { myContacts = []; }
+    try {
+        const hStored = localStorage.getItem(getHistoryStorageKey());
+        chatHistory = hStored ? JSON.parse(hStored) : {};
+    } catch (_) { chatHistory = {}; }
     renderContacts();
 }
 
 function saveContacts() {
     try {
-        localStorage.setItem("zingTalkMobileContacts", JSON.stringify(myContacts));
+        localStorage.setItem(getContactsStorageKey(), JSON.stringify(myContacts));
+        if (socket && socket.connected && my10DigitUid) {
+            socket.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+        }
     } catch (_) {}
     renderContacts();
+}
+
+function saveChatHistory() {
+    try {
+        localStorage.setItem(getHistoryStorageKey(), JSON.stringify(chatHistory));
+    } catch (_) {}
 }
 
 function renderContacts() {
@@ -326,6 +353,192 @@ export const CallNotificationService = {
     }
 };
 
+// ----------------- Module-Level Call State & WhatsApp Ringtone Engine -----------------
+let incomingCallerUid = null;
+let incomingCallType = "video";
+let pendingOffer = null;
+let iceCandidatesQueue = [];
+let callAudioCtx = null;
+let outgoingRingInterval = null;
+let incomingRingInterval = null;
+let outgoingCallTimer = null;
+let incomingCallTimer = null;
+
+function getCallAudioContext() {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return null;
+        if (!callAudioCtx || callAudioCtx.state === "closed") {
+            callAudioCtx = new AudioCtx();
+        }
+        if (callAudioCtx.state === "suspended") {
+            callAudioCtx.resume().catch(() => {});
+        }
+        return callAudioCtx;
+    } catch (_) {
+        return null;
+    }
+}
+
+// 1. WhatsApp Outgoing Calling Tone (Dual 440Hz + 480Hz pulses)
+function playOutgoingBeepPair() {
+    const ctx = getCallAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    function createTone(startTime, duration) {
+        try {
+            const osc1 = ctx.createOscillator();
+            const osc2 = ctx.createOscillator();
+            const gainNode = ctx.createGain();
+            const filter = ctx.createBiquadFilter();
+
+            filter.type = "lowpass";
+            filter.frequency.setValueAtTime(2200, startTime);
+
+            osc1.type = "sine";
+            osc1.frequency.setValueAtTime(440, startTime);
+
+            osc2.type = "sine";
+            osc2.frequency.setValueAtTime(480, startTime);
+
+            gainNode.gain.setValueAtTime(0.0001, startTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.12, startTime + 0.025);
+            gainNode.gain.setValueAtTime(0.12, startTime + duration - 0.035);
+            gainNode.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+            osc1.connect(filter);
+            osc2.connect(filter);
+            filter.connect(gainNode);
+            gainNode.connect(ctx.destination);
+
+            osc1.start(startTime);
+            osc2.start(startTime);
+            osc1.stop(startTime + duration);
+            osc2.stop(startTime + duration);
+        } catch (_) {}
+    }
+
+    createTone(now, 0.35);
+    createTone(now + 0.53, 0.35);
+}
+
+function startOutgoingRingtone() {
+    stopOutgoingRingtone();
+    stopIncomingRingtone();
+    playOutgoingBeepPair();
+    outgoingRingInterval = setInterval(() => {
+        playOutgoingBeepPair();
+    }, 2800);
+}
+
+function stopOutgoingRingtone() {
+    if (outgoingRingInterval) {
+        clearInterval(outgoingRingInterval);
+        outgoingRingInterval = null;
+    }
+}
+
+// 2. WhatsApp Incoming Marimba Melodic Ringtone
+function playMarimbaNote(ctx, freq, startTime, duration, gainVal = 0.22) {
+    try {
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc1.type = "sine";
+        osc1.frequency.setValueAtTime(freq, startTime);
+
+        osc2.type = "triangle";
+        osc2.frequency.setValueAtTime(freq * 2, startTime);
+
+        gain.gain.setValueAtTime(0.0001, startTime);
+        gain.gain.exponentialRampToValueAtTime(gainVal, startTime + 0.006);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+        const subGain = ctx.createGain();
+        subGain.gain.setValueAtTime(0.18, startTime);
+        osc2.connect(subGain);
+        subGain.connect(gain);
+
+        osc1.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc1.start(startTime);
+        osc2.start(startTime);
+        osc1.stop(startTime + duration);
+        osc2.stop(startTime + duration);
+    } catch (_) {}
+}
+
+function playWhatsAppIncomingPhrase() {
+    const ctx = getCallAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    // Classic WhatsApp Marimba arpeggio rhythm
+    playMarimbaNote(ctx, 659.25, now + 0.00, 0.14); // E5
+    playMarimbaNote(ctx, 830.61, now + 0.14, 0.14); // G#5
+    playMarimbaNote(ctx, 987.77, now + 0.28, 0.14); // B5
+    playMarimbaNote(ctx, 1318.51, now + 0.42, 0.22); // E6
+    playMarimbaNote(ctx, 987.77, now + 0.66, 0.16); // B5
+    playMarimbaNote(ctx, 1318.51, now + 0.84, 0.38); // E6
+
+    playMarimbaNote(ctx, 880.00, now + 1.28, 0.14); // A5
+    playMarimbaNote(ctx, 1108.73, now + 1.42, 0.14); // C#6
+    playMarimbaNote(ctx, 1318.51, now + 1.56, 0.22); // E6
+    playMarimbaNote(ctx, 1760.00, now + 1.76, 0.45); // A6
+}
+
+function startIncomingRingtone() {
+    stopIncomingRingtone();
+    stopOutgoingRingtone();
+    playWhatsAppIncomingPhrase();
+    incomingRingInterval = setInterval(() => {
+        playWhatsAppIncomingPhrase();
+    }, 3200);
+}
+
+function stopIncomingRingtone() {
+    if (incomingRingInterval) {
+        clearInterval(incomingRingInterval);
+        incomingRingInterval = null;
+    }
+}
+
+// 3. WhatsApp Call Ended Tone (Three quick descending beeps)
+function playCallEndedTone() {
+    stopOutgoingRingtone();
+    stopIncomingRingtone();
+    try {
+        const ctx = getCallAudioContext();
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const beeps = [
+            { freq: 480, start: now, dur: 0.08 },
+            { freq: 400, start: now + 0.12, dur: 0.08 },
+            { freq: 320, start: now + 0.24, dur: 0.16 }
+        ];
+        beeps.forEach(b => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(b.freq, b.start);
+            gain.gain.setValueAtTime(0.14, b.start);
+            gain.gain.exponentialRampToValueAtTime(0.001, b.start + b.dur);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(b.start);
+            osc.stop(b.start + b.dur);
+        });
+    } catch (_) {}
+}
+
+function stopRingtone() {
+    stopIncomingRingtone();
+    stopOutgoingRingtone();
+}
+
 // Global Native Intent Hook: Called by MainActivity.java when user taps Accept / Decline / End from Android notification
 window.handleNativeCallAction = function(action) {
     console.log("[ZingTalk Mobile] Native Notification action received:", action);
@@ -419,7 +632,8 @@ function connectSocket() {
                 authUid: currentUser.uid,
                 uid: my10DigitUid || currentUser.zingUid,
                 isGuest: !currentUser.email,
-                platform: "Mobile"
+                platform: "Mobile",
+                contacts: myContacts
             });
         }
         return;
@@ -429,9 +643,18 @@ function connectSocket() {
         console.warn("[ZingTalk Mobile] Socket.io client runtime not yet loaded");
         return;
     }
+
+    if (socket) {
+        try {
+            socket.removeAllListeners();
+            socket.disconnect();
+        } catch (_) {}
+    }
+
     socket = io(serverUrl, {
         transports: ["websocket", "polling"],
-        reconnectionAttempts: 20,
+        reconnection: true,
+        reconnectionAttempts: Infinity,
         reconnectionDelay: 1500
     });
 
@@ -443,216 +666,52 @@ function connectSocket() {
                 authUid: currentUser.uid,
                 uid: my10DigitUid || currentUser.zingUid,
                 isGuest: !currentUser.email,
-                platform: "Mobile"
+                platform: "Mobile",
+                contacts: myContacts
             });
+            if (my10DigitUid && myContacts.length > 0) {
+                socket.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+            }
         }
     });
 
     socket.on("user_data", (data) => {
         if (data && data.uid) {
             updateDisplays(data.uid);
+            loadContacts();
             if (currentUser) {
                 currentUser.zingUid = data.uid;
                 localStorage.setItem("zingTalkMobileSession", JSON.stringify(currentUser));
                 saveUserUidToFirestore(currentUser, data.uid);
             }
+            if (myContacts.length > 0) {
+                socket.emit("sync_contacts", { uid: data.uid, contacts: myContacts });
+            }
         }
     });
 
-    let incomingCallerUid = null;
-    let incomingCallType = "video";
-    let pendingOffer = null;
-    let iceCandidatesQueue = [];
-
-    // ----------------- WhatsApp-Style Call Audio & Ringtone Engine -----------------
-    let callAudioCtx = null;
-    let outgoingRingInterval = null;
-    let incomingRingInterval = null;
-    let outgoingCallTimer = null;
-    let incomingCallTimer = null;
-
-    function getCallAudioContext() {
-        try {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) return null;
-            if (!callAudioCtx || callAudioCtx.state === "closed") {
-                callAudioCtx = new AudioCtx();
-            }
-            if (callAudioCtx.state === "suspended") {
-                callAudioCtx.resume().catch(() => {});
-            }
-            return callAudioCtx;
-        } catch (_) {
-            return null;
-        }
-    }
-
-    // 1. WhatsApp Outgoing Calling Tone (Dual 440Hz + 480Hz pulses)
-    function playOutgoingBeepPair() {
-        const ctx = getCallAudioContext();
-        if (!ctx) return;
-        const now = ctx.currentTime;
-
-        function createTone(startTime, duration) {
-            try {
-                const osc1 = ctx.createOscillator();
-                const osc2 = ctx.createOscillator();
-                const gainNode = ctx.createGain();
-                const filter = ctx.createBiquadFilter();
-
-                filter.type = "lowpass";
-                filter.frequency.setValueAtTime(2200, startTime);
-
-                osc1.type = "sine";
-                osc1.frequency.setValueAtTime(440, startTime);
-
-                osc2.type = "sine";
-                osc2.frequency.setValueAtTime(480, startTime);
-
-                gainNode.gain.setValueAtTime(0.0001, startTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.12, startTime + 0.025);
-                gainNode.gain.setValueAtTime(0.12, startTime + duration - 0.035);
-                gainNode.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
-
-                osc1.connect(filter);
-                osc2.connect(filter);
-                filter.connect(gainNode);
-                gainNode.connect(ctx.destination);
-
-                osc1.start(startTime);
-                osc2.start(startTime);
-                osc1.stop(startTime + duration);
-                osc2.stop(startTime + duration);
-            } catch (_) {}
-        }
-
-        createTone(now, 0.35);
-        createTone(now + 0.53, 0.35);
-    }
-
-    function startOutgoingRingtone() {
-        stopOutgoingRingtone();
-        stopIncomingRingtone();
-        playOutgoingBeepPair();
-        outgoingRingInterval = setInterval(() => {
-            playOutgoingBeepPair();
-        }, 2800);
-    }
-
-    function stopOutgoingRingtone() {
-        if (outgoingRingInterval) {
-            clearInterval(outgoingRingInterval);
-            outgoingRingInterval = null;
-        }
-    }
-
-    // 2. WhatsApp Incoming Marimba Melodic Ringtone
-    function playMarimbaNote(ctx, freq, startTime, duration, gainVal = 0.22) {
-        try {
-            const osc1 = ctx.createOscillator();
-            const osc2 = ctx.createOscillator();
-            const gain = ctx.createGain();
-
-            osc1.type = "sine";
-            osc1.frequency.setValueAtTime(freq, startTime);
-
-            osc2.type = "triangle";
-            osc2.frequency.setValueAtTime(freq * 2, startTime);
-
-            gain.gain.setValueAtTime(0.0001, startTime);
-            gain.gain.exponentialRampToValueAtTime(gainVal, startTime + 0.006);
-            gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
-
-            const subGain = ctx.createGain();
-            subGain.gain.setValueAtTime(0.18, startTime);
-            osc2.connect(subGain);
-            subGain.connect(gain);
-
-            osc1.connect(gain);
-            gain.connect(ctx.destination);
-
-            osc1.start(startTime);
-            osc2.start(startTime);
-            osc1.stop(startTime + duration);
-            osc2.stop(startTime + duration);
-        } catch (_) {}
-    }
-
-    function playWhatsAppIncomingPhrase() {
-        const ctx = getCallAudioContext();
-        if (!ctx) return;
-        const now = ctx.currentTime;
-
-        // Classic WhatsApp Marimba arpeggio rhythm
-        playMarimbaNote(ctx, 659.25, now + 0.00, 0.14); // E5
-        playMarimbaNote(ctx, 830.61, now + 0.14, 0.14); // G#5
-        playMarimbaNote(ctx, 987.77, now + 0.28, 0.14); // B5
-        playMarimbaNote(ctx, 1318.51, now + 0.42, 0.22); // E6
-        playMarimbaNote(ctx, 987.77, now + 0.66, 0.16); // B5
-        playMarimbaNote(ctx, 1318.51, now + 0.84, 0.38); // E6
-
-        playMarimbaNote(ctx, 880.00, now + 1.28, 0.14); // A5
-        playMarimbaNote(ctx, 1108.73, now + 1.42, 0.14); // C#6
-        playMarimbaNote(ctx, 1318.51, now + 1.56, 0.22); // E6
-        playMarimbaNote(ctx, 1760.00, now + 1.76, 0.45); // A6
-    }
-
-    function startIncomingRingtone() {
-        stopIncomingRingtone();
-        stopOutgoingRingtone();
-        playWhatsAppIncomingPhrase();
-        incomingRingInterval = setInterval(() => {
-            playWhatsAppIncomingPhrase();
-        }, 3200);
-    }
-
-    function stopIncomingRingtone() {
-        if (incomingRingInterval) {
-            clearInterval(incomingRingInterval);
-            incomingRingInterval = null;
-        }
-    }
-
-    // 3. WhatsApp Call Ended Tone (Three quick descending beeps)
-    function playCallEndedTone() {
-        stopOutgoingRingtone();
-        stopIncomingRingtone();
-        try {
-            const ctx = getCallAudioContext();
-            if (!ctx) return;
-            const now = ctx.currentTime;
-            const beeps = [
-                { freq: 480, start: now, dur: 0.08 },
-                { freq: 400, start: now + 0.12, dur: 0.08 },
-                { freq: 320, start: now + 0.24, dur: 0.16 }
-            ];
-            beeps.forEach(b => {
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = "sine";
-                osc.frequency.setValueAtTime(b.freq, b.start);
-                gain.gain.setValueAtTime(0.14, b.start);
-                gain.gain.exponentialRampToValueAtTime(0.001, b.start + b.dur);
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                osc.start(b.start);
-                osc.stop(b.start + b.dur);
-            });
-        } catch (_) {}
-    }
-
-    function stopRingtone() {
-        stopIncomingRingtone();
-        stopOutgoingRingtone();
-    }
-
     socket.on("incoming_call", (data) => {
-        incomingCallerUid = data.callerUid;
-        incomingCallType = data.type || "video";
+        if (!data || !data.callerUid) return;
 
         const known = myContacts.find(c => c.uid === data.callerUid);
         const nameToShow = known ? known.name : `UID: ${data.callerUid}`;
         const avatarLetter = (known?.name || "U").charAt(0).toUpperCase();
+
+        // Call Collision Guard: Do not clobber an active call
+        const inActiveCall = Boolean(
+            peerConnection ||
+            !document.getElementById("mobile-call-screen")?.classList.contains("hidden") ||
+            !document.getElementById("mobile-incoming-call-overlay")?.classList.contains("hidden") ||
+            !document.getElementById("mobile-outgoing-call-overlay")?.classList.contains("hidden")
+        );
+        if (inActiveCall && (currentTargetUid || incomingCallerUid) && data.callerUid !== currentTargetUid && data.callerUid !== incomingCallerUid) {
+            socket.emit("call_response", { targetUid: data.callerUid, status: "declined", reason: "busy" });
+            showToast(`📞 Missed call from ${nameToShow} (Busy)`);
+            return;
+        }
+
+        incomingCallerUid = data.callerUid;
+        incomingCallType = data.type || "video";
 
         const nameEl = document.getElementById("incoming-name");
         const avatarEl = document.getElementById("incoming-avatar");
@@ -662,7 +721,11 @@ function connectSocket() {
         if (avatarEl) avatarEl.innerText = avatarLetter;
         if (typeEl) typeEl.innerText = `Incoming ${incomingCallType === 'video' ? 'HD Video' : 'Audio'} Call...`;
 
-        document.getElementById("mobile-incoming-call-overlay")?.classList.remove("hidden");
+        const inOverlay = document.getElementById("mobile-incoming-call-overlay");
+        if (inOverlay) {
+            inOverlay.classList.remove("hidden");
+            inOverlay.style.display = "flex";
+        }
         startIncomingRingtone();
 
         // Trigger WhatsApp-style in-app drop-down banner & Android system heads-up notification
@@ -670,12 +733,12 @@ function connectSocket() {
 
         if (incomingCallTimer) clearTimeout(incomingCallTimer);
         incomingCallTimer = setTimeout(() => {
-            const inOverlay = document.getElementById("mobile-incoming-call-overlay");
-            if (inOverlay && !inOverlay.classList.contains("hidden")) {
+            const inOverlayEl = document.getElementById("mobile-incoming-call-overlay");
+            if (inOverlayEl && !inOverlayEl.classList.contains("hidden")) {
                 stopRingtone();
                 playCallEndedTone();
-                inOverlay.classList.add("hidden");
-                inOverlay.style.display = "none";
+                inOverlayEl.classList.add("hidden");
+                inOverlayEl.style.display = "none";
                 CallNotificationService.dismissAll();
                 showToast("Missed call from " + nameToShow);
                 incomingCallerUid = null;
@@ -683,12 +746,19 @@ function connectSocket() {
         }, 45000);
     });
 
-    socket.on("call_cancelled", () => {
+    socket.on("call_cancelled", (data) => {
+        if (peerConnection && data?.callerUid && currentTargetUid && data.callerUid !== currentTargetUid) {
+            return;
+        }
+        if (peerConnection && document.getElementById("mobile-incoming-call-overlay")?.classList.contains("hidden") && document.getElementById("mobile-outgoing-call-overlay")?.classList.contains("hidden")) {
+            return;
+        }
         stopRingtone();
         playCallEndedTone();
         CallNotificationService.dismissAll();
         document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
         document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
+        incomingCallerUid = null;
         endCallCleanup();
         showToast("Call cancelled.");
     });
@@ -699,6 +769,7 @@ function connectSocket() {
         CallNotificationService.dismissAll();
         document.getElementById("mobile-incoming-call-overlay")?.classList.add("hidden");
         document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
+        incomingCallerUid = null;
         endCallCleanup();
         showToast("❌ " + (data?.message || "Call error"));
     });
@@ -712,7 +783,7 @@ function connectSocket() {
             }
         } else {
             playCallEndedTone();
-            showToast("Call declined.");
+            showToast(data?.reason === "busy" ? "User is busy on another call." : "Call declined.");
             endCallCleanup();
         }
     });
@@ -787,13 +858,27 @@ function connectSocket() {
     socket.on("call_ended", handleCallEnded);
 
     socket.on("receive_message", (data) => {
-        const sender = data.senderUid;
+        const sender = data?.senderUid ? String(data.senderUid).trim() : null;
+        if (!sender) return;
+        const senderName = data.senderName || ("User " + sender);
+
+        let knownContact = myContacts.find(c => c.uid === sender);
+        if (!knownContact) {
+            knownContact = { name: senderName, uid: sender };
+            myContacts.unshift(knownContact);
+        } else {
+            myContacts = [knownContact, ...myContacts.filter(c => c.uid !== sender)];
+        }
+        saveContacts();
+
         if (!chatHistory[sender]) chatHistory[sender] = [];
         chatHistory[sender].push({ text: data.text, sent: false });
+        saveChatHistory();
+
         if (currentTargetUid === sender) {
             renderChatMessages();
         }
-        showToast(`💬 Message from ${sender}: ${data.text.slice(0, 24)}`);
+        showToast(`💬 ${knownContact.name}: ${(data.text || "").slice(0, 24)}`);
     });
 }
 
@@ -1107,6 +1192,9 @@ function endCallCleanup() {
     }
 
     currentTargetUid = null;
+    incomingCallerUid = null;
+    isMicMuted = false;
+    isVideoDisabled = false;
     pendingOffer = null;
     iceCandidatesQueue = [];
 }
@@ -1148,10 +1236,12 @@ function sendChatMessage() {
     if (!text || !currentTargetUid) return;
     if (!chatHistory[currentTargetUid]) chatHistory[currentTargetUid] = [];
     chatHistory[currentTargetUid].push({ text, sent: true });
+    saveChatHistory();
     renderChatMessages();
     
     const payload = {
         senderUid: my10DigitUid,
+        senderName: currentUser?.displayName || ("User " + my10DigitUid),
         receiverUid: currentTargetUid,
         targetUid: currentTargetUid,
         text: text,
@@ -1200,22 +1290,32 @@ function loginUser(user) {
     if (user.zingUid) {
         updateDisplays(user.zingUid);
     }
-    connectSocket();
     loadContacts();
+    connectSocket();
 }
 
 function logoutUser() {
+    if (peerConnection || currentTargetUid || incomingCallerUid) {
+        try { endCall(); } catch (_) {}
+    }
+    const uidToLogout = my10DigitUid;
     localStorage.removeItem("zingTalkMobileSession");
     currentUser = null;
     my10DigitUid = null;
     currentTargetUid = null;
-    if (socket && socket.connected) {
+    incomingCallerUid = null;
+    myContacts = [];
+    chatHistory = {};
+    if (socket) {
         try {
-            socket.emit("logout_user", { uid: my10DigitUid });
+            if (socket.connected && uidToLogout) {
+                socket.emit("logout_user", { uid: uidToLogout });
+            }
             socket.disconnect();
         } catch (_) {}
         socket = null;
     }
+    renderContacts();
     const authScreen = document.getElementById("mobile-auth-screen");
     if (authScreen) {
         authScreen.classList.remove("hidden");

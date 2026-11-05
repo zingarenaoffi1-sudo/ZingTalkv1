@@ -73,6 +73,26 @@ public class MainActivity extends BridgeActivity {
 
                 // Add JavascriptInterface for native notifications & permission status
                 webView.addJavascriptInterface(new ZingNativeBridge(this, webView), "ZingNativeBridge");
+
+                // Automatically grant WebRTC Camera & Microphone permissions inside Android/Fire TV WebView
+                final WebChromeClient existingChromeClient = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ? webView.getWebChromeClient() : null;
+                webView.setWebChromeClient(new WebChromeClient() {
+                    @Override
+                    public void onPermissionRequest(final PermissionRequest request) {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    request.grant(request.getResources());
+                                } catch (Exception e) {
+                                    if (existingChromeClient != null) {
+                                        existingChromeClient.onPermissionRequest(request);
+                                    }
+                                }
+                            }
+                        });
+                    }
+                });
             }
         } catch (Exception ignored) {}
 
@@ -520,8 +540,10 @@ const manifestPath = path.join('android', 'app', 'src', 'main', 'AndroidManifest
 if (fs.existsSync(manifestPath)) {
     let content = fs.readFileSync(manifestPath, 'utf8');
 
-    // Remove conflicting touchscreen requirements
+    // Remove conflicting touchscreen requirements and unused Android 14+ foreground service permissions
     content = content.replace(/<uses-feature\s+android:name="android\.hardware\.touchscreen"\s+android:required="true"\s*\/>/g, '');
+    content = content.replace(/\s*<uses-permission\s+android:name="android\.permission\.FOREGROUND_SERVICE[^"]*"\s*\/>/g, '');
+    content = content.replace(/\s*<uses-permission\s+android:name="android\.permission\.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"\s*\/>/g, '');
 
     const elementsToAdd = [
         '<uses-permission android:name="android.permission.INTERNET" />',
@@ -534,13 +556,8 @@ if (fs.existsSync(manifestPath)) {
         '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
         '<uses-permission android:name="android.permission.VIBRATE" />',
         '<uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />',
-        '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
-        '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />',
-        '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />',
-        '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />',
         '<uses-permission android:name="android.permission.BLUETOOTH" />',
         '<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />',
-        '<uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />',
         '<uses-feature android:name="android.hardware.camera" android:required="false" />',
         '<uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />',
         '<uses-feature android:name="android.hardware.microphone" android:required="false" />',
@@ -639,7 +656,7 @@ if (!fs.existsSync(androidPublicDir)) {
     fs.mkdirSync(androidPublicDir, { recursive: true });
 }
 const platformSourceDir = targetPlatform === 'mobile' ? path.join('packages', 'mobile') : path.join('packages', 'tv');
-const filesToSync = ['index.html', 'style.css', 'app.js', 'manifest.json', 'capacitor.js', 'socket.io.min.js', 'privacy.html', 'terms.html'];
+const filesToSync = ['index.html', 'style.css', 'app.js', 'manifest.json', 'service-worker.js', 'capacitor.js', 'socket.io.min.js', 'privacy.html', 'terms.html'];
 filesToSync.forEach(f => {
     let src = path.join(platformSourceDir, f);
     if (!fs.existsSync(src)) {

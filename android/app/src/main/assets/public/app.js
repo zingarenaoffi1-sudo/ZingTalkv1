@@ -635,6 +635,11 @@ function loginUserSession(user) {
 }
 
 function logoutUserSession() {
+    // 0. Cleanly terminate any active or ringing call before logging out
+    if (peerConnection || activeCallTarget || isCallInitiating) {
+        try { endCall(); } catch (_) {}
+    }
+
     // 1. Notify server of logout
     if (socket && socket.connected && my10DigitUid) {
         try {
@@ -898,12 +903,28 @@ export function registerSocketListeners(s) {
     });
 
     s.on("incoming_call", (data) => {
-        activeCallTarget = data.callerUid;
-        currentCallType = data.type || "video";
+        if (!data || !data.callerUid) return;
 
         let callerNameToShow = "UID: " + data.callerUid;
         const knownContact = myContacts.find(c => c.uid === data.callerUid);
         if (knownContact) callerNameToShow = knownContact.name;
+
+        // Call Collision Guard: If already in an active call or ringing someone else, do not overwrite activeCallTarget
+        const inActiveCall = Boolean(
+            peerConnection ||
+            isCallInitiating ||
+            !document.getElementById("full-call-screen")?.classList.contains("hidden") ||
+            !document.getElementById("incoming-call-overlay")?.classList.contains("hidden") ||
+            !document.getElementById("outgoing-call-overlay")?.classList.contains("hidden")
+        );
+        if (inActiveCall && activeCallTarget && activeCallTarget !== data.callerUid) {
+            s.emit("call_response", { targetUid: data.callerUid, status: "declined", reason: "busy" });
+            showToast(`📞 Missed call from ${callerNameToShow} (Busy in another call)`);
+            return;
+        }
+
+        activeCallTarget = data.callerUid;
+        currentCallType = data.type || "video";
 
         const callerDisplay = document.getElementById("caller-name-display");
         if (callerDisplay) callerDisplay.innerText = callerNameToShow;
@@ -950,7 +971,13 @@ export function registerSocketListeners(s) {
         }, 45000);
     });
 
-    s.on("call_cancelled", () => {
+    s.on("call_cancelled", (data) => {
+        if (peerConnection && data?.callerUid && activeCallTarget && data.callerUid !== activeCallTarget) {
+            return;
+        }
+        if (peerConnection && document.getElementById("incoming-call-overlay")?.classList.contains("hidden") && document.getElementById("outgoing-call-overlay")?.classList.contains("hidden")) {
+            return;
+        }
         stopRingtone();
         playCallEndedTone();
         if (window.ZingNativeBridge && window.ZingNativeBridge.dismissCallNotifications) {
@@ -973,7 +1000,7 @@ export function registerSocketListeners(s) {
             }
         } else {
             playCallEndedTone();
-            showToast("Call declined");
+            showToast(data?.reason === "busy" ? "User is busy on another call" : "Call declined");
             activeCallTarget = null;
             isCallInitiating = false;
             endCallCleanup();
@@ -988,8 +1015,38 @@ export function registerSocketListeners(s) {
         }
         if (peerConnection.signalingState !== "stable") return;
         try {
+            // If remote peer upgraded an ongoing audio call to video call, switch view seamlessly
+            const hasVideoInSdp = typeof data.offer.sdp === "string" && data.offer.sdp.includes("m=video");
+            if ((data.callType === "video" || hasVideoInSdp) && currentCallType === "audio") {
+                currentCallType = "video";
+                document.getElementById("audio-call-page")?.classList.add("hidden");
+                document.getElementById("video-call-page")?.classList.remove("hidden");
+                const remoteVideo = document.getElementById("remote-video");
+                if (remoteVideo) remoteVideo.style.opacity = "1";
+                let peerNameToShow = "UID: " + activeCallTarget;
+                let peerInitial = "U";
+                const knownContact = myContacts.find(c => c.uid === activeCallTarget);
+                if (knownContact) {
+                    peerNameToShow = knownContact.name;
+                    peerInitial = (knownContact.name || "U").charAt(0).toUpperCase();
+                }
+                const vName = document.getElementById("video-peer-name");
+                if (vName) vName.innerText = peerNameToShow;
+                const vUid = document.getElementById("video-peer-uid");
+                if (vUid) vUid.innerText = "UID: " + (activeCallTarget || "----------");
+                const vAvatar = document.getElementById("video-peer-avatar");
+                if (vAvatar) vAvatar.innerText = peerInitial;
+                setTimeout(() => {
+                    const endBtn = document.getElementById("end-call-btn");
+                    if (endBtn) focusElement(endBtn, false);
+                }, 80);
+            }
+
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-            const answer = await peerConnection.createAnswer();
+            const answer = await peerConnection.createAnswer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: currentCallType === "video"
+            });
             await peerConnection.setLocalDescription(answer);
             s.emit("webrtc_answer", { targetUid: activeCallTarget, answer });
 
@@ -1057,19 +1114,6 @@ export function registerSocketListeners(s) {
                 <span style="color: #00d29d;">Alexa Auto-Linked</span>
             `;
         }
-    });
-
-    s.on("contact_saved", (updatedContacts) => {
-        if (Array.isArray(updatedContacts)) {
-            myContacts = updatedContacts;
-            saveUserContactsToStorage();
-            renderContacts(myContacts);
-            showToast("Contact saved successfully");
-        }
-    });
-
-    s.on("contact_error", (errMsg) => {
-        showToast(errMsg || "Failed to save contact");
     });
 }
 
@@ -1357,7 +1401,149 @@ if (navigator.mediaDevices && 'ondevicechange' in navigator.mediaDevices) {
 }
 
 // ----------------- WebRTC HD Calling (Google STUN + AWS Fallback) -----------------
+function updateCallControlsUI() {
+    const muteBtns = [
+        document.getElementById("mute-mic-btn"),
+        document.getElementById("audio-mute-mic-btn")
+    ];
+    muteBtns.forEach(btn => {
+        if (!btn) return;
+        const label = btn.querySelector("span");
+        if (isMicMuted) {
+            if (label) label.innerText = "Unmute";
+            btn.style.background = "rgba(255, 75, 75, 0.28)";
+            btn.style.borderColor = "#ff4b4b";
+            btn.style.color = "#ff8888";
+        } else {
+            if (label) label.innerText = "Mute";
+            btn.style.background = "";
+            btn.style.borderColor = "";
+            btn.style.color = "";
+        }
+    });
+
+    const camBtn = document.getElementById("toggle-video-btn");
+    if (camBtn) {
+        const label = camBtn.querySelector("span");
+        const vidTrack = localStream ? localStream.getVideoTracks()[0] : null;
+        const isCamOff = Boolean(vidTrack && !vidTrack.enabled);
+        if (isCamOff) {
+            if (label) label.innerText = "Cam Off";
+            camBtn.style.background = "rgba(255, 75, 75, 0.28)";
+            camBtn.style.borderColor = "#ff4b4b";
+            camBtn.style.color = "#ff8888";
+        } else {
+            if (label) label.innerText = "Camera";
+            camBtn.style.background = "";
+            camBtn.style.borderColor = "";
+            camBtn.style.color = "";
+        }
+    }
+}
+
+async function upgradeAudioCallToVideo() {
+    if (!peerConnection || !activeCallTarget) return;
+    currentCallType = "video";
+
+    const videoCallPage = document.getElementById("video-call-page");
+    const audioCallPage = document.getElementById("audio-call-page");
+    const localVideo = document.getElementById("local-video");
+    const remoteVideo = document.getElementById("remote-video");
+    const noCameraPlaceholder = document.getElementById("no-camera-pip-placeholder");
+
+    audioCallPage?.classList.add("hidden");
+    videoCallPage?.classList.remove("hidden");
+    if (remoteVideo) remoteVideo.style.opacity = "1";
+
+    let peerNameToShow = "UID: " + activeCallTarget;
+    let peerInitial = "U";
+    const knownContact = myContacts.find(c => c.uid === activeCallTarget);
+    if (knownContact) {
+        peerNameToShow = knownContact.name;
+        peerInitial = (knownContact.name || "U").charAt(0).toUpperCase();
+    }
+    const vName = document.getElementById("video-peer-name");
+    if (vName) vName.innerText = peerNameToShow;
+    const vUid = document.getElementById("video-peer-uid");
+    if (vUid) vUid.innerText = "UID: " + (activeCallTarget || "----------");
+    const vAvatar = document.getElementById("video-peer-avatar");
+    if (vAvatar) vAvatar.innerText = peerInitial;
+
+    if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
+        try { window.ZingNativeBridge.requestCallPermissions("video"); } catch (_) {}
+    }
+
+    let videoTrack = localStream ? localStream.getVideoTracks()[0] : null;
+    if (!videoTrack) {
+        try {
+            const camStream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 } }
+            });
+            videoTrack = camStream.getVideoTracks()[0];
+        } catch (_) {
+            try {
+                const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                videoTrack = fallbackStream.getVideoTracks()[0];
+            } catch (_) {
+                videoTrack = null;
+            }
+        }
+    }
+
+    if (videoTrack) {
+        hasLocalCamera = true;
+        if (localStream && !localStream.getVideoTracks().includes(videoTrack)) {
+            localStream.addTrack(videoTrack);
+        }
+        const existingVideoSender = peerConnection.getSenders().find(s => s.track && s.track.kind === "video");
+        if (existingVideoSender) {
+            await existingVideoSender.replaceTrack(videoTrack);
+        } else if (localStream) {
+            peerConnection.addTrack(videoTrack, localStream);
+        }
+        if (localVideo && localStream) {
+            localVideo.classList.remove("hidden");
+            localVideo.srcObject = localStream;
+            localVideo.play().catch(() => {});
+        }
+        if (noCameraPlaceholder) noCameraPlaceholder.classList.add("hidden");
+        showToast("Switched to HD Video Call");
+    } else {
+        hasLocalCamera = false;
+        if (localVideo) {
+            localVideo.classList.add("hidden");
+            localVideo.srcObject = null;
+        }
+        if (noCameraPlaceholder) noCameraPlaceholder.classList.remove("hidden");
+        try {
+            peerConnection.addTransceiver("video", { direction: "recvonly" });
+        } catch (_) {}
+        showToast("Switched to Video view (No local camera detected)");
+    }
+
+    updateCallControlsUI();
+    setTimeout(() => {
+        const endBtn = document.getElementById("end-call-btn");
+        if (endBtn) focusElement(endBtn, false);
+    }, 80);
+
+    try {
+        const offer = await peerConnection.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true
+        });
+        await peerConnection.setLocalDescription(offer);
+        if (socket) {
+            socket.emit("webrtc_offer", { targetUid: activeCallTarget, offer, callType: "video" });
+        }
+    } catch (err) {
+        console.warn("[WebRTC] Video upgrade renegotiation error:", err);
+    }
+}
+
 async function startWebRTC(isCaller) {
+    isMicMuted = false;
+    updateCallControlsUI();
     // 1. Hide TV Top Bar and Main Screen to isolate call to 100% fullscreen dedicated page
     document.getElementById("tv-top-bar")?.classList.add("hidden");
     document.getElementById("main-screen")?.classList.add("hidden");
@@ -1746,9 +1932,11 @@ function endCallCleanup() {
     }
 
     isCallInitiating = false;
+    isMicMuted = false;
     activeCallTarget = null;
     pendingOffer = null;
     iceCandidatesQueue = [];
+    updateCallControlsUI();
 
     // The "Lost Focus Trap" Fix: When call UI closes, immediately restore focus to a live interactive element!
     setTimeout(() => {
@@ -1924,6 +2112,7 @@ function handleAlexaIncomingCommand(cmd) {
             if (track) {
                 isMicMuted = true;
                 track.enabled = false;
+                updateCallControlsUI();
                 showToast("Microphone muted");
             }
         }
@@ -1933,6 +2122,7 @@ function handleAlexaIncomingCommand(cmd) {
             if (track) {
                 isMicMuted = false;
                 track.enabled = true;
+                updateCallControlsUI();
                 showToast("Microphone active");
             }
         }
@@ -1941,6 +2131,7 @@ function handleAlexaIncomingCommand(cmd) {
             const track = localStream.getVideoTracks()[0];
             if (track) {
                 track.enabled = false;
+                updateCallControlsUI();
                 showToast("Camera turned off");
             }
         }
@@ -1949,6 +2140,7 @@ function handleAlexaIncomingCommand(cmd) {
             const track = localStream.getVideoTracks()[0];
             if (track) {
                 track.enabled = true;
+                updateCallControlsUI();
                 showToast("Camera active");
             }
         }
@@ -1957,6 +2149,7 @@ function handleAlexaIncomingCommand(cmd) {
             const track = localStream.getVideoTracks()[0];
             if (track) {
                 track.enabled = !track.enabled;
+                updateCallControlsUI();
                 showToast(track.enabled ? "Camera active" : "Camera turned off");
             }
         }
@@ -1966,6 +2159,7 @@ function handleAlexaIncomingCommand(cmd) {
             if (track) {
                 isMicMuted = !isMicMuted;
                 track.enabled = !isMicMuted;
+                updateCallControlsUI();
                 showToast(isMicMuted ? "Microphone muted" : "Microphone active");
             }
         }
@@ -2267,7 +2461,12 @@ function getCustomNavigationTarget(current, direction) {
 
     // --- 2. Main Screen Layout Navigation ---
     // Top Bar
+    if (id === "header-guide-btn") {
+        if (direction === "right") return document.getElementById("my-profile-chip");
+        if (direction === "down") return document.getElementById("dial-uid-input");
+    }
     if (id === "my-profile-chip") {
+        if (direction === "left") return document.getElementById("header-guide-btn");
         if (direction === "right") return document.getElementById("header-logout-btn");
         if (direction === "down") return document.getElementById("dial-uid-input");
     }
@@ -2522,6 +2721,18 @@ function getCustomNavigationTarget(current, direction) {
     }
     if (id === "policy-ok-btn") {
         if (direction === "up") return document.getElementById("policy-scroll-area");
+    }
+
+    // --- 9. Alexa Voice & Remote Guide Modal ---
+    if (id === "close-guide-modal-btn") {
+        if (direction === "down") return document.getElementById("guide-scroll-area");
+    }
+    if (id === "guide-scroll-area") {
+        if (direction === "up") return document.getElementById("close-guide-modal-btn");
+        if (direction === "down") return document.getElementById("guide-ok-btn");
+    }
+    if (id === "guide-ok-btn") {
+        if (direction === "up") return document.getElementById("guide-scroll-area");
     }
 
     return null;
@@ -3346,6 +3557,7 @@ document.addEventListener("click", async (e) => {
             if (track) {
                 isMicMuted = !isMicMuted;
                 track.enabled = !isMicMuted;
+                updateCallControlsUI();
                 showToast(isMicMuted ? "Microphone muted" : "Microphone active");
             }
         }
@@ -3354,15 +3566,15 @@ document.addEventListener("click", async (e) => {
 
     if (e.target.id === "toggle-video-btn" || e.target.closest("#toggle-video-btn") || e.target.id === "audio-switch-video-btn" || e.target.closest("#audio-switch-video-btn")) {
         if (currentCallType === "audio") {
-            // Switch current audio call to video call
-            currentCallType = "video";
-            startWebRTC(false).catch(() => {});
+            // Seamlessly upgrade ongoing audio call to HD video call over active peerConnection
+            upgradeAudioCallToVideo().catch(() => {});
             return;
         }
         if (localStream) {
             const track = localStream.getVideoTracks()[0];
             if (track) {
                 track.enabled = !track.enabled;
+                updateCallControlsUI();
                 showToast(track.enabled ? "Camera active" : "Camera turned off");
             } else {
                 showToast("No camera detected on this TV device");

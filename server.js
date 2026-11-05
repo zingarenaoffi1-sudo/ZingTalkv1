@@ -1020,10 +1020,12 @@ io.on('connection', (socket) => {
             }
 
             connectedUsers.set(uid, socket.id);
-            lastActiveTvUid = uid;
             socket.join(uid);
 
             const platformDetected = detectPlatformFromSocket(socket, data);
+            if (platformDetected === 'Fire TV') {
+                lastActiveTvUid = uid;
+            }
             recordUserConnection(uid, userObj.name, platformDetected);
 
             console.log(`[ZingTalk] Server authenticated UID: ${uid} for user: ${userObj.name} (${userObj.email}) [Platform: ${platformDetected}]`);
@@ -1379,10 +1381,23 @@ async function checkUserUidExists(targetUid) {
         sendSignalingEvent(data.targetUid, 'call_ended', data);
     });
 
-    // Fire TV Alexa Voice Command Relay
+    // Fire TV Alexa Voice Command Relay (Scoped strictly to the requesting user's session)
     socket.on('voice_command_triggered', (data) => {
         console.log('[ZingTalk Voice] Voice command received from client:', data);
-        io.emit('alexa_command', data);
+        let targetRoom = data && data.uid ? String(data.uid).trim().replace(/\D/g, '') : null;
+        if (!targetRoom) {
+            for (const [u, sId] of connectedUsers.entries()) {
+                if (sId === socket.id) {
+                    targetRoom = u;
+                    break;
+                }
+            }
+        }
+        if (targetRoom) {
+            io.to(targetRoom).emit('alexa_command', data);
+        } else {
+            socket.emit('alexa_command', data);
+        }
     });
 
     function purgeUserSessionData(uid) {
@@ -1413,7 +1428,7 @@ async function checkUserUidExists(targetUid) {
         console.log(`[ZingTalk] Complete raw session purge for UID ${cleanUid} (Contacts, Alexa Links, and Sockets cleared from memory, disk, and Firebase)`);
     }
 
-    // User Explicit Logout
+    // User Explicit Logout (Purges session and unlinks Alexa)
     socket.on('logout_user', (data) => {
         const uid = data && data.uid ? String(data.uid).trim() : null;
         if (uid) {
@@ -1428,12 +1443,16 @@ async function checkUserUidExists(targetUid) {
         }
     });
 
+    // Transient Socket Disconnect (Preserves persistent Alexa pairings & contact cache for seamless reconnect)
     socket.on('disconnect', () => {
         for (const [uid, socketId] of connectedUsers.entries()) {
             if (socketId === socket.id) {
-                purgeUserSessionData(uid);
+                connectedUsers.delete(uid);
                 socket.leave(uid);
-                console.log(`[ZingTalk] Socket disconnected & purged for user: ${uid}`);
+                if (lastActiveTvUid === uid) {
+                    lastActiveTvUid = null;
+                }
+                console.log(`[ZingTalk] Socket disconnected for user: ${uid} (Alexa pairing preserved)`);
                 break;
             }
         }
@@ -1472,9 +1491,17 @@ function cleanVoiceInput(raw) {
 
 function wordsToDigits(str) {
     const wordMap = {
-        "zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3",
-        "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8",
-        "nine": "9", "ten": "10"
+        "zero": "0", "oh": "0", "o": "0", "shunya": "0",
+        "one": "1", "ek": "1",
+        "two": "2", "do": "2",
+        "three": "3", "teen": "3",
+        "four": "4", "chaar": "4", "char": "4",
+        "five": "5", "paanch": "5", "panch": "5",
+        "six": "6", "chhah": "6", "che": "6",
+        "seven": "7", "saat": "7",
+        "eight": "8", "aath": "8",
+        "nine": "9", "nau": "9",
+        "ten": "10", "das": "10"
     };
     let res = "";
     const words = String(str).toLowerCase().split(/\s+/);
@@ -1587,25 +1614,14 @@ async function handleAlexaWebhookRequest(req, res) {
 
         const activeTvOnline = lastActiveTvUid && isUserOnline(lastActiveTvUid);
 
-        // AUTOMATIC FIRE TV PAIRING & SMART RE-MIGRATION:
-        // 1. If not yet paired, but user is currently logged in on Fire TV, auto-bind instantly!
-        // 2. If previously paired UID is logged out/offline, BUT a new user is logged in on Fire TV, auto-switch to new user!
-        if (!activeUserUid && activeTvOnline) {
+        // AUTOMATIC FIRE TV PAIRING (Strict Single-Tenant Safety: Never hijack an already paired Alexa device to another user's UID)
+        if (!activeUserUid && activeTvOnline && connectedUsers.size === 1) {
             activeUserUid = lastActiveTvUid;
             alexaDevicePairings.set(amazonUserId, activeUserUid);
             saveAlexaPairings();
             saveAlexaPairingToFirestore(amazonUserId, activeUserUid, true).catch(() => {});
             console.log(`[ZingTalk Auto-Pairing] Automatically linked Alexa ${amazonUserId} to active Fire TV UID ${activeUserUid}`);
             io.to(activeUserUid).emit('alexa_paired', { uid: activeUserUid, auto: true });
-        } else if (activeUserUid && !isUserOnline(activeUserUid) && activeTvOnline && activeUserUid !== lastActiveTvUid) {
-            console.log(`[ZingTalk Auto-Pairing] Old paired UID ${activeUserUid} is offline/logged-out. Seamlessly migrating Alexa to active TV UID ${lastActiveTvUid}`);
-            activeUserUid = lastActiveTvUid;
-            alexaDevicePairings.set(amazonUserId, activeUserUid);
-            saveAlexaPairings();
-            saveAlexaPairingToFirestore(amazonUserId, activeUserUid, true).catch(() => {});
-            io.to(activeUserUid).emit('alexa_paired', { uid: activeUserUid, auto: true });
-        } else if (!activeUserUid && lastActiveTvUid && connectedUsers.size <= 1) {
-            activeUserUid = lastActiveTvUid;
         }
 
         const isPaired = Boolean(activeUserUid);
@@ -1912,8 +1928,9 @@ async function handleAlexaWebhookRequest(req, res) {
                 case 'ZingMyUidIntent':
                 case 'ZingCheckUidIntent':
                 case 'ZingProfileIntent': {
-                    if (lastActiveTvUid) {
-                        speechText = `Your ZingTalk 10 digit UID is ${lastActiveTvUid.split('').join(' ')}.`;
+                    const resolvedProfileUid = activeUserUid || lastActiveTvUid;
+                    if (resolvedProfileUid) {
+                        speechText = `Your ZingTalk 10 digit UID is ${resolvedProfileUid.split('').join(' ')}.`;
                     } else {
                         speechText = "You are currently logged into ZingTalk on Fire TV.";
                     }
@@ -2041,24 +2058,43 @@ async function handleAlexaWebhookRequest(req, res) {
                 }
                 case 'AMAZON.FallbackIntent':
                 default: {
-                    let candidateName = '';
-                    for (const key of Object.keys(slots)) {
-                        const val = slots[key]?.value;
-                        if (val && typeof val === 'string' && val.length > 1) {
-                            candidateName = val;
-                            break;
+                    let candidateName = extractSlotVal(slots, 'contact', 'name', 'person', 'user', 'Contact', 'Name', 'target', 'query', 'uid', 'number', 'UID', 'Number', 'RawMessage', 'message', 'text');
+                    if (!candidateName) {
+                        for (const key of Object.keys(slots)) {
+                            const val = slots[key]?.value;
+                            if (val && typeof val === 'string' && val.length > 1) {
+                                candidateName = val;
+                                break;
+                            }
                         }
                     }
 
                     if (candidateName) {
+                        const mode = detectCallMode(candidateName, sessionAttributes.mode || 'audio');
+                        const digitsSpoken = wordsToDigits(candidateName).replace(/[^0-9]/g, '');
+                        if (digitsSpoken.length === 10) {
+                            lastCalledTarget = { uid: digitsSpoken, name: "UID " + digitsSpoken, mode: mode };
+                            speechText = `${mode === 'video' ? 'Starting HD video call with' : 'Calling'} UID ${digitsSpoken.split('').join(' ')} on ZingTalk.`;
+                            shouldEndSession = true;
+                            sessionAttributes = {};
+                            commandPayload = {
+                                intent: 'ZingSmartCall',
+                                action: mode === 'video' ? 'video_call' : 'audio_call',
+                                contact: 'UID ' + digitsSpoken,
+                                targetUid: digitsSpoken,
+                                timestamp: Date.now()
+                            };
+                            break;
+                        }
+
                         const matched = smartFindContact(candidateName, userContacts);
                         if (matched) {
-                            const mode = detectCallMode(candidateName, sessionAttributes.mode || 'audio');
                             lastCalledTarget = { uid: matched.uid, name: matched.name, mode: mode };
                             speechText = mode === 'video' 
                                 ? `Starting video call with ${matched.name} on ZingTalk.`
                                 : `Calling ${matched.name} on ZingTalk.`;
                             shouldEndSession = true;
+                            sessionAttributes = {};
                             commandPayload = {
                                 intent: 'ZingSmartCall',
                                 action: mode === 'video' ? 'video_call' : 'audio_call',
@@ -2070,8 +2106,9 @@ async function handleAlexaWebhookRequest(req, res) {
                         }
                     }
 
-                    speechText = "I didn't quite catch that. You can say: call Raman, video call Rahul, answer call, or end call.";
+                    speechText = "I didn't quite catch that. You can say: call Raman, video call Rahul, call UID followed by 10 digits, answer call, or end call.";
                     shouldEndSession = false;
+                    sessionAttributes = { ...sessionAttributes, pendingAction: 'call' };
                     break;
                 }
             }

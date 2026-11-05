@@ -19,17 +19,10 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
-    <!-- 5. Active Call Foreground Services (Android 14+ / API 34+ Compliance) -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
-
-    <!-- 6. Screen State & Audio Routing for Calls -->
+    <!-- 5. Screen State & Audio Routing for Calls -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Hardware Feature Requirements (Non-mandatory so TVs and Tablets can install) -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -57,7 +50,7 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
-        <activity android:screenOrientation="landscape"                       
+        <activity android:screenOrientation="landscape"                        
             
             android:keepScreenOn="true"
             android:showWhenLocked="true"

@@ -21,6 +21,16 @@ if (!fs.existsSync(androidPublicDir)) {
     fs.mkdirSync(androidPublicDir, { recursive: true });
 }
 
+// Sync latest TV files from packages/tv to root so web preview & dist always have the latest TV bundle
+const tvPkgDir = path.join(__dirname, 'packages', 'tv');
+['index.html', 'style.css', 'app.js', 'manifest.json', 'service-worker.js', 'privacy.html', 'terms.html'].forEach(file => {
+    const tvFile = path.join(tvPkgDir, file);
+    const rootFile = path.join(__dirname, file);
+    if (fs.existsSync(tvFile)) {
+        fs.copyFileSync(tvFile, rootFile);
+    }
+});
+
 filesToCopy.forEach(file => {
     const srcPath = path.join(__dirname, file);
     const destPath = path.join(distDir, file);
@@ -39,7 +49,7 @@ packages.forEach(pkg => {
     if (!fs.existsSync(pkgDist)) {
         fs.mkdirSync(pkgDist, { recursive: true });
     }
-    ['index.html', 'style.css', 'app.js', 'manifest.json', 'capacitor.config.json', 'privacy.html', 'terms.html'].forEach(f => {
+    ['index.html', 'style.css', 'app.js', 'manifest.json', 'service-worker.js', 'capacitor.config.json', 'privacy.html', 'terms.html'].forEach(f => {
         let src = path.join(pkgDir, f);
         if (!fs.existsSync(src)) {
             src = path.join(__dirname, f);
