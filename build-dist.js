@@ -108,7 +108,7 @@ packages.forEach(pkg => {
         copyDirSync(path.join(__dirname, 'assets'), pkgAssetDist);
     }
 });
-copyDirSync(path.join(__dirname, 'screenshots'), path.join(distDir, 'screenshots'));
+// Note: Amazon Appstore screenshots are kept at root /screenshots for web preview & submission, NOT bundled into APK assets
 
 // Ensure Cordova stubs
 const cordovaStubPath = path.join(androidPublicDir, 'cordova.js');

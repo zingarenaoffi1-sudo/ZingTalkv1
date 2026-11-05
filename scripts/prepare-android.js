@@ -631,6 +631,12 @@ filesToSync.forEach(f => {
         fs.copyFileSync(src, path.join(androidPublicDir, f));
     }
 });
+// Clean any heavy submission assets like screenshots from the APK assets directory
+const unwantedScreenshots = path.join(androidPublicDir, 'screenshots');
+if (fs.existsSync(unwantedScreenshots)) {
+    fs.rmSync(unwantedScreenshots, { recursive: true, force: true });
+}
+
 console.log(`[prepare-android] ✅ Synchronized web bundle from ${platformSourceDir} to Android assets public directory!`);
 
 console.log(`[prepare-android] Android project successfully configured for ${targetPlatform}!`);
