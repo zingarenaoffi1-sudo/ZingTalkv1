@@ -223,52 +223,118 @@
             </div>
         </div>
 
-        <!-- 3. FULLSCREEN HD VIDEO / AUDIO CALL STAGE -->
+        <!-- 3. DEDICATED FULLSCREEN HD VIDEO & AUDIO CALL PAGES -->
         <div id="full-call-screen" class="tv-call-viewport hidden">
-            <video id="remote-video" autoplay playsinline webkit-playsinline class="tv-fullscreen-video"></video>
-            <!-- PIP Video / Camera Fallback Container -->
-            <div id="local-pip-container" class="tv-pip-container">
-                <video id="local-video" autoplay playsinline webkit-playsinline muted class="tv-pip-video"></video>
-                <div id="no-camera-pip-placeholder" class="tv-no-camera-pip hidden">
-                    <div class="tv-no-camera-icon-wrap">
-                        <svg width="32" height="32" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M19 10.5V7c0-.55-.45-1-1-1H7.83l2 2H18v7.17l2 2V10.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.55-.18L19.73 21 21 19.73 3.27 2zM5 16V8h1.27l8 8H5z"/>
-                        </svg>
+            <!-- DEDICATED PAGE 1: VIDEO CALL PAGE -->
+            <section id="video-call-page" class="tv-call-page tv-video-page hidden">
+                <!-- Top Status Header -->
+                <div class="tv-call-top-header">
+                    <div class="tv-call-peer-info">
+                        <div id="video-peer-avatar" class="tv-avatar-circle">V</div>
+                        <div class="tv-call-peer-text">
+                            <h2 id="video-peer-name" class="tv-call-peer-name">Calling...</h2>
+                            <span id="video-peer-uid" class="tv-call-peer-uid">UID: ----------</span>
+                        </div>
                     </div>
-                    <span class="tv-no-camera-title">No Camera Detected</span>
-                    <span class="tv-no-camera-sub">Voice Active • Receiving Video</span>
+                    <div class="tv-call-mode-badge">
+                        <span class="tv-call-live-dot"></span>
+                        <span id="call-timer" class="tv-call-timer">Connected • HD Video</span>
+                    </div>
                 </div>
-            </div>
 
-            <!-- Audio Call Center Avatar Visualizer -->
-            <div id="audio-call-visualizer" class="tv-audio-visualizer-box hidden">
-                <div id="audio-call-avatar" class="tv-radar-avatar">🎙️</div>
-                <h2 id="audio-call-peer-name" class="tv-call-peer-title">HD Audio Call</h2>
-                <p class="tv-call-peer-subtitle">Encrypted Peer-to-Peer Voice</p>
-            </div>
+                <!-- Video Stage Viewport -->
+                <div class="tv-video-stage-container">
+                    <video id="remote-video" autoplay playsinline webkit-playsinline class="tv-fullscreen-video"></video>
+                    
+                    <!-- PIP Video / Camera Fallback Container -->
+                    <div id="local-pip-container" class="tv-pip-container">
+                        <video id="local-video" autoplay playsinline webkit-playsinline muted class="tv-pip-video"></video>
+                        <div id="no-camera-pip-placeholder" class="tv-no-camera-pip hidden">
+                            <div class="tv-no-camera-icon-wrap">
+                                <svg width="32" height="32" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M19 10.5V7c0-.55-.45-1-1-1H7.83l2 2H18v7.17l2 2V10.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.55-.18L19.73 21 21 19.73 3.27 2zM5 16V8h1.27l8 8H5z"/>
+                                </svg>
+                            </div>
+                            <span class="tv-no-camera-title">No Camera Detected</span>
+                            <span class="tv-no-camera-sub">Voice Active • Receiving Video</span>
+                        </div>
+                    </div>
+                </div>
 
-            <!-- Top Call Status Bar -->
-            <div class="tv-call-status-bar">
-                <span id="call-timer" class="tv-call-timer">Connected • HD Call</span>
-            </div>
+                <!-- Bottom Dedicated Video Remote Dock -->
+                <div class="tv-call-controls-dock">
+                    <button type="button" id="mute-mic-btn" class="tv-dock-btn tv-focusable" tabindex="0" title="Mute Microphone">
+                        <svg width="28" height="28" fill="currentColor" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
+                        <span>Mute</span>
+                    </button>
+                    <button type="button" id="toggle-video-btn" class="tv-dock-btn tv-focusable" tabindex="0" title="Toggle Camera">
+                        <svg width="28" height="28" fill="currentColor" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+                        <span>Camera</span>
+                    </button>
+                    <button type="button" id="end-call-btn" class="tv-dock-btn tv-hangup-dock-btn tv-focusable" tabindex="0" title="End Call">
+                        <svg width="30" height="30" fill="currentColor" viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.996.996 0 0 1 0-1.41C3.28 8.76 7.42 7 12 7s8.72 1.76 11.71 4.67c.39.39.39 1.02 0 1.41l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+                        <span>Hang Up</span>
+                    </button>
+                </div>
+            </section>
 
-            <!-- Bottom Remote-Friendly Control Dock -->
-            <div class="tv-call-controls-dock">
-                <button type="button" id="mute-mic-btn" class="tv-dock-btn tv-focusable" tabindex="0" title="Mute Microphone">
-                    <svg width="28" height="28" fill="currentColor" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
-                    <span>Mute</span>
-                </button>
+            <!-- DEDICATED PAGE 2: AUDIO CALL PAGE -->
+            <section id="audio-call-page" class="tv-call-page tv-audio-page hidden">
+                <!-- Top Status Header -->
+                <div class="tv-call-top-header">
+                    <div class="tv-call-peer-info">
+                        <div id="audio-peer-avatar-chip" class="tv-avatar-circle">A</div>
+                        <div class="tv-call-peer-text">
+                            <h2 id="audio-call-peer-name" class="tv-call-peer-name">HD Audio Call</h2>
+                            <span id="audio-call-peer-uid" class="tv-call-peer-uid">UID: ----------</span>
+                        </div>
+                    </div>
+                    <div class="tv-call-mode-badge tv-audio-badge">
+                        <span class="tv-call-live-dot"></span>
+                        <span id="audio-call-timer" class="tv-call-timer">Connected • HD Audio</span>
+                    </div>
+                </div>
 
-                <button type="button" id="toggle-video-btn" class="tv-dock-btn tv-focusable" tabindex="0" title="Toggle Camera">
-                    <svg width="28" height="28" fill="currentColor" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
-                    <span>Camera</span>
-                </button>
+                <!-- Center Audio Visualizer Stage -->
+                <div class="tv-audio-center-stage">
+                    <div class="tv-audio-radar-container">
+                        <div class="tv-radar-ring tv-radar-ring-1"></div>
+                        <div class="tv-radar-ring tv-radar-ring-2"></div>
+                        <div class="tv-radar-ring tv-radar-ring-3"></div>
+                        <div id="audio-call-avatar" class="tv-big-call-avatar">🎙️</div>
+                    </div>
+                    <h1 id="audio-call-heading" class="tv-audio-title">HD Voice Connection</h1>
+                    <p class="tv-audio-subtitle">End-to-End Encrypted Voice • Low Latency</p>
+                    
+                    <!-- Soundwave Animation Bars -->
+                    <div class="tv-soundwave-bars">
+                        <span class="tv-wave-bar"></span>
+                        <span class="tv-wave-bar"></span>
+                        <span class="tv-wave-bar"></span>
+                        <span class="tv-wave-bar"></span>
+                        <span class="tv-wave-bar"></span>
+                        <span class="tv-wave-bar"></span>
+                        <span class="tv-wave-bar"></span>
+                        <span class="tv-wave-bar"></span>
+                    </div>
+                </div>
 
-                <button type="button" id="end-call-btn" class="tv-dock-btn tv-hangup-dock-btn tv-focusable" tabindex="0" title="End Call">
-                    <svg width="30" height="30" fill="currentColor" viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.996.996 0 0 1 0-1.41C3.28 8.76 7.42 7 12 7s8.72 1.76 11.71 4.67c.39.39.39 1.02 0 1.41l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
-                    <span>Hang Up</span>
-                </button>
-            </div>
+                <!-- Bottom Dedicated Audio Remote Dock -->
+                <div class="tv-call-controls-dock">
+                    <button type="button" id="audio-mute-mic-btn" class="tv-dock-btn tv-focusable" tabindex="0" title="Mute Microphone">
+                        <svg width="28" height="28" fill="currentColor" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
+                        <span>Mute</span>
+                    </button>
+                    <button type="button" id="audio-switch-video-btn" class="tv-dock-btn tv-focusable" tabindex="0" title="Switch to Video">
+                        <svg width="28" height="28" fill="currentColor" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+                        <span>Video</span>
+                    </button>
+                    <button type="button" id="audio-end-call-btn" class="tv-dock-btn tv-hangup-dock-btn tv-focusable" tabindex="0" title="End Call">
+                        <svg width="30" height="30" fill="currentColor" viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.996.996 0 0 1 0-1.41C3.28 8.76 7.42 7 12 7s8.72 1.76 11.71 4.67c.39.39.39 1.02 0 1.41l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+                        <span>Hang Up</span>
+                    </button>
+                </div>
+            </section>
         </div>
 
         <!-- 4. INCOMING CALL MODAL -->

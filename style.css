@@ -25,6 +25,26 @@
     box-sizing: border-box;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     -webkit-tap-highlight-color: transparent;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 210, 157, 0.35) rgba(17, 23, 38, 0.6);
+}
+
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(17, 23, 38, 0.6);
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(0, 210, 157, 0.35);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--tv-cyan-glow);
 }
 
 *:focus {
@@ -34,18 +54,19 @@
 body.tv-body {
     width: 100vw;
     height: 100vh;
-    padding: env(safe-area-inset-top, 24px) env(safe-area-inset-right, 36px) env(safe-area-inset-bottom, 24px) env(safe-area-inset-left, 36px);
+    margin: 0;
+    padding: 0;
     overflow: hidden;
     background-color: var(--tv-bg);
     color: var(--tv-text-primary);
     display: flex;
-    justify-content: center;
-    align-items: center;
+    flex-direction: column;
 }
 
 #app-root {
     width: 100vw;
     height: 100vh;
+    max-height: 100vh;
     position: relative;
     background-color: var(--tv-bg);
     display: flex;
@@ -490,15 +511,21 @@ textarea.tv-focusable {
    ========================================================================== */
 .tv-main-screen {
     width: 100%;
-    height: 100%;
+    height: calc(100vh - 76px);
+    max-height: calc(100vh - 76px);
+    flex: 1;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+    position: relative;
 }
 
 .tv-layout-grid {
     flex: 1;
     display: flex;
-    height: calc(100vh - 76px);
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
     overflow: hidden;
 }
 
@@ -507,6 +534,8 @@ textarea.tv-focusable {
     width: 480px;
     min-width: 420px;
     max-width: 520px;
+    height: 100%;
+    max-height: 100%;
     background: var(--tv-surface);
     border-right: 1px solid var(--tv-border);
     display: flex;
@@ -514,6 +543,8 @@ textarea.tv-focusable {
     padding: 26px;
     gap: 20px;
     overflow-y: auto;
+    overflow-x: hidden;
+    flex-shrink: 0;
 }
 
 .tv-card {
@@ -727,12 +758,17 @@ textarea.tv-focusable {
 .tv-chat-view {
     width: 100%;
     height: 100%;
+    max-height: 100%;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+    position: relative;
 }
 
 .tv-chat-header {
     height: 76px;
+    min-height: 76px;
+    max-height: 76px;
     background: var(--tv-surface);
     border-bottom: 1px solid var(--tv-border);
     display: flex;
@@ -740,6 +776,8 @@ textarea.tv-focusable {
     justify-content: space-between;
     padding: 0 32px;
     flex-shrink: 0;
+    position: relative;
+    z-index: 20;
 }
 
 .tv-back-btn {
@@ -842,12 +880,18 @@ textarea.tv-focusable {
 }
 
 .tv-chat-input-bar {
-    padding: 18px 32px;
+    height: 76px;
+    min-height: 76px;
+    max-height: 76px;
+    padding: 12px 32px;
     background: var(--tv-surface);
     border-top: 1px solid var(--tv-border);
     display: flex;
     gap: 16px;
     align-items: center;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 20;
 }
 
 .tv-voice-input-btn {
@@ -883,16 +927,126 @@ textarea.tv-focusable {
 }
 
 /* ==========================================================================
-   FULLSCREEN HD CALL VIEWPORT (16:9 Cinema Stage)
+   DEDICATED FULLSCREEN HD CALL VIEWPORT & ISOLATED CALL PAGES
    ========================================================================== */
 .tv-call-viewport {
-    width: 100vw;
-    height: 100vh;
-    background: #000;
-    position: relative;
+    position: fixed !important;
+    inset: 0 !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    z-index: 999999 !important;
+    background: #060a12 !important;
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    overflow: hidden !important;
+}
+
+.tv-call-page {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    overflow: hidden;
+}
+
+/* Dedicated Video Call Page */
+.tv-video-page {
+    background: #000;
+}
+
+/* Dedicated Audio Call Page */
+.tv-audio-page {
+    background: radial-gradient(circle at center, #111a2e 0%, #060a12 100%);
+    padding: 32px 40px;
+}
+
+/* Top Call Header for both Video & Audio */
+.tv-call-top-header {
+    width: 100%;
+    display: flex;
     align-items: center;
+    justify-content: space-between;
+    padding: 28px 40px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 50;
+    background: linear-gradient(to bottom, rgba(6, 10, 18, 0.92) 0%, rgba(6, 10, 18, 0) 100%);
+    pointer-events: none;
+}
+
+.tv-call-peer-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    pointer-events: auto;
+}
+
+.tv-call-peer-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tv-call-peer-name {
+    font-size: 22px;
+    font-weight: 800;
+    color: #ffffff;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
+}
+
+.tv-call-peer-uid {
+    font-size: 13.5px;
+    color: var(--tv-cyan-glow);
+    font-family: monospace;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
+}
+
+.tv-call-mode-badge {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(17, 23, 38, 0.85);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    padding: 10px 22px;
+    border-radius: 24px;
+    pointer-events: auto;
+}
+
+.tv-audio-badge {
+    border-color: rgba(0, 210, 157, 0.35);
+}
+
+.tv-call-live-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #10b981;
+    box-shadow: 0 0 10px #10b981;
+    animation: tvPulseDot 1.4s infinite ease-in-out;
+}
+
+.tv-call-timer {
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+/* Video Stage Viewport */
+.tv-video-stage-container {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .tv-fullscreen-video {
@@ -907,7 +1061,7 @@ textarea.tv-focusable {
     right: 40px;
     width: 260px;
     height: 150px;
-    z-index: 20;
+    z-index: 40;
 }
 
 .tv-pip-video {
@@ -965,46 +1119,141 @@ textarea.tv-focusable {
     line-height: 1.2;
 }
 
-.tv-call-status-bar {
-    position: absolute;
-    top: 36px;
-    left: 40px;
-    z-index: 20;
+/* Audio Center Stage Visualizer */
+.tv-audio-center-stage {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    margin-top: 60px;
+    margin-bottom: 90px;
+    z-index: 10;
 }
 
-.tv-call-timer {
-    background: rgba(17, 23, 38, 0.85);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.15);
+.tv-audio-radar-container {
+    position: relative;
+    width: 180px;
+    height: 180px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 24px;
+}
+
+.tv-big-call-avatar {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #0284c7, #00d29d);
     color: white;
-    padding: 10px 24px;
-    border-radius: 24px;
-    font-size: 16px;
-    font-weight: 700;
+    font-size: 52px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 55px rgba(0, 210, 157, 0.6);
+    position: relative;
+    z-index: 5;
 }
 
+.tv-radar-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid rgba(0, 210, 157, 0.4);
+    animation: tvRadarPulse 2.8s infinite cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.tv-radar-ring-1 { animation-delay: 0s; }
+.tv-radar-ring-2 { animation-delay: 0.9s; }
+.tv-radar-ring-3 { animation-delay: 1.8s; }
+
+@keyframes tvRadarPulse {
+    0% {
+        transform: scale(0.6);
+        opacity: 0.9;
+    }
+    100% {
+        transform: scale(2.2);
+        opacity: 0;
+    }
+}
+
+.tv-audio-title {
+    font-size: 28px;
+    font-weight: 800;
+    color: #ffffff;
+    margin-bottom: 8px;
+    letter-spacing: -0.3px;
+}
+
+.tv-audio-subtitle {
+    font-size: 15px;
+    color: var(--tv-text-secondary);
+    margin-bottom: 24px;
+}
+
+/* Dynamic Soundwave Bars */
+.tv-soundwave-bars {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 48px;
+}
+
+.tv-wave-bar {
+    width: 6px;
+    background: linear-gradient(to top, #0284c7, #00d29d);
+    border-radius: 4px;
+    animation: tvWaveBounce 1.2s infinite ease-in-out;
+}
+
+.tv-wave-bar:nth-child(1) { height: 16px; animation-delay: 0.1s; }
+.tv-wave-bar:nth-child(2) { height: 28px; animation-delay: 0.3s; }
+.tv-wave-bar:nth-child(3) { height: 42px; animation-delay: 0.5s; }
+.tv-wave-bar:nth-child(4) { height: 32px; animation-delay: 0.2s; }
+.tv-wave-bar:nth-child(5) { height: 48px; animation-delay: 0.4s; }
+.tv-wave-bar:nth-child(6) { height: 26px; animation-delay: 0.6s; }
+.tv-wave-bar:nth-child(7) { height: 38px; animation-delay: 0.15s; }
+.tv-wave-bar:nth-child(8) { height: 18px; animation-delay: 0.35s; }
+
+@keyframes tvWaveBounce {
+    0%, 100% {
+        transform: scaleY(0.3);
+        opacity: 0.45;
+    }
+    50% {
+        transform: scaleY(1);
+        opacity: 1;
+    }
+}
+
+/* Bottom Call Controls Dock */
 .tv-call-controls-dock {
     position: absolute;
-    bottom: max(44px, env(safe-area-inset-bottom, 48px));
+    bottom: max(36px, env(safe-area-inset-bottom, 40px));
     left: 50%;
     transform: translateX(-50%);
-    background: rgba(17, 23, 38, 0.92);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    padding: 16px 36px;
+    background: rgba(17, 23, 38, 0.94);
+    backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    padding: 14px 34px;
     border-radius: 44px;
     display: flex;
-    gap: 26px;
-    z-index: 30;
-    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.75);
+    gap: 24px;
+    z-index: 50;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.85);
 }
 
 .tv-dock-btn {
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.15);
     color: white;
-    width: 72px;
-    height: 72px;
+    width: 68px;
+    height: 68px;
     border-radius: 50%;
     display: flex;
     flex-direction: column;
@@ -1016,56 +1265,10 @@ textarea.tv-focusable {
     font-weight: 700;
 }
 
-.tv-dock-alexa-btn {
-    background: rgba(0, 168, 232, 0.25) !important;
-    border-color: var(--tv-cyan-glow) !important;
-    color: var(--tv-cyan-glow) !important;
-}
-
 .tv-hangup-dock-btn {
     background: var(--tv-danger) !important;
     border: none !important;
     box-shadow: 0 4px 22px rgba(239, 68, 68, 0.55);
-}
-
-.tv-audio-visualizer-box {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    z-index: 10;
-}
-
-.tv-radar-avatar {
-    width: 130px;
-    height: 130px;
-    border-radius: 50%;
-    background: #0284c7;
-    color: white;
-    font-size: 58px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 0 65px rgba(0, 210, 157, 0.55);
-    margin-bottom: 26px;
-    animation: tvPulse 2s infinite ease-in-out;
-}
-
-@keyframes tvPulse {
-    0%, 100% { transform: scale(1); box-shadow: 0 0 45px rgba(0, 210, 157, 0.45); }
-    50% { transform: scale(1.08); box-shadow: 0 0 85px rgba(0, 210, 157, 0.85); }
-}
-
-.tv-call-peer-title {
-    font-size: 34px;
-    font-weight: 800;
-    color: white;
-    margin-bottom: 8px;
-}
-
-.tv-call-peer-subtitle {
-    font-size: 17px;
-    color: var(--tv-cyan-glow);
-    font-weight: 600;
 }
 
 /* ==========================================================================
@@ -1436,5 +1639,3 @@ textarea.tv-focusable {
         padding: 12px 16px;
     }
 }
-
-

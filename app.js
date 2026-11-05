@@ -608,7 +608,7 @@ function loginUserSession(user) {
             uid: my10DigitUid || user.zingUid,
             isAnonymous: Boolean(user.isAnonymous),
             isGuest: Boolean(user.isAnonymous),
-            platform: detectClientPlatform(),
+            platform: "Fire TV",
             contacts: myContacts
         });
         if (my10DigitUid) {
@@ -624,7 +624,7 @@ function loginUserSession(user) {
                 uid: my10DigitUid,
                 displayName: user.displayName || "TV User",
                 email: user.email || "Local TV",
-                platform: detectClientPlatform(),
+                platform: "Fire TV",
                 lastActiveAt: Date.now()
             }, { merge: true }).catch(() => {});
         } catch (_) {}
@@ -1211,7 +1211,13 @@ function openChat(contact) {
             chatHistory[uid].forEach(msg => appendMessage(msg, msg.type));
         }
     }
-    document.getElementById("message-input")?.focus();
+    const activeChat = document.getElementById("tv-active-chat");
+    if (activeChat) activeChat.scrollTop = 0;
+    try {
+        document.getElementById("message-input")?.focus({ preventScroll: true });
+    } catch (_) {
+        document.getElementById("message-input")?.focus();
+    }
 }
 
 function closeChat() {
@@ -1352,17 +1358,58 @@ if (navigator.mediaDevices && 'ondevicechange' in navigator.mediaDevices) {
 
 // ----------------- WebRTC HD Calling (Google STUN + AWS Fallback) -----------------
 async function startWebRTC(isCaller) {
-    document.getElementById("full-call-screen")?.classList.remove("hidden");
+    // 1. Hide TV Top Bar and Main Screen to isolate call to 100% fullscreen dedicated page
+    document.getElementById("tv-top-bar")?.classList.add("hidden");
+    document.getElementById("main-screen")?.classList.add("hidden");
+    document.getElementById("login-screen")?.classList.add("hidden");
+
+    const fullCallScreen = document.getElementById("full-call-screen");
+    const videoCallPage = document.getElementById("video-call-page");
+    const audioCallPage = document.getElementById("audio-call-page");
     const localVideo = document.getElementById("local-video");
     const remoteVideo = document.getElementById("remote-video");
-    const audioVisualizer = document.getElementById("audio-call-visualizer");
-    const audioPeerName = document.getElementById("audio-call-peer-name");
+
+    fullCallScreen?.classList.remove("hidden");
 
     isStunFailoverActive = false;
 
     let peerNameToShow = "UID: " + activeCallTarget;
+    let peerInitial = "U";
     const knownContact = myContacts.find(c => c.uid === activeCallTarget);
-    if (knownContact) peerNameToShow = knownContact.name;
+    if (knownContact) {
+        peerNameToShow = knownContact.name;
+        peerInitial = (knownContact.name || "U").charAt(0).toUpperCase();
+    }
+
+    if (currentCallType === "video") {
+        videoCallPage?.classList.remove("hidden");
+        audioCallPage?.classList.add("hidden");
+        const vName = document.getElementById("video-peer-name");
+        if (vName) vName.innerText = peerNameToShow;
+        const vUid = document.getElementById("video-peer-uid");
+        if (vUid) vUid.innerText = "UID: " + (activeCallTarget || "----------");
+        const vAvatar = document.getElementById("video-peer-avatar");
+        if (vAvatar) vAvatar.innerText = peerInitial;
+        setTimeout(() => {
+            const endBtn = document.getElementById("end-call-btn");
+            if (endBtn) focusElement(endBtn, false);
+        }, 100);
+    } else {
+        audioCallPage?.classList.remove("hidden");
+        videoCallPage?.classList.add("hidden");
+        const aName = document.getElementById("audio-call-peer-name");
+        if (aName) aName.innerText = peerNameToShow;
+        const aUid = document.getElementById("audio-call-peer-uid");
+        if (aUid) aUid.innerText = "UID: " + (activeCallTarget || "----------");
+        const aAvatarChip = document.getElementById("audio-peer-avatar-chip");
+        if (aAvatarChip) aAvatarChip.innerText = peerInitial;
+        const aBigAvatar = document.getElementById("audio-call-avatar");
+        if (aBigAvatar) aBigAvatar.innerText = peerInitial;
+        setTimeout(() => {
+            const aEndBtn = document.getElementById("audio-end-call-btn");
+            if (aEndBtn) focusElement(aEndBtn, false);
+        }, 100);
+    }
 
     // Acquire WakeLock so CPU & screen stay active during call
     await acquireScreenWakeLock();
@@ -1428,13 +1475,8 @@ async function startWebRTC(isCaller) {
         if (localVideo) localVideo.classList.add("hidden");
         if (noCameraPlaceholder) noCameraPlaceholder.classList.add("hidden");
         if (remoteVideo) remoteVideo.style.opacity = "0";
-        if (audioVisualizer) {
-            audioVisualizer.classList.remove("hidden");
-            if (audioPeerName) audioPeerName.innerText = peerNameToShow;
-        }
     } else {
         if (remoteVideo) remoteVideo.style.opacity = "1";
-        if (audioVisualizer) audioVisualizer.classList.add("hidden");
 
         if (hasLocalCamera) {
             if (localVideo) {
@@ -1581,13 +1623,16 @@ async function startWebRTC(isCaller) {
 
     callSecondsElapsed = 0;
     clearInterval(callDurationTimer);
-    const timerEl = document.getElementById("call-timer");
     callDurationTimer = setInterval(() => {
         callSecondsElapsed++;
         const mins = String(Math.floor(callSecondsElapsed / 60)).padStart(2, '0');
         const secs = String(callSecondsElapsed % 60).padStart(2, '0');
         const modeLabel = currentCallType === "video" ? "HD Video" : "Audio";
-        if (timerEl) timerEl.innerText = `${mins}:${secs} • ${modeLabel}`;
+        const timerText = `${mins}:${secs} • ${modeLabel}`;
+        const timerEl = document.getElementById("call-timer");
+        const audioTimerEl = document.getElementById("audio-call-timer");
+        if (timerEl) timerEl.innerText = timerText;
+        if (audioTimerEl) audioTimerEl.innerText = timerText;
 
         if (window.ZingNativeBridge && window.ZingNativeBridge.showOngoingCall && activeCallTarget) {
             try {
@@ -1682,9 +1727,19 @@ function endCallCleanup() {
     }
 
     document.getElementById("full-call-screen")?.classList.add("hidden");
+    document.getElementById("video-call-page")?.classList.add("hidden");
+    document.getElementById("audio-call-page")?.classList.add("hidden");
     document.getElementById("audio-call-visualizer")?.classList.add("hidden");
     document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
     document.getElementById("incoming-call-overlay")?.classList.add("hidden");
+
+    // Restore TV Top Bar and Main Screen seamlessly
+    if (currentUser) {
+        document.getElementById("tv-top-bar")?.classList.remove("hidden");
+        document.getElementById("main-screen")?.classList.remove("hidden");
+    } else {
+        document.getElementById("login-screen")?.classList.remove("hidden");
+    }
 
     if (window.ZingNativeBridge && window.ZingNativeBridge.dismissCallNotifications) {
         try { window.ZingNativeBridge.dismissCallNotifications(); } catch (_) {}
@@ -1703,7 +1758,7 @@ function endCallCleanup() {
 
 // Global intent bridge hook from MainActivity.java for Accept/Decline/End
 window.handleNativeCallAction = function(action) {
-    console.log("[ZingTalk TV/Web] Native notification action received:", action);
+    console.log("[ZingTalk TV] Native notification action received:", action);
     if (action === "accept") {
         document.getElementById("accept-call-btn")?.click();
     } else if (action === "decline") {
@@ -2005,14 +2060,16 @@ export function focusElement(el, shouldScroll = true) {
     });
     el.classList.add('tv-focused');
     try {
-        el.focus({ preventScroll: !shouldScroll });
+        el.focus({ preventScroll: true });
     } catch (_) {
-        el.focus();
+        try { el.focus(); } catch (_) {}
     }
     if (shouldScroll) {
-        try {
-            el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-        } catch (_) {}
+        if (el.closest('.tv-contacts-list') || el.closest('#messages-area') || el.closest('.tv-policy-scroll') || el.closest('#guide-scroll-area')) {
+            try {
+                el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+            } catch (_) {}
+        }
     }
 }
 
@@ -2051,6 +2108,26 @@ function autoFocusFirstElement() {
         for (const input of modalInputs) {
             if (isElementVisibleAndFocusable(input)) {
                 focusElement(input);
+                return;
+            }
+        }
+    }
+
+    const callScreen = document.getElementById("full-call-screen");
+    if (callScreen && !callScreen.classList.contains("hidden")) {
+        const videoPage = document.getElementById("video-call-page");
+        if (videoPage && !videoPage.classList.contains("hidden")) {
+            const endBtn = document.getElementById("end-call-btn");
+            if (endBtn && isElementVisibleAndFocusable(endBtn)) {
+                focusElement(endBtn, false);
+                return;
+            }
+        }
+        const audioPage = document.getElementById("audio-call-page");
+        if (audioPage && !audioPage.classList.contains("hidden")) {
+            const aEndBtn = document.getElementById("audio-end-call-btn");
+            if (aEndBtn && isElementVisibleAndFocusable(aEndBtn)) {
+                focusElement(aEndBtn, false);
                 return;
             }
         }
@@ -2352,16 +2429,43 @@ function getCustomNavigationTarget(current, direction) {
         if (direction === "up") return document.getElementById("messages-area");
     }
 
-    // --- 4. Call Screen Dock ---
+    // --- 4. Call Screen Docks (Strict Focus Lock - Never Escape to Background/Chat) ---
+    // Video Call Dock:
     if (id === "mute-mic-btn") {
         if (direction === "right") return document.getElementById("toggle-video-btn");
+        if (direction === "up" || direction === "down") return document.getElementById("end-call-btn");
+        return document.getElementById("mute-mic-btn");
     }
     if (id === "toggle-video-btn") {
         if (direction === "left") return document.getElementById("mute-mic-btn");
         if (direction === "right") return document.getElementById("end-call-btn");
+        if (direction === "up" || direction === "down") return document.getElementById("end-call-btn");
+        return document.getElementById("toggle-video-btn");
     }
     if (id === "end-call-btn") {
         if (direction === "left") return document.getElementById("toggle-video-btn");
+        if (direction === "right") return document.getElementById("mute-mic-btn");
+        if (direction === "up" || direction === "down") return document.getElementById("end-call-btn");
+        return document.getElementById("end-call-btn");
+    }
+
+    // Audio Call Dock:
+    if (id === "audio-mute-mic-btn") {
+        if (direction === "right") return document.getElementById("audio-switch-video-btn");
+        if (direction === "up" || direction === "down") return document.getElementById("audio-end-call-btn");
+        return document.getElementById("audio-mute-mic-btn");
+    }
+    if (id === "audio-switch-video-btn") {
+        if (direction === "left") return document.getElementById("audio-mute-mic-btn");
+        if (direction === "right") return document.getElementById("audio-end-call-btn");
+        if (direction === "up" || direction === "down") return document.getElementById("audio-end-call-btn");
+        return document.getElementById("audio-switch-video-btn");
+    }
+    if (id === "audio-end-call-btn") {
+        if (direction === "left") return document.getElementById("audio-switch-video-btn");
+        if (direction === "right") return document.getElementById("audio-mute-mic-btn");
+        if (direction === "up" || direction === "down") return document.getElementById("audio-end-call-btn");
+        return document.getElementById("audio-end-call-btn");
     }
 
     // --- 5. Incoming / Outgoing Overlays ---
@@ -2420,18 +2524,6 @@ function getCustomNavigationTarget(current, direction) {
         if (direction === "up") return document.getElementById("policy-scroll-area");
     }
 
-    // --- 9. Alexa Guide Modal ---
-    if (id === "close-guide-modal-btn") {
-        if (direction === "down") return document.getElementById("guide-scroll-area");
-    }
-    if (id === "guide-scroll-area") {
-        if (direction === "up") return document.getElementById("close-guide-modal-btn");
-        if (direction === "down") return document.getElementById("guide-ok-btn");
-    }
-    if (id === "guide-ok-btn") {
-        if (direction === "up") return document.getElementById("guide-scroll-area");
-    }
-
     return null;
 }
 
@@ -2446,7 +2538,7 @@ function handleDpadNavigation(direction) {
     }
 
     // Special scroll handling for TV remote on scrollable areas
-    if (current.id === "policy-scroll-area" || current.id === "guide-scroll-area" || current.id === "messages-area") {
+    if (current.id === "policy-scroll-area" || current.id === "messages-area" || current.id === "guide-scroll-area") {
         if (direction === 'down') {
             const canScrollDown = current.scrollTop < (current.scrollHeight - current.clientHeight - 8);
             if (canScrollDown) {
@@ -2930,12 +3022,12 @@ document.addEventListener("click", async (e) => {
                 const data = await res.json();
                 if (data && data.success) {
                     sentViaCustomBrevo = true;
-                    console.log("[ZingTalk Web] Branded password reset dispatched via Brevo successfully!");
+                    console.log("[ZingTalk TV] Branded password reset dispatched via Brevo successfully!");
                 } else {
-                    console.warn("[ZingTalk Web] Custom reset mailer notice:", data?.message);
+                    console.warn("[ZingTalk TV] Custom reset mailer notice:", data?.message);
                 }
             } catch (mailerErr) {
-                console.warn("[ZingTalk Web] Mailer endpoint unreachable:", mailerErr.message);
+                console.warn("[ZingTalk TV] Mailer endpoint unreachable:", mailerErr.message);
             }
 
             if (!sentViaCustomBrevo) {
@@ -3247,8 +3339,8 @@ document.addEventListener("click", async (e) => {
         return;
     }
 
-    // Call Screen Controls
-    if (e.target.id === "mute-mic-btn" || e.target.closest("#mute-mic-btn")) {
+    // Call Screen Controls (Unified for both Video and Audio Pages)
+    if (e.target.id === "mute-mic-btn" || e.target.closest("#mute-mic-btn") || e.target.id === "audio-mute-mic-btn" || e.target.closest("#audio-mute-mic-btn")) {
         if (localStream) {
             const track = localStream.getAudioTracks()[0];
             if (track) {
@@ -3260,7 +3352,13 @@ document.addEventListener("click", async (e) => {
         return;
     }
 
-    if (e.target.id === "toggle-video-btn" || e.target.closest("#toggle-video-btn")) {
+    if (e.target.id === "toggle-video-btn" || e.target.closest("#toggle-video-btn") || e.target.id === "audio-switch-video-btn" || e.target.closest("#audio-switch-video-btn")) {
+        if (currentCallType === "audio") {
+            // Switch current audio call to video call
+            currentCallType = "video";
+            startWebRTC(false).catch(() => {});
+            return;
+        }
         if (localStream) {
             const track = localStream.getVideoTracks()[0];
             if (track) {
@@ -3275,7 +3373,7 @@ document.addEventListener("click", async (e) => {
         return;
     }
 
-    if (e.target.id === "end-call-btn" || e.target.closest("#end-call-btn")) {
+    if (e.target.id === "end-call-btn" || e.target.closest("#end-call-btn") || e.target.id === "audio-end-call-btn" || e.target.closest("#audio-end-call-btn")) {
         endCall();
         return;
     }
@@ -3400,6 +3498,8 @@ document.getElementById("contact-uid-input")?.addEventListener("input", (e) => {
     e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
 });
 
+
+
 // Tab focus listener for D-Pad / Keyboard
 document.getElementById("tab-btn-email")?.addEventListener("focus", () => switchToLoginTab("email"));
 document.getElementById("tab-btn-guest")?.addEventListener("focus", () => switchToLoginTab("guest"));
@@ -3409,5 +3509,3 @@ window.addEventListener("load", () => {
     setTimeout(autoFocusFirstElement, 150);
 });
 setTimeout(autoFocusFirstElement, 300);
-
-
