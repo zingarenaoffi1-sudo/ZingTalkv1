@@ -2,16 +2,19 @@ const fs = require('fs');
 const path = require('path');
 
 const targetPlatform = (process.argv[2] || 'tv').toLowerCase();
-console.log(`[prepare-android] Starting Android project configuration for [${targetPlatform.toUpperCase()}]...`);
+const packageName = targetPlatform === 'tv' ? 'com.zingtalktv.com' : 'com.zingtalk.com';
+const appDisplayName = targetPlatform === 'tv' ? 'ZingTalk TV' : 'ZingTalk';
+console.log(`[prepare-android] Starting Android project configuration for [${targetPlatform.toUpperCase()}] with package [${packageName}]...`);
 
-// 1. Configure MainActivity.java in com.zingtalk.com
-const mainActivityDir = path.join('android', 'app', 'src', 'main', 'java', 'com', 'zingtalk', 'com');
+// 1. Configure MainActivity.java in target package
+const packagePathParts = packageName.split('.');
+const mainActivityDir = path.join('android', 'app', 'src', 'main', 'java', ...packagePathParts);
 if (!fs.existsSync(mainActivityDir)) {
     fs.mkdirSync(mainActivityDir, { recursive: true });
 }
 
 const mainActivityPath = path.join(mainActivityDir, 'MainActivity.java');
-const customMainActivity = `package com.zingtalk.com;
+const customMainActivity = `package ${packageName};
 
 import android.Manifest;
 import android.app.NotificationChannel;
@@ -43,9 +46,9 @@ public class MainActivity extends BridgeActivity {
     private static final int NOTIF_ID_INCOMING = 9001;
     private static final int NOTIF_ID_ONGOING = 9002;
 
-    public static final String ACTION_ACCEPT_CALL = "com.zingtalk.ACTION_ACCEPT_CALL";
-    public static final String ACTION_DECLINE_CALL = "com.zingtalk.ACTION_DECLINE_CALL";
-    public static final String ACTION_END_CALL = "com.zingtalk.ACTION_END_CALL";
+    public static final String ACTION_ACCEPT_CALL = "${packageName}.ACTION_ACCEPT_CALL";
+    public static final String ACTION_DECLINE_CALL = "${packageName}.ACTION_DECLINE_CALL";
+    public static final String ACTION_END_CALL = "${packageName}.ACTION_END_CALL";
 
     private NotificationManager notificationManager;
 
@@ -370,16 +373,24 @@ public class MainActivity extends BridgeActivity {
 fs.writeFileSync(mainActivityPath, customMainActivity, 'utf8');
 console.log(`[prepare-android] ✅ Written custom MainActivity.java with ZingNativeBridge`);
 
-// Clean up any stray duplicate MainActivity in other package subdirs
-['tv', 'mobile'].forEach(subPkg => {
-    const strayFile = path.join('android', 'app', 'src', 'main', 'java', 'com', 'zingtalk', subPkg, 'MainActivity.java');
-    if (fs.existsSync(strayFile)) {
+// Clean up inactive package directories to prevent duplicate class compilation errors
+if (targetPlatform === 'tv') {
+    const mobilePkgDir = path.join('android', 'app', 'src', 'main', 'java', 'com', 'zingtalk');
+    if (fs.existsSync(mobilePkgDir)) {
         try {
-            fs.unlinkSync(strayFile);
-            console.log(`[prepare-android] 🧹 Removed duplicate ${strayFile}`);
+            fs.rmSync(mobilePkgDir, { recursive: true, force: true });
+            console.log(`[prepare-android] 🧹 Removed inactive package dir: ${mobilePkgDir}`);
         } catch (e) {}
     }
-});
+} else {
+    const tvPkgDir = path.join('android', 'app', 'src', 'main', 'java', 'com', 'zingtalktv');
+    if (fs.existsSync(tvPkgDir)) {
+        try {
+            fs.rmSync(tvPkgDir, { recursive: true, force: true });
+            console.log(`[prepare-android] 🧹 Removed inactive package dir: ${tvPkgDir}`);
+        } catch (e) {}
+    }
+}
 
 // 1.1 Ensure google-services.json is synced to android/app
 const rootGoogleServices = path.join('.', 'google-services.json');
@@ -420,15 +431,24 @@ densities.forEach(d => {
 });
 console.log(`[prepare-android] ✅ Synchronized launcher icons for [${targetPlatform}]`);
 
-// 1.3 Configure Android App Display Name in strings.xml (ZingTalk TV vs ZingTalk)
+// 1.3 Configure Android App Display Name & Package in strings.xml
 const stringsPath = path.join('android', 'app', 'src', 'main', 'res', 'values', 'strings.xml');
 if (fs.existsSync(stringsPath)) {
-    const appDisplayName = targetPlatform === 'tv' ? 'ZingTalk TV' : 'ZingTalk';
     let stringsContent = fs.readFileSync(stringsPath, 'utf8');
     stringsContent = stringsContent.replace(/<string name="app_name">.*?<\/string>/, `<string name="app_name">${appDisplayName}</string>`);
     stringsContent = stringsContent.replace(/<string name="title_activity_main">.*?<\/string>/, `<string name="title_activity_main">${appDisplayName}</string>`);
+    if (stringsContent.includes('name="package_name"')) {
+        stringsContent = stringsContent.replace(/<string name="package_name">.*?<\/string>/, `<string name="package_name">${packageName}</string>`);
+    } else {
+        stringsContent = stringsContent.replace('</resources>', `    <string name="package_name">${packageName}</string>\n</resources>`);
+    }
+    if (stringsContent.includes('name="custom_url_scheme"')) {
+        stringsContent = stringsContent.replace(/<string name="custom_url_scheme">.*?<\/string>/, `<string name="custom_url_scheme">${packageName}</string>`);
+    } else {
+        stringsContent = stringsContent.replace('</resources>', `    <string name="custom_url_scheme">${packageName}</string>\n</resources>`);
+    }
     fs.writeFileSync(stringsPath, stringsContent, 'utf8');
-    console.log(`[prepare-android] ✅ Configured Android app_name to "${appDisplayName}"`);
+    console.log(`[prepare-android] ✅ Configured Android app_name to "${appDisplayName}" and package_name to "${packageName}"`);
 }
 
 // 2. Configure network_security_config.xml
@@ -469,8 +489,8 @@ if (fs.existsSync(appGradlePath)) {
     let content = fs.readFileSync(appGradlePath, 'utf8');
 
     // Enforce consistent applicationId and namespace
-    content = content.replace(/applicationId\s+"[^"]+"/, 'applicationId "com.zingtalk.com"');
-    content = content.replace(/namespace\s*=?\s*"[^"]+"/, 'namespace = "com.zingtalk.com"');
+    content = content.replace(/applicationId\s+"[^"]+"/, `applicationId "${packageName}"`);
+    content = content.replace(/namespace\s*=?\s*"[^"]+"/, `namespace = "${packageName}"`);
 
     const keystoreFileName = targetPlatform === 'tv' ? 'zingtalk-tv-release.keystore' : 'zingtalk-mobile-release.keystore';
     const keyAlias = targetPlatform === 'tv' ? 'zingtalk-tv' : 'zingtalk-mobile';
@@ -492,7 +512,7 @@ if (fs.existsSync(appGradlePath)) {
     }
 
     fs.writeFileSync(appGradlePath, content, 'utf8');
-    console.log(`[prepare-android] ✅ Configured ${keystoreFileName} with alias ${keyAlias} and com.zingtalk.com appId`);
+    console.log(`[prepare-android] ✅ Configured ${keystoreFileName} with alias ${keyAlias} and ${packageName} appId`);
 }
 
 // 5. AndroidManifest.xml
@@ -636,5 +656,23 @@ if (fs.existsSync(unwantedScreenshots)) {
 }
 
 console.log(`[prepare-android] ✅ Synchronized web bundle from ${platformSourceDir} to Android assets public directory!`);
+
+// 8. Synchronize capacitor.config.json in assets & root with packageName
+const capConfigsToSync = [
+    path.join('android', 'app', 'src', 'main', 'assets', 'capacitor.config.json'),
+    path.join('.', 'capacitor.config.json')
+];
+capConfigsToSync.forEach(cfgPath => {
+    if (fs.existsSync(cfgPath)) {
+        try {
+            const raw = fs.readFileSync(cfgPath, 'utf8');
+            const parsed = JSON.parse(raw);
+            parsed.appId = packageName;
+            parsed.appName = appDisplayName;
+            fs.writeFileSync(cfgPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
+            console.log(`[prepare-android] ✅ Updated ${cfgPath} with appId="${packageName}"`);
+        } catch (e) {}
+    }
+});
 
 console.log(`[prepare-android] Android project successfully configured for ${targetPlatform}!`);

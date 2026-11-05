@@ -58,10 +58,16 @@ android {
 
     
 
-    namespace = "com.zingtalk.com"
+    
+
+    
+
+    
+
+    namespace = "com.zingtalktv.com"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.zingtalk.com"
+        applicationId "com.zingtalktv.com"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

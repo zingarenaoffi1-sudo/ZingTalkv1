@@ -1,18 +1,18 @@
 {
-	"appId": "com.zingtalk.com",
-	"appName": "ZingTalk",
-	"webDir": "dist",
-	"bundledWebRuntime": false,
-	"server": {
-		"androidScheme": "http",
-		"cleartext": true,
-		"allowNavigation": [
-			"zingtalk.duckdns.org",
-			"zingtalk.duckdns.org:*",
-			"*.duckdns.org",
-			"*.google.com",
-			"*.firebaseapp.com",
-			"*.googleapis.com"
-		]
-	}
+  "appId": "com.zingtalktv.com",
+  "appName": "ZingTalk TV",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true,
+    "allowNavigation": [
+      "zingtalk.duckdns.org",
+      "zingtalk.duckdns.org:*",
+      "*.duckdns.org",
+      "*.google.com",
+      "*.firebaseapp.com",
+      "*.googleapis.com"
+    ]
+  }
 }

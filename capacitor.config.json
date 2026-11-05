@@ -1,6 +1,6 @@
 {
-  "appId": "com.zingtalk.com",
-  "appName": "ZingTalk",
+  "appId": "com.zingtalktv.com",
+  "appName": "ZingTalk TV",
   "webDir": "dist",
   "bundledWebRuntime": false,
   "server": {
@@ -16,4 +16,3 @@
     ]
   }
 }
-
