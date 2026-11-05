@@ -446,8 +446,6 @@ const netConfigContent = `<?xml version="1.0" encoding="utf-8"?>
         </trust-anchors>
     </base-config>
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">zingtalk.duckdns.org</domain>
-        <domain includeSubdomains="true">duckdns.org</domain>
         <domain includeSubdomains="true">localhost</domain>
         <domain includeSubdomains="true">10.0.2.2</domain>
     </domain-config>

@@ -1,0 +1,23 @@
+{
+  "allUsers": {
+    "3567231194": {
+      "uid": "3567231194",
+      "name": "Guest",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-05",
+      "lastSeenDate": "2026-11-05",
+      "firstSeenTime": "2026-11-05T08:56:34.229Z",
+      "lastSeenTime": "2026-11-05T08:56:34.229Z",
+      "totalConnections": 1
+    }
+  },
+  "dailyStats": {
+    "2026-11-05": {
+      "newUsers": [
+        "3567231194"
+      ],
+      "returningUsers": [],
+      "totalConnections": 1
+    }
+  }
+}

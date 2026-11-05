@@ -3155,7 +3155,7 @@ app.get(['/screenshots', '/screenshots/'], (req, res) => {
         { file: '2_firetv_hd_video_call.png', title: '2. Fullscreen HD Video Call & Fallback PIP' },
         { file: '3_firetv_incoming_call.png', title: '3. TV Incoming Call Alert Modal' },
         { file: '4_firetv_chat_messaging.png', title: '4. TV Real-Time Messaging & Virtual Keyboard' },
-        { file: '5_firetv_hd_audio_call.png', title: '5. HD Audio Call with Radar Visualizer' }
+        { file: '5_firetv_auth_guest_login.png', title: '5. Fire TV Instant Guest Sign-In & 10-Digit UID' }
     ];
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>ZingTalk Fire TV - Amazon Appstore Screenshots</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
