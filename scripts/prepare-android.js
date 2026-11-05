@@ -420,15 +420,21 @@ if (fs.existsSync(rootGoogleServices)) {
     console.log('[prepare-android] ✅ Synced google-services.json to android/app');
 }
 
-// 1.2 Ensure Banner Drawable Exists for TV
+// 1.2 Ensure Banner Drawable Exists for TV (320x180 16:9 Leanback Banner)
 const drawableDir = path.join('android', 'app', 'src', 'main', 'res', 'drawable');
 if (!fs.existsSync(drawableDir)) {
     fs.mkdirSync(drawableDir, { recursive: true });
 }
 const bannerDest = path.join(drawableDir, 'banner.png');
-const bannerSrc = path.join('assets', 'icon.png');
-if (!fs.existsSync(bannerDest) && fs.existsSync(bannerSrc)) {
-    fs.copyFileSync(bannerSrc, bannerDest);
+const pkgBannerSrc = path.join('packages', targetPlatform, 'assets', 'banner.png');
+const rootBannerSrc = path.join('assets', 'banner.png');
+const fallbackIconSrc = path.join('assets', 'icon.png');
+if (fs.existsSync(pkgBannerSrc)) {
+    fs.copyFileSync(pkgBannerSrc, bannerDest);
+} else if (fs.existsSync(rootBannerSrc)) {
+    fs.copyFileSync(rootBannerSrc, bannerDest);
+} else if (!fs.existsSync(bannerDest) && fs.existsSync(fallbackIconSrc)) {
+    fs.copyFileSync(fallbackIconSrc, bannerDest);
 }
 
 // 1.25 Synchronize platform-specific launcher icons

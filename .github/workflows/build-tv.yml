@@ -60,7 +60,11 @@ jobs:
       - name: Inject Fire TV Icons & Leanback Banner
         run: |
           mkdir -p android/app/src/main/res/drawable
-          if [ ! -f "android/app/src/main/res/drawable/banner.png" ] && [ -f "assets/icon.png" ]; then
+          if [ -f "packages/tv/assets/banner.png" ]; then
+            cp packages/tv/assets/banner.png android/app/src/main/res/drawable/banner.png
+          elif [ -f "assets/banner.png" ]; then
+            cp assets/banner.png android/app/src/main/res/drawable/banner.png
+          elif [ ! -f "android/app/src/main/res/drawable/banner.png" ] && [ -f "assets/icon.png" ]; then
             cp assets/icon.png android/app/src/main/res/drawable/banner.png
           fi
           for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do

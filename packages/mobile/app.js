@@ -358,6 +358,7 @@ let incomingCallerUid = null;
 let incomingCallType = "video";
 let pendingOffer = null;
 let iceCandidatesQueue = [];
+let isStartingWebRTC = false;
 let callAudioCtx = null;
 let outgoingRingInterval = null;
 let incomingRingInterval = null;
@@ -776,9 +777,13 @@ function connectSocket() {
 
     socket.on("call_response_received", async (data) => {
         stopRingtone();
+        if (outgoingCallTimer) {
+            clearTimeout(outgoingCallTimer);
+            outgoingCallTimer = null;
+        }
         document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
         if (data && data.status === "accepted") {
-            if (!peerConnection) {
+            if (!peerConnection && !isStartingWebRTC) {
                 await startMobileWebRTC(true);
             }
         } else {
@@ -788,23 +793,23 @@ function connectSocket() {
         }
     });
 
-    socket.on("call_accepted", async () => {
-        stopRingtone();
-        document.getElementById("mobile-outgoing-call-overlay")?.classList.add("hidden");
-        if (!peerConnection) {
-            await startMobileWebRTC(true);
-        }
-    });
-
     const handleWebRtcOffer = async (data) => {
         if (!data || !data.offer) return;
         if (!peerConnection) {
             pendingOffer = data.offer;
             return;
         }
+        if (peerConnection.signalingState !== "stable") return;
         try {
+            const hasVideoInSdp = typeof data.offer.sdp === "string" && data.offer.sdp.includes("m=video");
+            if (data.callType === "video" || hasVideoInSdp) {
+                incomingCallType = "video";
+            }
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-            const answer = await peerConnection.createAnswer();
+            const answer = await peerConnection.createAnswer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: incomingCallType === "video"
+            });
             await peerConnection.setLocalDescription(answer);
             socket.emit("webrtc_answer", { targetUid: currentTargetUid || data.callerUid, answer });
             while (iceCandidatesQueue.length > 0) {
@@ -817,10 +822,10 @@ function connectSocket() {
         }
     };
     socket.on("webrtc_offer_received", handleWebRtcOffer);
-    socket.on("webrtc_offer", handleWebRtcOffer);
 
     const handleWebRtcAnswer = async (data) => {
         if (!peerConnection || !data || !data.answer) return;
+        if (peerConnection.signalingState !== "have-local-offer") return;
         try {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
             while (iceCandidatesQueue.length > 0) {
@@ -833,7 +838,6 @@ function connectSocket() {
         }
     };
     socket.on("webrtc_answer_received", handleWebRtcAnswer);
-    socket.on("webrtc_answer", handleWebRtcAnswer);
 
     const handleWebRtcIce = async (data) => {
         if (!data || !data.candidate) return;
@@ -846,7 +850,6 @@ function connectSocket() {
         }
     };
     socket.on("webrtc_ice_candidate_received", handleWebRtcIce);
-    socket.on("webrtc_ice_candidate", handleWebRtcIce);
 
     const handleCallEnded = () => {
         stopRingtone();
@@ -855,7 +858,6 @@ function connectSocket() {
         showToast("Call ended.");
     };
     socket.on("webrtc_call_ended", handleCallEnded);
-    socket.on("call_ended", handleCallEnded);
 
     socket.on("receive_message", (data) => {
         const sender = data?.senderUid ? String(data.senderUid).trim() : null;
@@ -969,6 +971,9 @@ async function setupPeerConnection() {
 }
 
 async function startMobileWebRTC(isCaller) {
+    if (isStartingWebRTC || peerConnection) return;
+    isStartingWebRTC = true;
+
     const outOverlay = document.getElementById("mobile-outgoing-call-overlay");
     if (outOverlay) {
         outOverlay.classList.add("hidden");
@@ -994,6 +999,7 @@ async function startMobileWebRTC(isCaller) {
     CallNotificationService.showOngoing(currentTargetUid, nameToShow, "00:00");
     await setupLocalMedia(incomingCallType === "video");
     await setupPeerConnection();
+    isStartingWebRTC = false;
 
     if (isCaller) {
         try {
@@ -1094,8 +1100,13 @@ async function initiateCall(targetUid, type = "video") {
 
 async function answerCall(targetUid, type = "video") {
     stopIncomingRingtone();
+    if (incomingCallTimer) {
+        clearTimeout(incomingCallTimer);
+        incomingCallTimer = null;
+    }
     const cleanTarget = String(targetUid || "").trim().replace(/\D/g, "");
     currentTargetUid = cleanTarget;
+    incomingCallerUid = null;
     incomingCallType = type;
 
     if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
@@ -1108,11 +1119,10 @@ async function answerCall(targetUid, type = "video") {
         inOverlay.style.display = "none";
     }
 
+    await startMobileWebRTC(false);
     if (socket) {
         socket.emit("call_response", { targetUid: cleanTarget, status: "accepted" });
-        socket.emit("answer_call", { callerUid: cleanTarget, answererUid: my10DigitUid });
     }
-    await startMobileWebRTC(false);
 }
 
 function startTimer() {
@@ -1137,7 +1147,6 @@ function startTimer() {
 function endCall() {
     if (socket && currentTargetUid) {
         socket.emit("webrtc_end_call", { targetUid: currentTargetUid });
-        socket.emit("end_call", { targetUid: currentTargetUid });
     }
     stopRingtone();
     playCallEndedTone();
@@ -1193,6 +1202,7 @@ function endCallCleanup() {
 
     currentTargetUid = null;
     incomingCallerUid = null;
+    isStartingWebRTC = false;
     isMicMuted = false;
     isVideoDisabled = false;
     pendingOffer = null;

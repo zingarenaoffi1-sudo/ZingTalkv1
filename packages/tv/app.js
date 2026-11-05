@@ -993,9 +993,13 @@ export function registerSocketListeners(s) {
 
     s.on("call_response_received", async (data) => {
         stopRingtone();
+        if (outgoingCallTimer) {
+            clearTimeout(outgoingCallTimer);
+            outgoingCallTimer = null;
+        }
         document.getElementById("outgoing-call-overlay")?.classList.add("hidden");
         if (data && data.status === "accepted") {
-            if (!peerConnection) {
+            if (!peerConnection && !isStartingWebRTC) {
                 await startWebRTC(true);
             }
         } else {
@@ -1541,7 +1545,11 @@ async function upgradeAudioCallToVideo() {
     }
 }
 
+let isStartingWebRTC = false;
+
 async function startWebRTC(isCaller) {
+    if (isStartingWebRTC || peerConnection) return;
+    isStartingWebRTC = true;
     isMicMuted = false;
     updateCallControlsUI();
     // 1. Hide TV Top Bar and Main Screen to isolate call to 100% fullscreen dedicated page
@@ -1684,6 +1692,7 @@ async function startWebRTC(isCaller) {
     }
 
     peerConnection = new RTCPeerConnection(rtcConfig);
+    isStartingWebRTC = false;
     localStream.getTracks().forEach(track => {
         peerConnection.addTrack(track, localStream);
         track.onended = () => {
@@ -1932,6 +1941,7 @@ function endCallCleanup() {
     }
 
     isCallInitiating = false;
+    isStartingWebRTC = false;
     isMicMuted = false;
     activeCallTarget = null;
     pendingOffer = null;
@@ -3593,6 +3603,10 @@ document.addEventListener("click", async (e) => {
     // Call Response Overlays
     if (e.target.id === "accept-call-btn" || e.target.closest("#accept-call-btn")) {
         stopRingtone();
+        if (incomingCallTimer) {
+            clearTimeout(incomingCallTimer);
+            incomingCallTimer = null;
+        }
         document.getElementById("incoming-call-overlay")?.classList.add("hidden");
         if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
             try { window.ZingNativeBridge.requestCallPermissions(currentCallType); } catch (_) {}
@@ -3612,6 +3626,10 @@ document.addEventListener("click", async (e) => {
 
     if (e.target.id === "reject-call-btn" || e.target.closest("#reject-call-btn")) {
         stopRingtone();
+        if (incomingCallTimer) {
+            clearTimeout(incomingCallTimer);
+            incomingCallTimer = null;
+        }
         playCallEndedTone();
         document.getElementById("incoming-call-overlay")?.classList.add("hidden");
         if (socket && activeCallTarget) {
