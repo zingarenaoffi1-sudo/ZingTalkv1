@@ -82,7 +82,7 @@
         <!-- View 2: Dialpad -->
         <main id="view-dialpad" class="mobile-view hidden">
             <div class="dialpad-container">
-                <input type="text" id="mobile-dial-input" class="dialpad-display" placeholder="Enter 10-Digit UID" maxlength="10" readonly>
+                <input type="tel" id="mobile-dial-input" class="dialpad-display" placeholder="Enter 10-Digit UID" maxlength="10" inputmode="numeric" pattern="[0-9]*">
                 <div class="dialpad-grid">
                     <button type="button" class="dial-btn" data-key="1">1</button>
                     <button type="button" class="dial-btn" data-key="2">2</button>
@@ -100,13 +100,16 @@
                 <div class="dialpad-actions">
                     <button type="button" id="mobile-dial-video-btn" class="dial-call-btn video">
                         <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
-                        <span>Video Call</span>
+                        <span>Video</span>
                     </button>
                     <button type="button" id="mobile-dial-audio-btn" class="dial-call-btn audio">
                         <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56-.35-.12-.74-.03-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/></svg>
-                        <span>Audio Call</span>
+                        <span>Audio</span>
                     </button>
                 </div>
+                <button type="button" id="mobile-dial-chat-btn" class="auth-guest-btn" style="width: 100%; margin-top: 12px; border-color: rgba(0, 210, 157, 0.4); color: var(--accent-cyan);">
+                    💬 Open Chat with UID
+                </button>
             </div>
         </main>
 
@@ -131,6 +134,9 @@
             </button>
             <button type="button" id="open-mobile-policy-btn" class="auth-guest-btn" style="margin-top: 10px; width: 100%;">
                 🔒 Privacy Policy & Terms
+            </button>
+            <button type="button" id="profile-logout-btn" class="auth-guest-btn" style="margin-top: 10px; width: 100%; border-color: rgba(255, 71, 87, 0.4); color: #ff6b81;">
+                🚪 Sign Out
             </button>
         </main>
 
@@ -184,6 +190,11 @@
             </button>
             <div class="call-video-container">
                 <video id="remote-video" class="remote-video" autoplay playsinline></video>
+                <div id="mobile-audio-call-view" class="mobile-audio-call-stage hidden">
+                    <div id="mobile-audio-call-avatar" class="call-overlay-avatar pulsing">U</div>
+                    <h3 id="mobile-audio-call-name" class="call-overlay-name">Audio Call</h3>
+                    <p id="mobile-audio-call-sub" class="call-overlay-status" style="margin-bottom: 0; color: var(--accent-cyan);">End-to-End Encrypted HD Voice</p>
+                </div>
                 <video id="local-video" class="local-video" autoplay playsinline muted></video>
                 <div id="no-camera-pip-placeholder" class="mobile-no-camera-pip hidden">
                     <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M19 10.5V7c0-.55-.45-1-1-1H7.83l2 2H18v7.17l2 2V10.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.55-.18L19.73 21 21 19.73 3.27 2zM5 16V8h1.27l8 8H5z"/></svg>
@@ -340,11 +351,17 @@
                     </div>
                     <input type="password" id="mobile-auth-pass" class="auth-input" placeholder="••••••••">
                 </div>
+                <div id="mobile-auth-error" class="hidden" style="font-size: 12.5px; padding: 10px 14px; border-radius: 8px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; line-height: 1.4;"></div>
                 <button type="button" id="mobile-auth-submit-btn" class="auth-submit-btn">Sign In</button>
                 <button type="button" id="mobile-guest-btn" class="auth-guest-btn">Instant Guest Login</button>
                 <div class="auth-switch-text">
                     <span id="mobile-auth-toggle-label">Don't have an account?</span>
                     <button type="button" id="mobile-auth-toggle-btn" class="auth-switch-btn">Sign Up</button>
+                </div>
+                <div style="text-align: center; margin-top: 8px;">
+                    <button type="button" id="open-auth-policy-btn" class="auth-forgot-link" style="color: var(--text-secondary); font-size: 12px;">
+                        🔒 Privacy Policy & Terms
+                    </button>
                 </div>
             </div>
         </div>
@@ -433,5 +450,12 @@
     </div>
 
     <script type="module" src="app.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+            });
+        }
+    </script>
 </body>
 </html>

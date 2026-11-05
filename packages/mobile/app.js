@@ -4,7 +4,9 @@ import {
     signInWithEmailAndPassword, 
     createUserWithEmailAndPassword,
     sendPasswordResetEmail,
-    updateProfile
+    signInAnonymously,
+    updateProfile,
+    signOut
 } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js";
 import { 
     getFirestore, 
@@ -120,10 +122,12 @@ const rtcConfig = {
 
 let currentUser = null;
 let my10DigitUid = null;
-let currentTargetUid = null;
+let currentTargetUid = null; // Strictly for active/outgoing/incoming Calls
+let currentChatUid = null;   // Strictly for open Chat conversation
 let socket = null;
 let myContacts = [];
 let chatHistory = {};
+let unreadCounts = {};
 let localStream = null;
 let peerConnection = null;
 let isMicMuted = false;
@@ -133,12 +137,61 @@ let callTimer = null;
 let callDurationSeconds = 0;
 let isSignUpMode = false;
 
+function escapeHtml(text) {
+    if (!text) return "";
+    const div = document.createElement("div");
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
 function showToast(msg) {
     const toast = document.getElementById("mobile-toast");
     if (!toast) return;
     toast.textContent = msg;
     toast.style.opacity = "1";
     setTimeout(() => { toast.style.opacity = "0"; }, 3000);
+}
+
+function playIncomingChime() {
+    try {
+        const ctx = getCallAudioContext();
+        if (!ctx) return;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        const now = ctx.currentTime;
+        osc.frequency.setValueAtTime(587.33, now);
+        osc.frequency.setValueAtTime(880.00, now + 0.09);
+        gain.gain.setValueAtTime(0.18, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+    } catch (_) {}
+}
+
+async function copyTextToClipboard(text) {
+    if (!text) return false;
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch (_) {}
+    try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        return true;
+    } catch (_) {
+        return false;
+    }
 }
 
 function updateDisplays(uid) {
@@ -159,6 +212,11 @@ function getHistoryStorageKey() {
     return uid ? `zingTalkMobileHistory_${uid}` : "zingTalkMobileHistory";
 }
 
+function getUnreadStorageKey() {
+    const uid = my10DigitUid || currentUser?.zingUid;
+    return uid ? `zingTalkMobileUnread_${uid}` : "zingTalkMobileUnread";
+}
+
 function loadContacts() {
     try {
         const key = getContactsStorageKey();
@@ -172,6 +230,10 @@ function loadContacts() {
         const hStored = localStorage.getItem(getHistoryStorageKey());
         chatHistory = hStored ? JSON.parse(hStored) : {};
     } catch (_) { chatHistory = {}; }
+    try {
+        const uStored = localStorage.getItem(getUnreadStorageKey());
+        unreadCounts = uStored ? JSON.parse(uStored) : {};
+    } catch (_) { unreadCounts = {}; }
     renderContacts();
 }
 
@@ -191,6 +253,12 @@ function saveChatHistory() {
     } catch (_) {}
 }
 
+function saveUnreadCounts() {
+    try {
+        localStorage.setItem(getUnreadStorageKey(), JSON.stringify(unreadCounts));
+    } catch (_) {}
+}
+
 function renderContacts() {
     const list = document.getElementById("mobile-contacts-list");
     if (!list) return;
@@ -203,21 +271,34 @@ function renderContacts() {
         const card = document.createElement("div");
         card.className = "contact-card";
         const initial = (contact.name || "U").charAt(0).toUpperCase();
+        const unread = unreadCounts[contact.uid] || 0;
+        const msgs = chatHistory[contact.uid] || [];
+        const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+        const lastText = lastMsg ? String(lastMsg.text || "") : "";
+        const lastTime = lastMsg && lastMsg.timestamp ? String(lastMsg.timestamp) : "";
+
         card.innerHTML = `
-            <div class="contact-avatar">${initial}</div>
-            <div class="contact-info">
-                <div class="contact-name">${contact.name}</div>
-                <div class="contact-uid">UID: ${contact.uid}</div>
+            <div class="contact-avatar">${escapeHtml(initial)}</div>
+            <div class="contact-info" style="min-width: 0;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <div class="contact-name" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(contact.name)}</div>
+                    ${unread > 0 ? `<span class="mobile-unread-badge">${unread}</span>` : ""}
+                </div>
+                <div class="contact-uid">UID: ${escapeHtml(contact.uid)}${lastTime ? ` • ${escapeHtml(lastTime)}` : ""}</div>
+                ${lastText ? `<div style="font-size: 12px; color: ${unread > 0 ? '#00d29d' : 'var(--text-muted)'}; font-weight: ${unread > 0 ? '600' : '400'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;">${escapeHtml(lastText.slice(0, 34))}</div>` : ""}
             </div>
             <div class="contact-actions">
                 <button type="button" class="action-icon-btn chat-btn" title="Chat">
-                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>
+                    <svg width="17" height="17" fill="currentColor" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>
                 </button>
                 <button type="button" class="action-icon-btn call-audio audio-btn" title="Audio Call">
-                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56-.35-.12-.74-.03-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/></svg>
+                    <svg width="17" height="17" fill="currentColor" viewBox="0 0 24 24"><path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56-.35-.12-.74-.03-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/></svg>
                 </button>
                 <button type="button" class="action-icon-btn call-video video-btn" title="Video Call">
-                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+                    <svg width="17" height="17" fill="currentColor" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+                </button>
+                <button type="button" class="action-icon-btn delete-btn" title="Delete Contact">
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
                 </button>
             </div>
         `;
@@ -237,6 +318,17 @@ function renderContacts() {
         card.querySelector(".video-btn")?.addEventListener("click", (e) => {
             e.stopPropagation();
             initiateCall(contact.uid, "video");
+        });
+        card.querySelector(".delete-btn")?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            myContacts = myContacts.filter(c => c.uid !== contact.uid);
+            delete unreadCounts[contact.uid];
+            saveUnreadCounts();
+            saveContacts();
+            if (socket && socket.connected && my10DigitUid) {
+                socket.emit("delete_contact", { myUid: my10DigitUid, targetUid: contact.uid });
+            }
+            showToast(`Removed ${contact.name}`);
         });
         list.appendChild(card);
     });
@@ -804,6 +896,10 @@ function connectSocket() {
             const hasVideoInSdp = typeof data.offer.sdp === "string" && data.offer.sdp.includes("m=video");
             if (data.callType === "video" || hasVideoInSdp) {
                 incomingCallType = "video";
+                const audioCallView = document.getElementById("mobile-audio-call-view");
+                if (audioCallView) audioCallView.classList.add("hidden");
+                const pipContainer = document.querySelector(".local-pip-container");
+                if (pipContainer) pipContainer.style.display = "block";
             }
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
             const answer = await peerConnection.createAnswer({
@@ -863,6 +959,7 @@ function connectSocket() {
         const sender = data?.senderUid ? String(data.senderUid).trim() : null;
         if (!sender) return;
         const senderName = data.senderName || ("User " + sender);
+        const timeStr = data.timestamp || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
         let knownContact = myContacts.find(c => c.uid === sender);
         if (!knownContact) {
@@ -871,16 +968,37 @@ function connectSocket() {
         } else {
             myContacts = [knownContact, ...myContacts.filter(c => c.uid !== sender)];
         }
-        saveContacts();
 
         if (!chatHistory[sender]) chatHistory[sender] = [];
-        chatHistory[sender].push({ text: data.text, sent: false });
+        chatHistory[sender].push({ text: data.text, sent: false, timestamp: timeStr });
         saveChatHistory();
 
-        if (currentTargetUid === sender) {
+        playIncomingChime();
+
+        const chatScreen = document.getElementById("mobile-chat-screen");
+        const isChatOpenForSender = (currentChatUid === sender && chatScreen && !chatScreen.classList.contains("hidden"));
+
+        if (isChatOpenForSender) {
+            unreadCounts[sender] = 0;
+            saveUnreadCounts();
             renderChatMessages();
+        } else {
+            unreadCounts[sender] = (unreadCounts[sender] || 0) + 1;
+            saveUnreadCounts();
+            showToast(`💬 ${knownContact.name}: ${(data.text || "").slice(0, 28)}`);
         }
-        showToast(`💬 ${knownContact.name}: ${(data.text || "").slice(0, 24)}`);
+        saveContacts();
+    });
+
+    socket.on("message_error", (data) => {
+        showToast("❌ " + (data?.message || "Message delivery failed"));
+    });
+
+    socket.on("contact_saved", (contacts) => {
+        if (Array.isArray(contacts)) {
+            myContacts = contacts;
+            saveContacts();
+        }
     });
 }
 
@@ -970,6 +1088,61 @@ async function setupPeerConnection() {
     };
 }
 
+function updateMobileCallControlsUI() {
+    const muteBtn = document.getElementById("mute-mic-btn");
+    const camBtn = document.getElementById("toggle-video-btn");
+    if (muteBtn) {
+        muteBtn.classList.toggle("active-danger", isMicMuted);
+    }
+    if (camBtn) {
+        camBtn.classList.toggle("active-danger", isVideoDisabled || incomingCallType === "audio");
+    }
+}
+
+async function upgradeMobileAudioToVideo() {
+    if (!peerConnection || !currentTargetUid) return;
+    try {
+        const vStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+        const vTrack = vStream.getVideoTracks()[0];
+        if (!vTrack) {
+            showToast("No camera detected");
+            return;
+        }
+        incomingCallType = "video";
+        isVideoDisabled = false;
+        if (localStream) {
+            localStream.addTrack(vTrack);
+        } else {
+            localStream = vStream;
+        }
+        peerConnection.addTrack(vTrack, localStream);
+        const localVideo = document.getElementById("local-video");
+        if (localVideo) {
+            localVideo.style.display = "block";
+            localVideo.srcObject = localStream;
+        }
+        const pipContainer = document.querySelector(".local-pip-container");
+        if (pipContainer) pipContainer.style.display = "block";
+        const audioCallView = document.getElementById("mobile-audio-call-view");
+        if (audioCallView) audioCallView.classList.add("hidden");
+        updateMobileCallControlsUI();
+
+        const offer = await peerConnection.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true
+        });
+        await peerConnection.setLocalDescription(offer);
+        if (socket) {
+            socket.emit("webrtc_offer", { targetUid: currentTargetUid, offer, callType: "video" });
+        }
+        showToast("Switched to HD Video Call");
+    } catch (_) {
+        showToast("Camera permission required for video");
+    }
+}
+
 async function startMobileWebRTC(isCaller) {
     if (isStartingWebRTC || peerConnection) return;
     isStartingWebRTC = true;
@@ -992,8 +1165,30 @@ async function startMobileWebRTC(isCaller) {
 
     const known = myContacts.find(c => c.uid === currentTargetUid);
     const nameToShow = known ? known.name : `UID: ${currentTargetUid}`;
+    const avatarLetter = (known?.name || "U").charAt(0).toUpperCase();
     const displayEl = document.getElementById("call-target-display");
     if (displayEl) displayEl.innerText = nameToShow;
+
+    // Configure Audio vs Video call UI stage
+    const audioCallView = document.getElementById("mobile-audio-call-view");
+    const audioAvatar = document.getElementById("audio-call-avatar");
+    const audioName = document.getElementById("audio-call-name");
+    const pipContainer = document.querySelector(".local-pip-container");
+
+    if (audioAvatar) audioAvatar.innerText = avatarLetter;
+    if (audioName) audioName.innerText = nameToShow;
+
+    if (incomingCallType === "audio") {
+        if (audioCallView) audioCallView.classList.remove("hidden");
+        if (pipContainer) pipContainer.style.display = "none";
+    } else {
+        if (audioCallView) audioCallView.classList.add("hidden");
+        if (pipContainer) pipContainer.style.display = "block";
+    }
+
+    isMicMuted = false;
+    isVideoDisabled = (incomingCallType === "audio");
+    updateMobileCallControlsUI();
 
     startTimer();
     CallNotificationService.showOngoing(currentTargetUid, nameToShow, "00:00");
@@ -1008,7 +1203,7 @@ async function startMobileWebRTC(isCaller) {
                 offerToReceiveVideo: incomingCallType === "video"
             });
             await peerConnection.setLocalDescription(offer);
-            socket.emit("webrtc_offer", { targetUid: currentTargetUid, offer });
+            socket.emit("webrtc_offer", { targetUid: currentTargetUid, offer, callType: incomingCallType });
         } catch (err) {
             console.error("[Mobile WebRTC] Offer error:", err);
         }
@@ -1184,6 +1379,9 @@ function endCallCleanup() {
     if (remoteVideo) remoteVideo.srcObject = null;
     if (noCamPlaceholder) noCamPlaceholder.classList.add("hidden");
 
+    const audioCallView = document.getElementById("mobile-audio-call-view");
+    if (audioCallView) audioCallView.classList.add("hidden");
+
     const callScreen = document.getElementById("mobile-call-screen");
     if (callScreen) {
         callScreen.classList.add("hidden");
@@ -1207,14 +1405,23 @@ function endCallCleanup() {
     isVideoDisabled = false;
     pendingOffer = null;
     iceCandidatesQueue = [];
+    updateMobileCallControlsUI();
 }
 
 function openChat(contact) {
-    currentTargetUid = contact.uid;
+    if (!contact || !contact.uid) return;
+    currentChatUid = String(contact.uid).trim();
+
+    if (unreadCounts[currentChatUid]) {
+        delete unreadCounts[currentChatUid];
+        saveUnreadCounts();
+        renderContacts();
+    }
+
     const nameEl = document.getElementById("chat-contact-name");
     const uidEl = document.getElementById("chat-contact-uid");
-    if (nameEl) nameEl.innerText = contact.name;
-    if (uidEl) uidEl.innerText = `UID: ${contact.uid}`;
+    if (nameEl) nameEl.innerText = contact.name || ("User " + currentChatUid);
+    if (uidEl) uidEl.innerText = `UID: ${currentChatUid}`;
     
     const chatScreen = document.getElementById("mobile-chat-screen");
     if (chatScreen) {
@@ -1228,13 +1435,25 @@ function openChat(contact) {
 
 function renderChatMessages() {
     const box = document.getElementById("mobile-chat-messages");
-    if (!box || !currentTargetUid) return;
+    if (!box || !currentChatUid) return;
     box.innerHTML = "";
-    const msgs = chatHistory[currentTargetUid] || [];
+    const msgs = chatHistory[currentChatUid] || [];
+    if (msgs.length === 0) {
+        box.innerHTML = `<div style="text-align: center; color: var(--text-muted); font-size: 12.5px; padding: 28px 16px;">🔒 End-to-End Encrypted Device-Only Chat.<br>Send a message to start chatting!</div>`;
+        return;
+    }
     msgs.forEach(m => {
         const b = document.createElement("div");
         b.className = `message-bubble ${m.sent ? 'sent' : 'received'}`;
-        b.innerText = m.text;
+        const textDiv = document.createElement("div");
+        textDiv.textContent = m.text || "";
+        b.appendChild(textDiv);
+        if (m.timestamp) {
+            const meta = document.createElement("div");
+            meta.style.cssText = "font-size: 10px; opacity: 0.65; text-align: right; margin-top: 3px;";
+            meta.textContent = m.timestamp;
+            b.appendChild(meta);
+        }
         box.appendChild(b);
     });
     box.scrollTop = box.scrollHeight;
@@ -1243,23 +1462,35 @@ function renderChatMessages() {
 function sendChatMessage() {
     const input = document.getElementById("mobile-chat-input");
     const text = input?.value.trim();
-    if (!text || !currentTargetUid) return;
-    if (!chatHistory[currentTargetUid]) chatHistory[currentTargetUid] = [];
-    chatHistory[currentTargetUid].push({ text, sent: true });
+    if (!text || !currentChatUid) return;
+
+    if (currentChatUid === my10DigitUid) {
+        showToast("You cannot message your own UID");
+        return;
+    }
+
+    const timeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (!chatHistory[currentChatUid]) chatHistory[currentChatUid] = [];
+    chatHistory[currentChatUid].push({ text, sent: true, timestamp: timeStr });
     saveChatHistory();
     renderChatMessages();
+    renderContacts();
     
     const payload = {
         senderUid: my10DigitUid,
         senderName: currentUser?.displayName || ("User " + my10DigitUid),
-        receiverUid: currentTargetUid,
-        targetUid: currentTargetUid,
+        receiverUid: currentChatUid,
+        targetUid: currentChatUid,
         text: text,
-        id: Date.now()
+        timestamp: timeStr,
+        id: "msg_" + Date.now()
     };
     
     if (socket && socket.connected) {
         socket.emit("send_message", payload);
+    } else {
+        showToast("Connecting to server...");
+        connectSocket();
     }
     input.value = "";
 }
@@ -1286,6 +1517,11 @@ function loginUser(user) {
         authScreen.classList.add("hidden");
         authScreen.style.display = "none";
     }
+    const authErr = document.getElementById("mobile-auth-error");
+    if (authErr) {
+        authErr.classList.add("hidden");
+        authErr.style.display = "none";
+    }
 
     // Switch cleanly to Contacts View
     switchMobileView("view-contacts");
@@ -1308,14 +1544,24 @@ function logoutUser() {
     if (peerConnection || currentTargetUid || incomingCallerUid) {
         try { endCall(); } catch (_) {}
     }
+    const chatScreen = document.getElementById("mobile-chat-screen");
+    if (chatScreen) {
+        chatScreen.classList.add("hidden");
+        chatScreen.style.display = "none";
+    }
     const uidToLogout = my10DigitUid;
     localStorage.removeItem("zingTalkMobileSession");
     currentUser = null;
     my10DigitUid = null;
     currentTargetUid = null;
+    currentChatUid = null;
     incomingCallerUid = null;
     myContacts = [];
     chatHistory = {};
+    unreadCounts = {};
+    if (auth) {
+        signOut(auth).catch(() => {});
+    }
     if (socket) {
         try {
             if (socket.connected && uidToLogout) {
@@ -1350,8 +1596,16 @@ function initMobileApp() {
 
     // Dialpad Number & Action Clicks
     const dialInput = document.getElementById("mobile-dial-input");
+    dialInput?.addEventListener("input", (e) => {
+        e.target.value = e.target.value.replace(/\D/g, "").slice(0, 10);
+    });
+    document.getElementById("new-contact-uid")?.addEventListener("input", (e) => {
+        e.target.value = e.target.value.replace(/\D/g, "").slice(0, 10);
+    });
+
     document.querySelectorAll(".dial-btn").forEach(b => {
         b.addEventListener("click", () => {
+            if (!dialInput) return;
             const k = b.dataset.key;
             if (k === "C") {
                 dialInput.value = "";
@@ -1364,15 +1618,30 @@ function initMobileApp() {
     });
 
     document.getElementById("mobile-dial-video-btn")?.addEventListener("click", () => {
-        const val = dialInput.value.trim().replace(/\D/g, "");
+        const val = (dialInput?.value || "").trim().replace(/\D/g, "");
         if (val.length === 10) initiateCall(val, "video");
         else showToast("Enter a 10-digit UID");
     });
 
     document.getElementById("mobile-dial-audio-btn")?.addEventListener("click", () => {
-        const val = dialInput.value.trim().replace(/\D/g, "");
+        const val = (dialInput?.value || "").trim().replace(/\D/g, "");
         if (val.length === 10) initiateCall(val, "audio");
         else showToast("Enter a 10-digit UID");
+    });
+
+    document.getElementById("mobile-dial-chat-btn")?.addEventListener("click", () => {
+        const val = (dialInput?.value || "").trim().replace(/\D/g, "");
+        if (val.length !== 10) {
+            showToast("Enter a 10-digit UID to chat");
+            return;
+        }
+        if (val === my10DigitUid) {
+            showToast("You cannot chat with your own UID");
+            return;
+        }
+        const known = myContacts.find(c => c.uid === val);
+        const contactObj = known || { name: `User ${val}`, uid: val };
+        openChat(contactObj);
     });
 
     // Contacts Add Modal
@@ -1394,20 +1663,27 @@ function initMobileApp() {
     document.getElementById("save-new-contact-btn")?.addEventListener("click", () => {
         const name = document.getElementById("new-contact-name")?.value.trim();
         const uid = document.getElementById("new-contact-uid")?.value.trim().replace(/\D/g, '');
-        if (name && uid.length === 10) {
-            myContacts.unshift({ name, uid });
-            saveContacts();
-            const modal = document.getElementById("add-contact-modal");
-            if (modal) {
-                modal.classList.add("hidden");
-                modal.style.display = "none";
-            }
-            document.getElementById("new-contact-name").value = "";
-            document.getElementById("new-contact-uid").value = "";
-            showToast("Contact saved!");
-        } else {
+        if (!name || !uid || uid.length !== 10) {
             showToast("Enter valid name and 10-digit UID");
+            return;
         }
+        if (uid === my10DigitUid) {
+            showToast("You cannot save your own UID");
+            return;
+        }
+        myContacts = [{ name, uid }, ...myContacts.filter(c => c.uid !== uid)];
+        saveContacts();
+        if (socket && socket.connected && my10DigitUid) {
+            socket.emit("save_contact", { myUid: my10DigitUid, targetUid: uid, customName: name });
+        }
+        const modal = document.getElementById("add-contact-modal");
+        if (modal) {
+            modal.classList.add("hidden");
+            modal.style.display = "none";
+        }
+        document.getElementById("new-contact-name").value = "";
+        document.getElementById("new-contact-uid").value = "";
+        showToast("Contact saved!");
     });
 
     // Chat Screen Controls
@@ -1417,17 +1693,17 @@ function initMobileApp() {
             chatScreen.classList.add("hidden");
             chatScreen.style.display = "none";
         }
-        currentTargetUid = null;
+        currentChatUid = null;
     });
     document.getElementById("mobile-chat-send-btn")?.addEventListener("click", sendChatMessage);
     document.getElementById("mobile-chat-input")?.addEventListener("keydown", (e) => {
         if (e.key === "Enter") sendChatMessage();
     });
     document.getElementById("chat-audio-btn")?.addEventListener("click", () => {
-        if (currentTargetUid) initiateCall(currentTargetUid, "audio");
+        if (currentChatUid) initiateCall(currentChatUid, "audio");
     });
     document.getElementById("chat-video-btn")?.addEventListener("click", () => {
-        if (currentTargetUid) initiateCall(currentTargetUid, "video");
+        if (currentChatUid) initiateCall(currentChatUid, "video");
     });
 
     // Call Screen Controls
@@ -1439,17 +1715,25 @@ function initMobileApp() {
             if (track) {
                 isMicMuted = !isMicMuted;
                 track.enabled = !isMicMuted;
+                updateMobileCallControlsUI();
                 showToast(isMicMuted ? "Microphone muted" : "Microphone active");
             }
         }
     });
     document.getElementById("toggle-video-btn")?.addEventListener("click", () => {
+        if (incomingCallType === "audio") {
+            upgradeMobileAudioToVideo();
+            return;
+        }
         if (localStream) {
             const track = localStream.getVideoTracks()[0];
             if (track) {
                 isVideoDisabled = !isVideoDisabled;
                 track.enabled = !isVideoDisabled;
+                updateMobileCallControlsUI();
                 showToast(isVideoDisabled ? "Camera off" : "Camera on");
+            } else {
+                upgradeMobileAudioToVideo();
             }
         }
     });
@@ -1586,14 +1870,16 @@ function initMobileApp() {
         endCallCleanup();
     });
 
-    // Mobile Privacy Policy Modal
-    document.getElementById("open-mobile-policy-btn")?.addEventListener("click", () => {
+    // Mobile Privacy Policy Modal (Accessible from both Login Screen & Profile Tab)
+    const openPolicyModal = () => {
         const pModal = document.getElementById("mobile-policy-modal");
         if (pModal) {
             pModal.classList.remove("hidden");
             pModal.style.display = "flex";
         }
-    });
+    };
+    document.getElementById("open-mobile-policy-btn")?.addEventListener("click", openPolicyModal);
+    document.getElementById("open-auth-policy-btn")?.addEventListener("click", openPolicyModal);
     document.getElementById("close-policy-btn")?.addEventListener("click", () => {
         const pModal = document.getElementById("mobile-policy-modal");
         if (pModal) {
@@ -1604,11 +1890,18 @@ function initMobileApp() {
 
     // Profile & Logout
     document.getElementById("mobile-logout-btn")?.addEventListener("click", logoutUser);
-    document.getElementById("copy-my-uid-btn")?.addEventListener("click", () => {
+    document.getElementById("profile-logout-btn")?.addEventListener("click", logoutUser);
+
+    const handleCopyMyUid = async () => {
         if (my10DigitUid) {
-            navigator.clipboard.writeText(my10DigitUid).then(() => showToast(`Copied: ${my10DigitUid}`));
+            await copyTextToClipboard(my10DigitUid);
+            showToast(`Copied UID: ${my10DigitUid}`);
+        } else {
+            showToast("UID is connecting...");
         }
-    });
+    };
+    document.getElementById("copy-my-uid-btn")?.addEventListener("click", handleCopyMyUid);
+    document.getElementById("mobile-my-uid-pill")?.addEventListener("click", handleCopyMyUid);
 
     // Guest Login Modal Flow (Prompt for Name)
     const guestBtn = document.getElementById("mobile-guest-btn");
@@ -1635,21 +1928,31 @@ function initMobileApp() {
         }
     });
 
-    const handleConfirmGuest = () => {
+    const handleConfirmGuest = async () => {
         const enteredName = guestNameInput?.value.trim() || "Guest User";
-        const guestUid = computeDeterministic10DigitUid("guest_" + Date.now());
+        let authUid = "guest_" + Date.now();
+        if (auth) {
+            try {
+                const cred = await signInAnonymously(auth);
+                if (cred?.user?.uid) authUid = cred.user.uid;
+                try { await updateProfile(cred.user, { displayName: enteredName }); } catch (_) {}
+            } catch (_) {}
+        }
+        const guestUid = computeDeterministic10DigitUid(authUid);
         const user = {
             displayName: enteredName,
             email: null,
-            uid: "guest_" + guestUid,
+            uid: authUid,
             zingUid: guestUid,
-            isGuest: true
+            isGuest: true,
+            isAnonymous: true
         };
         if (guestModal) {
             guestModal.classList.add("hidden");
             guestModal.style.display = "none";
         }
         localStorage.setItem("zingTalkMobileSession", JSON.stringify(user));
+        saveUserUidToFirestore(user, guestUid);
         loginUser(user);
         showToast(`Welcome ${enteredName}!`);
     };
@@ -1663,35 +1966,72 @@ function initMobileApp() {
     const toggleBtn = document.getElementById("mobile-auth-toggle-btn");
     const nameGroup = document.getElementById("mobile-auth-name-group");
     const submitBtn = document.getElementById("mobile-auth-submit-btn");
+    const authErrorBox = document.getElementById("mobile-auth-error");
+    const forgotBtnEl = document.getElementById("mobile-forgot-password-btn");
+
+    const showAuthError = (msg) => {
+        if (authErrorBox) {
+            authErrorBox.textContent = msg;
+            authErrorBox.classList.remove("hidden");
+            authErrorBox.style.display = "block";
+        }
+        showToast(msg);
+    };
+
+    const clearAuthError = () => {
+        if (authErrorBox) {
+            authErrorBox.textContent = "";
+            authErrorBox.classList.add("hidden");
+            authErrorBox.style.display = "none";
+        }
+    };
 
     toggleBtn?.addEventListener("click", () => {
         isSignUpMode = !isSignUpMode;
+        clearAuthError();
         if (isSignUpMode) {
             nameGroup?.classList.remove("hidden");
             if (nameGroup) nameGroup.style.display = "flex";
+            if (forgotBtnEl) {
+                forgotBtnEl.classList.add("hidden");
+                forgotBtnEl.style.display = "none";
+            }
             submitBtn.innerText = "Create Account";
             toggleBtn.innerText = "Sign In";
             document.getElementById("mobile-auth-toggle-label").innerText = "Already have an account?";
         } else {
             nameGroup?.classList.add("hidden");
             if (nameGroup) nameGroup.style.display = "none";
+            if (forgotBtnEl) {
+                forgotBtnEl.classList.remove("hidden");
+                forgotBtnEl.style.display = "inline-block";
+            }
             submitBtn.innerText = "Sign In";
             toggleBtn.innerText = "Sign Up";
             document.getElementById("mobile-auth-toggle-label").innerText = "Don't have an account?";
         }
     });
 
-    submitBtn?.addEventListener("click", async () => {
+    const handleAuthSubmit = async () => {
+        clearAuthError();
         const email = document.getElementById("mobile-auth-email")?.value.trim();
         const pass = document.getElementById("mobile-auth-pass")?.value.trim();
         const name = document.getElementById("mobile-auth-name")?.value.trim();
         if (!email || !pass) {
-            showToast("Enter email and password");
+            showAuthError("Please enter both email and password.");
+            return;
+        }
+        if (isSignUpMode && pass.length < 6) {
+            showAuthError("Password must be at least 6 characters long.");
             return;
         }
         if (!auth) {
-            showToast("Auth offline. Using guest.");
+            showAuthError("Authentication offline. Please use Instant Guest Login.");
             return;
+        }
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerText = isSignUpMode ? "Creating Account..." : "Signing In...";
         }
         try {
             if (isSignUpMode) {
@@ -1727,8 +2067,31 @@ function initMobileApp() {
                 showToast("Signed in!");
             }
         } catch (err) {
-            showToast(err.message || "Authentication failed");
+            let msg = err.message || "Authentication failed";
+            if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password" || err.code === "auth/user-not-found") {
+                msg = "Invalid email or password. Please verify your credentials.";
+            } else if (err.code === "auth/email-already-in-use") {
+                msg = "This email is already registered. Tap 'Sign In' below.";
+            } else if (err.code === "auth/weak-password") {
+                msg = "Password should be at least 6 characters.";
+            } else if (err.code === "auth/invalid-email") {
+                msg = "Please enter a valid email address.";
+            }
+            showAuthError(msg);
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerText = isSignUpMode ? "Create Account" : "Sign In";
+            }
         }
+    };
+
+    submitBtn?.addEventListener("click", handleAuthSubmit);
+    document.getElementById("mobile-auth-pass")?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") handleAuthSubmit();
+    });
+    document.getElementById("mobile-auth-email")?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") document.getElementById("mobile-auth-pass")?.focus();
     });
 
     // Forgot Password Handlers

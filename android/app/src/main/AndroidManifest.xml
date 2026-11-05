@@ -50,7 +50,7 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
-        <activity android:screenOrientation="landscape"                         
+        <activity android:screenOrientation="landscape"                           
             
             android:keepScreenOn="true"
             android:showWhenLocked="true"

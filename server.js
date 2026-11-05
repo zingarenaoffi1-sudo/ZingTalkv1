@@ -1083,6 +1083,22 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Delete Contact (Removes contact from volatile in-memory registry)
+    socket.on('delete_contact', (data) => {
+        try {
+            if (!data || !data.myUid || !data.targetUid) return;
+            const myUid = String(data.myUid).trim().replace(/\D/g, '');
+            const targetUid = String(data.targetUid).trim().replace(/\D/g, '');
+            if (myUid.length !== 10 || targetUid.length !== 10) return;
+            let currentContacts = userContactsRegistry.get(myUid) || [];
+            currentContacts = currentContacts.filter(c => c.uid !== targetUid);
+            userContactsRegistry.set(myUid, currentContacts);
+            socket.emit('contact_saved', currentContacts);
+        } catch (err) {
+            console.error('[ZingTalk] Error in delete_contact:', err);
+        }
+    });
+
     // Block / Unblock Handlers
     socket.on('block_user', (data) => {
         if (!data.blockerUid || !data.blockedUid) return;

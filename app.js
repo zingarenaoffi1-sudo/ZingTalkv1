@@ -44,13 +44,13 @@ try {
 // ----------------- Firestore 10-Digit UID Registry -----------------
 // Automatically persists the user's allocated 10-digit UID in the 'users' collection on Firestore
 export async function saveUserUidToFirestore(user, uid) {
-    if (!firestoreDb || !uid) return;
+    if (!firestoreDb || !uid || !auth?.currentUser) return;
     try {
         const cleanUid = String(uid).trim().replace(/\D/g, '');
         if (cleanUid.length !== 10) return;
 
         const authUid = user?.uid || (auth?.currentUser ? auth.currentUser.uid : null);
-        const email = user?.email || (auth?.currentUser ? auth.currentUser.email : "") || (user?.isAnonymous ? `guest_${cleanUid}@zingtalk.local` : "");
+        const email = (user?.email || (auth?.currentUser ? auth.currentUser.email : "") || (user?.isAnonymous ? `guest_${cleanUid}@zingtalk.local` : "")).toLowerCase().trim();
         const displayName = user?.displayName || (auth?.currentUser ? auth.currentUser.displayName : "") || (email ? email.split("@")[0] : "TV User");
 
         const dataToSave = {
@@ -67,24 +67,16 @@ export async function saveUserUidToFirestore(user, uid) {
         try {
             const docByUid = doc(firestoreDb, "users", cleanUid);
             await setDoc(docByUid, dataToSave, { merge: true });
-            console.log(`[Firestore] ✅ 10-Digit UID [${cleanUid}] saved to Firestore users/${cleanUid}`);
-        } catch (err1) {
-            console.warn(`[Firestore] Notice on users/${cleanUid}:`, err1.message);
-        }
+        } catch (_) {}
 
         // 2. Secondary Index: Keyed by Firebase Auth UID in 'user_profiles' collection
         if (authUid) {
             try {
                 const docByAuth = doc(firestoreDb, "user_profiles", authUid);
                 await setDoc(docByAuth, dataToSave, { merge: true });
-                console.log(`[Firestore] ✅ Profile mapped to Firestore user_profiles/${authUid}`);
-            } catch (err2) {
-                console.warn(`[Firestore] Notice on user_profiles/${authUid}:`, err2.message);
-            }
+            } catch (_) {}
         }
-    } catch (err) {
-        console.warn("[Firestore] Notice saving UID to Firestore:", err.message);
-    }
+    } catch (_) {}
 }
 
 // Lookup existing 10-Digit UID from Firestore for a returning user
@@ -93,7 +85,7 @@ export async function lookupUserUidFromFirestore(email, authUid) {
     try {
         const usersCol = collection(firestoreDb, "users");
         if (email) {
-            const q = query(usersCol, where("email", "==", email));
+            const q = query(usersCol, where("email", "==", email.toLowerCase().trim()));
             const snap = await getDocs(q);
             if (!snap.empty) {
                 const d = snap.docs[0].data();
@@ -571,7 +563,7 @@ restoreSessionFromNativeBackup();
 
 function loginUserSession(user) {
     currentUser = user;
-    if (user.zingUid && !my10DigitUid) {
+    if (user.zingUid) {
         my10DigitUid = String(user.zingUid);
         updateUidDisplays(my10DigitUid);
         loadUserStorageData(my10DigitUid);
@@ -755,27 +747,30 @@ export function registerSocketListeners(s) {
         console.log("[ZingTalk Socket] Connected to:", s.io.uri);
         updateServerStatusBadge(true, "AWS Cloud Online");
 
-        const displayName = currentUser?.displayName || currentUser?.name || "TV User";
-        const email = currentUser?.email || null;
-        const authUid = currentUser?.uid || null;
+        // Only emit login_user if an actual user session is active!
+        if (currentUser) {
+            const displayName = currentUser.displayName || currentUser.name || "TV User";
+            const email = currentUser.email || null;
+            const authUid = currentUser.uid || null;
 
-        s.emit("login_user", {
-            email: email,
-            name: displayName,
-            authUid: authUid,
-            uid: my10DigitUid || currentUser?.zingUid,
-            platform: "Fire TV",
-            isAnonymous: Boolean(currentUser?.isAnonymous),
-            isGuest: Boolean(currentUser?.isAnonymous),
-            contacts: myContacts
-        });
-        if (my10DigitUid) {
-            s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
-        }
+            s.emit("login_user", {
+                email: email,
+                name: displayName,
+                authUid: authUid,
+                uid: my10DigitUid || currentUser.zingUid,
+                platform: "Fire TV",
+                isAnonymous: Boolean(currentUser.isAnonymous),
+                isGuest: Boolean(currentUser.isAnonymous),
+                contacts: myContacts
+            });
+            if (my10DigitUid) {
+                s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+            }
 
-        if (pendingOutgoingMessages.length > 0) {
-            pendingOutgoingMessages.forEach(msg => s.emit("send_message", msg));
-            pendingOutgoingMessages = [];
+            if (pendingOutgoingMessages.length > 0) {
+                pendingOutgoingMessages.forEach(msg => s.emit("send_message", msg));
+                pendingOutgoingMessages = [];
+            }
         }
     });
 
@@ -790,16 +785,13 @@ export function registerSocketListeners(s) {
     });
 
     s.on("user_data", (data) => {
+        if (!currentUser) return;
         if (data && data.uid) {
             updateUidDisplays(data.uid);
             loadUserStorageData(data.uid);
-            if (currentUser) {
-                currentUser.zingUid = String(data.uid);
-                persistSessionBackup("zingTalkTvSession", JSON.stringify(currentUser));
-                saveUserUidToFirestore(currentUser, data.uid);
-            } else {
-                saveUserUidToFirestore({ uid: null, isAnonymous: true }, data.uid);
-            }
+            currentUser.zingUid = String(data.uid);
+            persistSessionBackup("zingTalkTvSession", JSON.stringify(currentUser));
+            saveUserUidToFirestore(currentUser, data.uid);
         }
         renderContacts(myContacts);
         if (my10DigitUid && myContacts.length > 0) {
@@ -1148,6 +1140,21 @@ connectSocket();
 function renderContacts(contacts) {
     const list = document.getElementById("contacts-list");
     if (!list) return;
+
+    // Preserve active Fire TV D-Pad focus across contact list re-renders
+    const prevActive = document.activeElement;
+    let preservedUid = null;
+    let preservedAction = null;
+    if (prevActive && list.contains(prevActive)) {
+        const activeCard = prevActive.closest(".tv-contact-card");
+        if (activeCard) {
+            preservedUid = activeCard.dataset.uid;
+            if (prevActive.classList.contains("tv-mini-call-btn")) {
+                preservedAction = prevActive.dataset.action;
+            }
+        }
+    }
+
     list.innerHTML = "";
 
     if (!contacts || contacts.length === 0) {
@@ -1194,14 +1201,36 @@ function renderContacts(contacts) {
             <div class="tv-contact-quick-actions">
                 <button type="button" class="tv-mini-call-btn tv-focusable" data-action="audio" title="Audio Call">📞</button>
                 <button type="button" class="tv-mini-call-btn tv-focusable" data-action="video" title="Video Call">🎥</button>
+                <button type="button" class="tv-mini-call-btn tv-focusable" data-action="delete" title="Delete Contact" style="color: #ff6b6b;">🗑️</button>
             </div>
         `;
 
+        const handleCardAction = (action) => {
+            if (action === "delete") {
+                myContacts = myContacts.filter(c => c.uid !== contact.uid);
+                delete unreadCounts[contact.uid];
+                saveUserUnreadToStorage();
+                saveUserContactsToStorage();
+                if (socket && socket.connected && my10DigitUid) {
+                    socket.emit("delete_contact", { myUid: my10DigitUid, targetUid: contact.uid });
+                    socket.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+                }
+                if (currentTargetUid === contact.uid) {
+                    closeChat();
+                }
+                renderContacts(myContacts);
+                showToast(`🗑️ Removed ${contact.name}`);
+                setTimeout(autoFocusFirstElement, 50);
+            } else {
+                initiateDirectCall(contact.uid, action);
+            }
+        };
+
         card.addEventListener("click", (e) => {
             const btn = e.target.closest("button");
-            if (btn) {
-                const action = btn.dataset.action;
-                initiateDirectCall(contact.uid, action);
+            if (btn && btn.dataset.action) {
+                e.stopPropagation();
+                handleCardAction(btn.dataset.action);
             } else {
                 openChat(contact);
             }
@@ -1212,7 +1241,7 @@ function renderContacts(contacts) {
                 e.preventDefault();
                 const btn = e.target.closest("button");
                 if (btn && btn.dataset.action) {
-                    initiateDirectCall(contact.uid, btn.dataset.action);
+                    handleCardAction(btn.dataset.action);
                 } else {
                     openChat(contact);
                 }
@@ -1221,6 +1250,16 @@ function renderContacts(contacts) {
 
         list.appendChild(card);
     });
+
+    if (preservedUid) {
+        const restoredCard = list.querySelector(`.tv-contact-card[data-uid="${preservedUid}"]`);
+        if (restoredCard) {
+            const targetToFocus = preservedAction
+                ? (restoredCard.querySelector(`.tv-mini-call-btn[data-action="${preservedAction}"]`) || restoredCard)
+                : restoredCard;
+            focusElement(targetToFocus, false);
+        }
+    }
 }
 
 function openChat(contact) {
@@ -2427,13 +2466,13 @@ function getCustomNavigationTarget(current, direction) {
     if (id === "login-email-input") {
         if (direction === "up") return isSignUp ? document.getElementById("login-name-input") : document.getElementById("tab-btn-email");
         if (direction === "down") return document.getElementById("login-password-input");
-        if (direction === "right") return document.getElementById("forgot-password-link");
+        if (direction === "right" && !isSignUp) return document.getElementById("forgot-password-link");
     }
     if (id === "login-password-input") {
         // GUARANTEED: Up always returns directly to email input! Never get trapped in forgot-password
         if (direction === "up") return document.getElementById("login-email-input");
         if (direction === "down") return document.getElementById("email-login-submit-btn");
-        if (direction === "right") return document.getElementById("forgot-password-link");
+        if (direction === "right" && !isSignUp) return document.getElementById("forgot-password-link");
     }
     if (id === "forgot-password-link") {
         if (direction === "up") return document.getElementById("login-email-input");
@@ -2537,12 +2576,24 @@ function getCustomNavigationTarget(current, direction) {
     if (id === "contact-name-input") {
         if (direction === "up") return document.getElementById("contact-uid-input");
         if (direction === "down") return document.getElementById("save-contact-btn");
+        if (direction === "right") {
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("messages-area") || document.getElementById("message-input");
+            }
+        }
     }
     if (id === "save-contact-btn") {
         if (direction === "up") return document.getElementById("contact-name-input");
         if (direction === "down") {
             const firstContact = document.querySelector("#contacts-list .tv-contact-card");
             return firstContact || document.getElementById("sidebar-policy-btn");
+        }
+        if (direction === "right") {
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                return document.getElementById("messages-area") || document.getElementById("message-input");
+            }
         }
     }
 
@@ -2571,6 +2622,10 @@ function getCustomNavigationTarget(current, direction) {
     if (current.classList.contains("tv-mini-call-btn")) {
         const card = current.closest(".tv-contact-card");
         if (direction === "left") {
+            if (current.dataset.action === "delete") {
+                const videoBtn = card?.querySelector('.tv-mini-call-btn[data-action="video"]');
+                if (videoBtn) return videoBtn;
+            }
             if (current.dataset.action === "video") {
                 const audioBtn = card?.querySelector('.tv-mini-call-btn[data-action="audio"]');
                 if (audioBtn) return audioBtn;
@@ -2581,6 +2636,10 @@ function getCustomNavigationTarget(current, direction) {
             if (current.dataset.action === "audio") {
                 const videoBtn = card?.querySelector('.tv-mini-call-btn[data-action="video"]');
                 if (videoBtn) return videoBtn;
+            }
+            if (current.dataset.action === "video") {
+                const delBtn = card?.querySelector('.tv-mini-call-btn[data-action="delete"]');
+                if (delBtn) return delBtn;
             }
             const activeChat = document.getElementById("tv-active-chat");
             if (activeChat && !activeChat.classList.contains("hidden")) {
@@ -2611,6 +2670,7 @@ function getCustomNavigationTarget(current, direction) {
         if (direction === "left") return document.getElementById("quick-chat-btn");
         if (direction === "right") return document.getElementById("chat-audio-call-btn");
         if (direction === "down") return document.getElementById("messages-area");
+        if (direction === "up") return document.getElementById("my-profile-chip") || document.getElementById("header-logout-btn");
     }
     if (id === "chat-audio-call-btn") {
         if (direction === "left") return document.getElementById("chat-back-btn");
@@ -3169,16 +3229,27 @@ document.addEventListener("click", async (e) => {
         const nameGroup = document.getElementById("email-signup-name-group");
         const btnText = document.getElementById("email-btn-text");
         const toggleBtn = document.getElementById("toggle-auth-mode-btn");
+        const forgotLink = document.getElementById("forgot-password-link");
+        const errorEl = document.getElementById("login-message");
+        if (errorEl) errorEl.style.display = "none";
 
         if (isSignUpMode) {
             nameGroup?.classList.remove("hidden");
             if (nameGroup) nameGroup.style.display = "block";
+            if (forgotLink) {
+                forgotLink.classList.add("hidden");
+                forgotLink.style.display = "none";
+            }
             if (btnText) btnText.innerText = "Create Account";
             if (toggleBtn) toggleBtn.innerText = "Already have an account? Sign In";
             focusElement(document.getElementById("login-name-input"), false);
         } else {
             nameGroup?.classList.add("hidden");
             if (nameGroup) nameGroup.style.display = "none";
+            if (forgotLink) {
+                forgotLink.classList.remove("hidden");
+                forgotLink.style.display = "inline-block";
+            }
             if (btnText) btnText.innerText = "Sign In";
             if (toggleBtn) toggleBtn.innerText = "Don't have an account? Sign Up";
             focusElement(document.getElementById("login-email-input"), false);

@@ -1,5 +1,25 @@
 {
   "allUsers": {
+    "1065736144": {
+      "uid": "1065736144",
+      "name": "Rahul Mobile",
+      "platform": "Mobile",
+      "firstSeenDate": "2026-11-05",
+      "lastSeenDate": "2026-11-05",
+      "firstSeenTime": "2026-11-05T15:49:44.332Z",
+      "lastSeenTime": "2026-11-05T15:49:44.332Z",
+      "totalConnections": 1
+    },
+    "2943612054": {
+      "uid": "2943612054",
+      "name": "Amit FireTV",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-05",
+      "lastSeenDate": "2026-11-05",
+      "firstSeenTime": "2026-11-05T15:49:51.634Z",
+      "lastSeenTime": "2026-11-05T15:49:52.151Z",
+      "totalConnections": 2
+    },
     "3567231194": {
       "uid": "3567231194",
       "name": "Guest",
@@ -9,15 +29,50 @@
       "firstSeenTime": "2026-11-05T08:56:34.229Z",
       "lastSeenTime": "2026-11-05T08:56:34.229Z",
       "totalConnections": 1
+    },
+    "4894702393": {
+      "uid": "4894702393",
+      "name": "Guest",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-05",
+      "lastSeenDate": "2026-11-05",
+      "firstSeenTime": "2026-11-05T15:18:39.277Z",
+      "lastSeenTime": "2026-11-05T15:18:39.277Z",
+      "totalConnections": 1
+    },
+    "9291404837": {
+      "uid": "9291404837",
+      "name": "Amit FireTV",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-05",
+      "lastSeenDate": "2026-11-05",
+      "firstSeenTime": "2026-11-05T15:51:56.020Z",
+      "lastSeenTime": "2026-11-05T15:51:56.563Z",
+      "totalConnections": 2
+    },
+    "8375257309": {
+      "uid": "8375257309",
+      "name": "Amit FireTV",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-05",
+      "lastSeenDate": "2026-11-05",
+      "firstSeenTime": "2026-11-05T15:52:49.664Z",
+      "lastSeenTime": "2026-11-05T15:52:50.178Z",
+      "totalConnections": 2
     }
   },
   "dailyStats": {
     "2026-11-05": {
       "newUsers": [
-        "3567231194"
+        "3567231194",
+        "4894702393",
+        "1065736144",
+        "2943612054",
+        "9291404837",
+        "8375257309"
       ],
       "returningUsers": [],
-      "totalConnections": 1
+      "totalConnections": 9
     }
   }
 }
