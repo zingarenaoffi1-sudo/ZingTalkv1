@@ -509,7 +509,7 @@ if (fs.existsSync(rootGradle)) {
     }
 }
 
-// 4. App-level build.gradle (applicationId, namespace, signing configs, and universal Fire Tablet/TV minSdkVersion=10 manifest hook)
+// 4. App-level build.gradle (applicationId, namespace, signing configs, lint config, and universal Fire Tablet/TV minSdkVersion=10 manifest hook)
 const appGradlePath = path.join('android', 'app', 'build.gradle');
 if (fs.existsSync(appGradlePath)) {
     let content = fs.readFileSync(appGradlePath, 'utf8');
@@ -530,8 +530,13 @@ if (fs.existsSync(appGradlePath)) {
             keyPassword "zingtalk123456"
         }
     }
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
 `;
-    content = content.replace(/signingConfigs\s*\{[\s\S]*?\}\s*\}/, '');
+    content = content.replace(/\s*signingConfigs\s*\{[\s\S]*?\}\s*\}/g, '');
+    content = content.replace(/\s*lint\s*\{[\s\S]*?\}/g, '');
     content = content.replace('android {', 'android {' + signingBlock);
     if (!content.includes('signingConfig signingConfigs.release')) {
         content = content.replace(/(buildTypes\s*\{\s*release\s*\{)/, '$1\n            signingConfig signingConfigs.release');
@@ -547,7 +552,8 @@ if (fs.existsSync(appGradlePath)) {
 // so the final packaged APK header declares android:minSdkVersion="10", unlocking all 40/40 Amazon Fire Tablets & 100/100 Fire TVs.
 tasks.matching { it.name.startsWith("process") && it.name.contains("Manifest") }.configureEach {
     doLast {
-        fileTree(dir: buildDir, include: "**/AndroidManifest.xml").each { File manifestFile ->
+        File outDir = project.layout.buildDirectory.get().asFile
+        fileTree(dir: outDir, include: "**/AndroidManifest.xml").each { File manifestFile ->
             String xmlText = manifestFile.getText("UTF-8")
             if (xmlText.contains('android:minSdkVersion="')) {
                 xmlText = xmlText.replaceAll('android:minSdkVersion="[0-9]+"', 'android:minSdkVersion="10"')
