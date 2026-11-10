@@ -588,6 +588,7 @@ app.post('/api/auth/custom-reset-password', async (req, res) => {
 
 // Serve static frontend assets for TV, Mobile, and Web (Disable auto-index so root / renders Server Status Panel)
 app.use(express.static(__dirname, { index: false }));
+app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use('/tv', express.static(path.join(__dirname, 'packages', 'tv')));
 app.use('/mobile', express.static(path.join(__dirname, 'packages', 'mobile')));
 
