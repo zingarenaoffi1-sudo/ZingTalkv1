@@ -2308,7 +2308,15 @@ export function focusElement(el, shouldScroll = true) {
         try { el.focus(); } catch (_) {}
     }
     if (shouldScroll) {
-        if (el.closest('.tv-contacts-list') || el.closest('#messages-area') || el.closest('.tv-policy-scroll') || el.closest('#guide-scroll-area')) {
+        if (
+            el.closest('.tv-contacts-list') ||
+            el.closest('#messages-area') ||
+            el.closest('.tv-policy-scroll') ||
+            el.closest('#guide-scroll-area') ||
+            el.closest('.tv-sidebar') ||
+            el.closest('.tv-login-screen') ||
+            el.closest('.tv-dialog-card')
+        ) {
             try {
                 el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
             } catch (_) {}
@@ -2485,17 +2493,13 @@ function getCustomNavigationTarget(current, direction) {
     }
     if (id === "toggle-auth-mode-btn") {
         if (direction === "up") return document.getElementById("email-login-submit-btn");
-        if (direction === "down") return document.getElementById("open-policy-btn");
+        if (direction === "right" || direction === "down") return document.getElementById("open-policy-btn");
+        if (direction === "left") return document.getElementById("toggle-auth-mode-btn");
     }
     if (id === "open-policy-btn") {
-        if (direction === "down") return document.getElementById("open-policy-btn");
-        if (direction === "up") {
-            const guestPane = document.getElementById("pane-guest");
-            if (guestPane && !guestPane.classList.contains("hidden")) {
-                return document.getElementById("guest-login-btn");
-            }
-            return document.getElementById("toggle-auth-mode-btn");
-        }
+        if (direction === "left") return document.getElementById("toggle-auth-mode-btn");
+        if (direction === "down" || direction === "right") return document.getElementById("open-policy-btn");
+        if (direction === "up") return document.getElementById("email-login-submit-btn");
     }
 
     // Guest Form
@@ -2505,7 +2509,11 @@ function getCustomNavigationTarget(current, direction) {
     }
     if (id === "guest-login-btn") {
         if (direction === "up") return document.getElementById("guest-name-input");
-        if (direction === "down") return document.getElementById("open-policy-btn");
+        if (direction === "down") return document.getElementById("open-policy-guest-btn") || document.getElementById("open-policy-btn");
+    }
+    if (id === "open-policy-guest-btn") {
+        if (direction === "up") return document.getElementById("guest-login-btn");
+        if (direction === "down") return document.getElementById("open-policy-guest-btn");
     }
 
     // --- 2. Main Screen Layout Navigation ---
@@ -2555,7 +2563,7 @@ function getCustomNavigationTarget(current, direction) {
     if (id === "quick-video-call-btn") {
         if (direction === "left") return document.getElementById("quick-audio-call-btn");
         if (direction === "up") return document.getElementById("dial-uid-input");
-        if (direction === "down") return document.getElementById("contact-uid-input");
+        if (direction === "down") return document.getElementById("contact-name-input") || document.getElementById("contact-uid-input");
         if (direction === "right") {
             const activeChat = document.getElementById("tv-active-chat");
             if (activeChat && !activeChat.classList.contains("hidden")) {
@@ -2565,16 +2573,12 @@ function getCustomNavigationTarget(current, direction) {
     }
     if (id === "contact-uid-input") {
         if (direction === "up") return document.getElementById("quick-chat-btn");
-        if (direction === "down") return document.getElementById("contact-name-input");
-        if (direction === "right") {
-            const activeChat = document.getElementById("tv-active-chat");
-            if (activeChat && !activeChat.classList.contains("hidden")) {
-                return document.getElementById("messages-area") || document.getElementById("message-input");
-            }
-        }
+        if (direction === "right") return document.getElementById("contact-name-input");
+        if (direction === "down") return document.getElementById("save-contact-btn");
     }
     if (id === "contact-name-input") {
-        if (direction === "up") return document.getElementById("contact-uid-input");
+        if (direction === "left") return document.getElementById("contact-uid-input");
+        if (direction === "up") return document.getElementById("quick-video-call-btn");
         if (direction === "down") return document.getElementById("save-contact-btn");
         if (direction === "right") {
             const activeChat = document.getElementById("tv-active-chat");
@@ -2584,7 +2588,7 @@ function getCustomNavigationTarget(current, direction) {
         }
     }
     if (id === "save-contact-btn") {
-        if (direction === "up") return document.getElementById("contact-name-input");
+        if (direction === "up") return document.getElementById("contact-uid-input");
         if (direction === "down") {
             const firstContact = document.querySelector("#contacts-list .tv-contact-card");
             return firstContact || document.getElementById("sidebar-policy-btn");
@@ -3805,8 +3809,35 @@ document.getElementById("contact-uid-input")?.addEventListener("input", (e) => {
 document.getElementById("tab-btn-email")?.addEventListener("focus", () => switchToLoginTab("email"));
 document.getElementById("tab-btn-guest")?.addEventListener("focus", () => switchToLoginTab("guest"));
 
-// Initial Fire TV Leanback D-Pad Auto-Focus
+// YouTube TV-style Dark Animated Startup Splash Screen Controller
+function dismissTvStartupSplash(immediate = false) {
+    const splash = document.getElementById("tv-startup-splash");
+    if (!splash || splash.classList.contains("hidden")) {
+        autoFocusFirstElement();
+        return;
+    }
+    if (immediate) {
+        splash.classList.add("hidden");
+        autoFocusFirstElement();
+        return;
+    }
+    splash.classList.add("splash-fade-out");
+    setTimeout(() => {
+        splash.classList.add("hidden");
+        autoFocusFirstElement();
+    }, 400);
+}
+
+// Initial Fire TV Leanback Startup Splash & D-Pad Auto-Focus
+if (window.location.search.includes("autostart=1")) {
+    dismissTvStartupSplash(true);
+} else {
+    setTimeout(() => {
+        dismissTvStartupSplash(false);
+    }, 1250);
+}
 window.addEventListener("load", () => {
     setTimeout(autoFocusFirstElement, 150);
 });
 setTimeout(autoFocusFirstElement, 300);
+

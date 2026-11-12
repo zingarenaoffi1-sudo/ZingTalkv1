@@ -55,6 +55,9 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        try {
+            getWindow().getDecorView().setBackgroundColor(android.graphics.Color.parseColor("#090d16"));
+        } catch (Exception ignored) {}
         notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         createNotificationChannels();
         // Camera & Mic permissions are strictly requested on-demand when a call is initiated or answered
@@ -62,6 +65,7 @@ public class MainActivity extends BridgeActivity {
         try {
             WebView webView = this.getBridge().getWebView();
             if (webView != null) {
+                webView.setBackgroundColor(android.graphics.Color.parseColor("#090d16"));
                 WebSettings settings = webView.getSettings();
                 settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                 settings.setDomStorageEnabled(true);
@@ -475,6 +479,46 @@ if (fs.existsSync(stringsPath)) {
     }
     fs.writeFileSync(stringsPath, stringsContent, 'utf8');
     console.log(`[prepare-android] ✅ Configured Android app_name to "${appDisplayName}" and package_name to "${packageName}"`);
+}
+
+// 1.4 Configure dark #090d16 launch theme in styles.xml to eliminate white screen flash on startup
+const stylesPath = path.join('android', 'app', 'src', 'main', 'res', 'values', 'styles.xml');
+if (fs.existsSync(stylesPath)) {
+    const darkStylesXml = `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Base application theme (Dark TV/Mobile surface #090d16 - prevents white flash on launch) -->
+    <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+        <item name="android:windowBackground">#090d16</item>
+        <item name="android:colorBackground">#090d16</item>
+        <item name="android:statusBarColor">#090d16</item>
+        <item name="android:navigationBarColor">#090d16</item>
+    </style>
+
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:background">@null</item>
+        <item name="android:windowBackground">#090d16</item>
+        <item name="android:colorBackground">#090d16</item>
+        <item name="android:statusBarColor">#090d16</item>
+        <item name="android:navigationBarColor">#090d16</item>
+    </style>
+
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="android:background">@drawable/splash</item>
+        <item name="android:windowBackground">#090d16</item>
+        <item name="android:colorBackground">#090d16</item>
+        <item name="android:statusBarColor">#090d16</item>
+        <item name="android:navigationBarColor">#090d16</item>
+    </style>
+</resources>
+`;
+    fs.writeFileSync(stylesPath, darkStylesXml, 'utf8');
+    console.log('[prepare-android] ✅ Configured dark #090d16 launch theme in styles.xml');
 }
 
 // 2. Configure network_security_config.xml

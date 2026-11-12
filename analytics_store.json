@@ -10,6 +10,16 @@
       "lastSeenTime": "2026-11-05T15:49:44.332Z",
       "totalConnections": 1
     },
+    "2857714421": {
+      "uid": "2857714421",
+      "name": "Living Room Fire TV",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-12",
+      "lastSeenDate": "2026-11-12",
+      "firstSeenTime": "2026-11-12T05:37:15.083Z",
+      "lastSeenTime": "2026-11-12T05:37:15.656Z",
+      "totalConnections": 2
+    },
     "2943612054": {
       "uid": "2943612054",
       "name": "Amit FireTV",
@@ -59,6 +69,16 @@
       "firstSeenTime": "2026-11-05T15:52:49.664Z",
       "lastSeenTime": "2026-11-05T15:52:50.178Z",
       "totalConnections": 2
+    },
+    "9062592584": {
+      "uid": "9062592584",
+      "name": "Living Room Fire TV",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-12",
+      "lastSeenDate": "2026-11-12",
+      "firstSeenTime": "2026-11-12T05:31:38.977Z",
+      "lastSeenTime": "2026-11-12T05:31:39.452Z",
+      "totalConnections": 2
     }
   },
   "dailyStats": {
@@ -73,6 +93,14 @@
       ],
       "returningUsers": [],
       "totalConnections": 9
+    },
+    "2026-11-12": {
+      "newUsers": [
+        "9062592584",
+        "2857714421"
+      ],
+      "returningUsers": [],
+      "totalConnections": 4
     }
   }
 }

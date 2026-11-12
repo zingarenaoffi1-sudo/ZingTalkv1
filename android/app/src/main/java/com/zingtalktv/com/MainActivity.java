@@ -39,6 +39,9 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        try {
+            getWindow().getDecorView().setBackgroundColor(android.graphics.Color.parseColor("#090d16"));
+        } catch (Exception ignored) {}
         notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         createNotificationChannels();
         // Camera & Mic permissions are strictly requested on-demand when a call is initiated or answered
@@ -46,6 +49,7 @@ public class MainActivity extends BridgeActivity {
         try {
             WebView webView = this.getBridge().getWebView();
             if (webView != null) {
+                webView.setBackgroundColor(android.graphics.Color.parseColor("#090d16"));
                 WebSettings settings = webView.getSettings();
                 settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                 settings.setDomStorageEnabled(true);
