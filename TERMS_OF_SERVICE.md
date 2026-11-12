@@ -26,11 +26,11 @@ ZingTalk is engineered to provide private, reliable, and accessible real-time co
 
 ---
 
-## 3. Age Restrictions & Children's Use
+## 3. Age Restrictions & Strictly 18+ Eligibility
 
-- **Not for Children Under 13**: ZingTalk is strictly **NOT intended, designed, or marketed for unsupervised use by children under the age of 13**.
-- **Age Requirement**: You represent and warrant that you are at least 13 years of age (or the legal age of majority in your jurisdiction). Minors between the ages of 13 and 17 may only use the application with the involvement and consent of a parent or legal guardian.
-- Caregivers and family members configuring ZingTalk for elderly relatives must ensure compliance with these terms.
+- **Restricted to Adults (18+)**: ZingTalk is strictly **NOT intended, designed, or marketed for use by minors or anyone under the age of 18**. In Amazon Appstore Developer Console, ZingTalk is declared under Restricted Age Groups: 18+ years of age.
+- **Age Requirement**: You represent and warrant that you are at least 18 years of age (the legal age of majority). Minors under the age of 18 are strictly prohibited from using the application or creating accounts.
+- Caregivers and family members configuring ZingTalk for elderly relatives must ensure all account holders meet the minimum 18+ age requirement.
 
 ---
 

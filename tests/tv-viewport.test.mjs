@@ -65,3 +65,21 @@ test('Fire TV HTML and CSS include YouTube TV-style startup splash and 540px vie
   assert.ok(tvCss.includes('max-height: calc(100vh - 36px)'), '.tv-auth-card must be bounded to viewport height');
   assert.ok(tvCss.includes('height: calc(100vh - 58px)'), '.tv-main-screen must match compact 58px TV header');
 });
+
+test('All privacy policies and terms consistently enforce strict 18+ age requirement', () => {
+  const tvHtml = fs.readFileSync(path.resolve('packages/tv/index.html'), 'utf8');
+  const mobHtml = fs.readFileSync(path.resolve('packages/mobile/index.html'), 'utf8');
+  const privacyHtml = fs.readFileSync(path.resolve('privacy.html'), 'utf8');
+  const termsHtml = fs.readFileSync(path.resolve('terms.html'), 'utf8');
+  const privacyMd = fs.readFileSync(path.resolve('PRIVACY_POLICY.md'), 'utf8');
+  const termsMd = fs.readFileSync(path.resolve('TERMS_OF_SERVICE.md'), 'utf8');
+
+  assert.ok(tvHtml.includes('18+ Years Only') && tvHtml.includes('under 18 years of age'), 'TV HTML policy must enforce 18+');
+  assert.ok(!tvHtml.includes('13+ Years Only'), 'TV HTML must not contain 13+ requirement');
+  assert.ok(mobHtml.includes('Strict Age 18+ Requirement'), 'Mobile HTML policy must enforce 18+');
+  assert.ok(!mobHtml.includes('Strict Age 13+'), 'Mobile HTML must not contain 13+');
+  assert.ok(privacyHtml.includes('18+ Only') && privacyHtml.includes('anyone under 18 years of age'), 'privacy.html must enforce 18+');
+  assert.ok(termsHtml.includes('18+ Adults Only') && termsHtml.includes('at least 18 years of age'), 'terms.html must enforce 18+');
+  assert.ok(privacyMd.includes('Strictly 18+ Adults Only'), 'PRIVACY_POLICY.md must enforce 18+');
+  assert.ok(termsMd.includes('Strictly 18+ Eligibility') && termsMd.includes('at least 18 years of age'), 'TERMS_OF_SERVICE.md must enforce 18+');
+});

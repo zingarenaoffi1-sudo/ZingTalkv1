@@ -75,11 +75,11 @@ ZingTalk integrates with Amazon Alexa Skills to provide hands-free voice dialing
 
 ---
 
-## 7. Age Restriction & Audience Intent (Not for Children Under 13)
+## 7. Age Restriction & Audience Intent (Strictly 18+ Adults Only)
 
-- **Audience Focus**: ZingTalk is explicitly designed and marketed as an assistive communication tool for **elderly parents, senior citizens, and adult family caregivers**.
-- **Not for Children**: ZingTalk is **NOT designed for, marketed to, or intended for use by unsupervised children under the age of 13**.
-- **COPPA & GDPR-K Compliance**: ZingTalk does not knowingly harvest, collect, or solicit personal information from children under 13. If you believe a child under 13 has registered or provided personal information without parental consent, please contact us immediately at `support.zing.app@gmail.com` and we will promptly terminate the account and purge any associated identifiers.
+- **Audience Focus**: ZingTalk is explicitly designed and marketed as an assistive communication tool for **elderly parents, senior citizens, and adult family caregivers**. On Amazon Appstore, ZingTalk is declared under Restricted Age Groups: 18+ years of age.
+- **Not for Minors or Children**: ZingTalk is **NOT designed for, marketed to, or permitted for use by minors or anyone under the age of 18**.
+- **Strict Minor Protection & Deletion**: ZingTalk does not knowingly harvest, collect, or solicit personal information from individuals under 18. If you believe a minor under 18 has registered or provided personal information, please contact us immediately at `support.zing.app@gmail.com` and we will promptly terminate the account and purge any associated identifiers.
 
 ---
 
