@@ -2,8 +2,12 @@ const fs = require('fs');
 const path = require('path');
 
 const targetPlatform = (process.argv[2] || 'tv').toLowerCase();
-const packageName = targetPlatform === 'tv' ? 'com.zingtalktv.com' : 'com.zingtalk.com';
-const appDisplayName = targetPlatform === 'tv' ? 'ZingTalk TV' : 'ZingTalk';
+const packageName = targetPlatform === 'tv'
+    ? 'com.zingtalktv.com'
+    : (targetPlatform === 'connector' ? 'com.zingtalk.connector' : 'com.zingtalk.com');
+const appDisplayName = targetPlatform === 'tv'
+    ? 'ZingTalk TV'
+    : (targetPlatform === 'connector' ? 'ZingTalk Connector' : 'ZingTalk');
 console.log(`[prepare-android] Starting Android project configuration for [${targetPlatform.toUpperCase()}] with package [${packageName}]...`);
 
 // 1. Configure MainActivity.java in target package
@@ -398,23 +402,24 @@ fs.writeFileSync(mainActivityPath, customMainActivity, 'utf8');
 console.log(`[prepare-android] ✅ Written custom MainActivity.java with ZingNativeBridge`);
 
 // Clean up inactive package directories to prevent duplicate class compilation errors
-if (targetPlatform === 'tv') {
-    const mobilePkgDir = path.join('android', 'app', 'src', 'main', 'java', 'com', 'zingtalk');
-    if (fs.existsSync(mobilePkgDir)) {
-        try {
-            fs.rmSync(mobilePkgDir, { recursive: true, force: true });
-            console.log(`[prepare-android] 🧹 Removed inactive package dir: ${mobilePkgDir}`);
-        } catch (e) {}
-    }
-} else {
-    const tvPkgDir = path.join('android', 'app', 'src', 'main', 'java', 'com', 'zingtalktv');
-    if (fs.existsSync(tvPkgDir)) {
-        try {
-            fs.rmSync(tvPkgDir, { recursive: true, force: true });
-            console.log(`[prepare-android] 🧹 Removed inactive package dir: ${tvPkgDir}`);
-        } catch (e) {}
-    }
+const inactiveDirs = [];
+if (targetPlatform !== 'tv') {
+    inactiveDirs.push(path.join('android', 'app', 'src', 'main', 'java', 'com', 'zingtalktv'));
 }
+if (targetPlatform !== 'mobile') {
+    inactiveDirs.push(path.join('android', 'app', 'src', 'main', 'java', 'com', 'zingtalk', 'com'));
+}
+if (targetPlatform !== 'connector') {
+    inactiveDirs.push(path.join('android', 'app', 'src', 'main', 'java', 'com', 'zingtalk', 'connector'));
+}
+inactiveDirs.forEach(dir => {
+    if (fs.existsSync(dir)) {
+        try {
+            fs.rmSync(dir, { recursive: true, force: true });
+            console.log(`[prepare-android] 🧹 Removed inactive package dir: ${dir}`);
+        } catch (e) {}
+    }
+});
 
 // 1.1 Ensure google-services.json is synced to android/app
 const rootGoogleServices = path.join('.', 'google-services.json');
@@ -564,8 +569,12 @@ if (fs.existsSync(appGradlePath)) {
     content = content.replace(/applicationId\s+"[^"]+"/, `applicationId "${packageName}"`);
     content = content.replace(/namespace\s*=?\s*"[^"]+"/, `namespace = "${packageName}"`);
 
-    const keystoreFileName = targetPlatform === 'tv' ? 'zingtalk-tv-release.keystore' : 'zingtalk-mobile-release.keystore';
-    const keyAlias = targetPlatform === 'tv' ? 'zingtalk-tv' : 'zingtalk-mobile';
+    const keystoreFileName = targetPlatform === 'tv'
+        ? 'zingtalk-tv-release.keystore'
+        : (targetPlatform === 'connector' ? 'zingtalk-connector-release.keystore' : 'zingtalk-mobile-release.keystore');
+    const keyAlias = targetPlatform === 'tv'
+        ? 'zingtalk-tv'
+        : (targetPlatform === 'connector' ? 'zingtalk-connector' : 'zingtalk-mobile');
 
     const signingBlock = `
     signingConfigs {
@@ -757,11 +766,13 @@ const androidPublicDir = path.join('android', 'app', 'src', 'main', 'assets', 'p
 if (!fs.existsSync(androidPublicDir)) {
     fs.mkdirSync(androidPublicDir, { recursive: true });
 }
-const platformSourceDir = targetPlatform === 'mobile' ? path.join('packages', 'mobile') : path.join('packages', 'tv');
-const filesToSync = ['index.html', 'style.css', 'app.js', 'manifest.json', 'service-worker.js', 'capacitor.js', 'socket.io.min.js', 'privacy.html', 'terms.html'];
+const platformSourceDir = targetPlatform === 'mobile'
+    ? path.join('packages', 'mobile')
+    : (targetPlatform === 'connector' ? path.join('packages', 'connector') : path.join('packages', 'tv'));
+const filesToSync = ['index.html', 'style.css', 'app.js', 'qr.js', 'manifest.json', 'service-worker.js', 'capacitor.js', 'socket.io.min.js', 'privacy.html', 'terms.html'];
 filesToSync.forEach(f => {
     let src = path.join(platformSourceDir, f);
-    if (!fs.existsSync(src)) {
+    if (!fs.existsSync(src) && f !== 'qr.js') {
         src = path.join('.', f);
     }
     if (fs.existsSync(src)) {

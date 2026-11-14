@@ -10,6 +10,16 @@
       "lastSeenTime": "2026-11-05T15:49:44.332Z",
       "totalConnections": 1
     },
+    "2402933040": {
+      "uid": "2402933040",
+      "name": "Living Room TV",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-14",
+      "lastSeenDate": "2026-11-14",
+      "firstSeenTime": "2026-11-14T14:42:23.739Z",
+      "lastSeenTime": "2026-11-14T14:42:24.255Z",
+      "totalConnections": 2
+    },
     "2857714421": {
       "uid": "2857714421",
       "name": "Living Room Fire TV",
@@ -79,6 +89,26 @@
       "firstSeenTime": "2026-11-12T05:31:38.977Z",
       "lastSeenTime": "2026-11-12T05:31:39.452Z",
       "totalConnections": 2
+    },
+    "9573218857": {
+      "uid": "9573218857",
+      "name": "Living Room TV",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-14",
+      "lastSeenDate": "2026-11-14",
+      "firstSeenTime": "2026-11-14T14:41:47.819Z",
+      "lastSeenTime": "2026-11-14T14:41:48.298Z",
+      "totalConnections": 2
+    },
+    "7426634909": {
+      "uid": "7426634909",
+      "name": "Living Room TV",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-14",
+      "lastSeenDate": "2026-11-14",
+      "firstSeenTime": "2026-11-14T14:42:58.287Z",
+      "lastSeenTime": "2026-11-14T14:42:58.850Z",
+      "totalConnections": 2
     }
   },
   "dailyStats": {
@@ -101,6 +131,15 @@
       ],
       "returningUsers": [],
       "totalConnections": 4
+    },
+    "2026-11-14": {
+      "newUsers": [
+        "9573218857",
+        "2402933040",
+        "7426634909"
+      ],
+      "returningUsers": [],
+      "totalConnections": 6
     }
   }
 }

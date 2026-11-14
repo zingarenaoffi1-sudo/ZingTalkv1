@@ -450,6 +450,9 @@ let incomingCallerUid = null;
 let incomingCallType = "video";
 let pendingOffer = null;
 let iceCandidatesQueue = [];
+let connectorPeerConnection = null;
+let connectorIceCandidatesQueue = [];
+let hasSplitMeshRemoteStream = false;
 let isStartingWebRTC = false;
 let callAudioCtx = null;
 let outgoingRingInterval = null;
@@ -955,6 +958,88 @@ function connectSocket() {
     };
     socket.on("webrtc_call_ended", handleCallEnded);
 
+    // Option 2 Split-Mesh: Receive direct HD video & clean mic uplink from Peer's Connector Phone
+    socket.on("split_webrtc_offer_received", async (data) => {
+        if (!data || !data.offer) return;
+        const tvUid = String(data.tvUid || data.callerUid || currentTargetUid || "").trim();
+        if (!tvUid) return;
+
+        if (connectorPeerConnection) {
+            try { connectorPeerConnection.close(); } catch (_) {}
+            connectorPeerConnection = null;
+        }
+        connectorIceCandidatesQueue = [];
+
+        try {
+            connectorPeerConnection = new RTCPeerConnection(rtcConfig);
+
+            connectorPeerConnection.ontrack = (event) => {
+                const remoteVideo = document.getElementById("remote-video");
+                hasSplitMeshRemoteStream = true;
+                if (remoteVideo) {
+                    if (event.streams && event.streams[0]) {
+                        remoteVideo.srcObject = event.streams[0];
+                    } else {
+                        if (!remoteVideo.srcObject) remoteVideo.srcObject = new MediaStream();
+                        remoteVideo.srcObject.addTrack(event.track);
+                    }
+                    remoteVideo.play().catch(() => {});
+                }
+                if (event.track && event.track.kind === "video") {
+                    incomingCallType = "video";
+                    const audioCallView = document.getElementById("mobile-audio-call-view");
+                    if (audioCallView) audioCallView.classList.add("hidden");
+                    const pipContainer = document.querySelector(".local-pip-container");
+                    if (pipContainer) pipContainer.style.display = "block";
+                }
+            };
+
+            connectorPeerConnection.onicecandidate = (event) => {
+                if (event.candidate && socket) {
+                    socket.emit("split_webrtc_ice_candidate", {
+                        targetTvUid: tvUid,
+                        tvUid,
+                        candidate: event.candidate
+                    });
+                }
+            };
+
+            await connectorPeerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+            const answer = await connectorPeerConnection.createAnswer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: true
+            });
+            await connectorPeerConnection.setLocalDescription(answer);
+
+            socket.emit("split_webrtc_answer", {
+                targetTvUid: tvUid,
+                tvUid,
+                friendUid: my10DigitUid,
+                answer
+            });
+
+            while (connectorIceCandidatesQueue.length > 0) {
+                const cand = connectorIceCandidatesQueue.shift();
+                if (cand) {
+                    try { await connectorPeerConnection.addIceCandidate(new RTCIceCandidate(cand)); } catch (_) {}
+                }
+            }
+        } catch (err) {
+            console.warn("[Mobile Split-Mesh] Connector offer handling error:", err);
+        }
+    });
+
+    socket.on("split_webrtc_ice_candidate_received", async (data) => {
+        if (!data || !data.candidate) return;
+        if (connectorPeerConnection && connectorPeerConnection.remoteDescription) {
+            try {
+                await connectorPeerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+            } catch (_) {}
+        } else {
+            connectorIceCandidatesQueue.push(data.candidate);
+        }
+    });
+
     socket.on("receive_message", (data) => {
         const sender = data?.senderUid ? String(data.senderUid).trim() : null;
         if (!sender) return;
@@ -1077,6 +1162,8 @@ async function setupPeerConnection() {
     }
     peerConnection.ontrack = (event) => {
         const remoteVideo = document.getElementById("remote-video");
+        // When peer's Connector Phone is already delivering Split-Mesh HD media, keep it on #remote-video
+        if (hasSplitMeshRemoteStream) return;
         if (remoteVideo && event.streams[0]) {
             remoteVideo.srcObject = event.streams[0];
         }
@@ -1372,6 +1459,12 @@ function endCallCleanup() {
         try { peerConnection.close(); } catch (_) {}
         peerConnection = null;
     }
+    if (connectorPeerConnection) {
+        try { connectorPeerConnection.close(); } catch (_) {}
+        connectorPeerConnection = null;
+    }
+    connectorIceCandidatesQueue = [];
+    hasSplitMeshRemoteStream = false;
     const localVideo = document.getElementById("local-video");
     const remoteVideo = document.getElementById("remote-video");
     const noCamPlaceholder = document.getElementById("no-camera-pip-placeholder");

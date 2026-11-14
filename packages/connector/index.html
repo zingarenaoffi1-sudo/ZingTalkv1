@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>ZingTalk Connector — Wireless TV Camera, Mic &amp; Remote</title>
+    <meta name="description" content="Pair your phone with ZingTalk on Amazon Fire TV for crystal-clear HD video calling (Option 2 Split-Mesh) and touch TV remote control.">
+    <style>
+        html, body { background-color: #090d16; color: #f1f5f9; margin: 0; padding: 0; }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/png" href="assets/favicon.png">
+    <link rel="apple-touch-icon" href="assets/icon.png">
+    <link rel="manifest" href="manifest.json">
+    <script src="capacitor.js"></script>
+    <script src="socket.io.min.js"></script>
+</head>
+<body class="conn-body">
+
+    <div class="conn-shell">
+        <!-- Compact Top App Bar (<= 52px on mobile to stay well within 15% sticky budget) -->
+        <header class="conn-topbar">
+            <div class="conn-brand">
+                <img src="assets/icon.png" alt="ZingTalk Connector" class="conn-brand-icon" referrerpolicy="no-referrer">
+                <span class="conn-brand-title">ZingTalk Connector</span>
+            </div>
+
+            <!-- Desktop Inline Navigation Tabs -->
+            <nav class="conn-desktop-nav" aria-label="Connector sections">
+                <button type="button" class="conn-nav-tab active" data-tab="pair" id="desk-tab-pair">Pair TV</button>
+                <button type="button" class="conn-nav-tab" data-tab="studio" id="desk-tab-studio">Cam &amp; Mic</button>
+                <button type="button" class="conn-nav-tab" data-tab="remote" id="desk-tab-remote">TV Remote</button>
+                <button type="button" class="conn-nav-tab" data-tab="guide" id="desk-tab-guide">How to Use</button>
+            </nav>
+
+            <div class="conn-top-status">
+                <span id="conn-pair-state" class="conn-status-text">Not paired</span>
+                <button type="button" id="top-unpair-btn" class="conn-ghost-btn hidden">Unpair</button>
+            </div>
+        </header>
+
+        <!-- Active Split-Mesh Live Call Banner (Visible only during an active Phone -> Friend call) -->
+        <section id="split-call-banner" class="conn-live-call-bar hidden" aria-label="Active Split-Mesh Call">
+            <div class="conn-live-meta">
+                <strong id="split-call-peer">Calling Friend</strong>
+                <span id="split-call-mode">Direct HD Video Uplink · 0% TV Encode Load</span>
+            </div>
+            <div class="conn-live-actions">
+                <button type="button" id="call-bar-mute-btn" class="conn-call-btn">Mute</button>
+                <button type="button" id="call-bar-cam-btn" class="conn-call-btn">Cam Off</button>
+                <button type="button" id="call-bar-end-btn" class="conn-call-btn conn-call-btn-end">End</button>
+            </div>
+        </section>
+
+        <!-- Main Workspace Content -->
+        <main class="conn-main">
+
+            <!-- TAB 1: PAIR TV -->
+            <section id="tab-pair" class="conn-view active" aria-labelledby="desk-tab-pair">
+                <div class="conn-grid-2col">
+                    <div class="conn-card conn-hero-card">
+                        <div class="conn-section-meta">
+                            <span>Split-Mesh Mode</span>
+                            <span aria-hidden="true">·</span>
+                            <span id="server-conn-label">Connecting server...</span>
+                        </div>
+                        <h1 class="conn-h1">Pair phone camera to your Fire TV</h1>
+                        <p class="conn-lead">
+                            Your phone sends crystal-clear camera &amp; mic directly to your friend while Fire TV displays their HD video on the big screen. Zero lag on any Fire TV Stick.
+                        </p>
+
+                        <form id="pair-form" class="conn-form" novalidate>
+                            <div class="conn-field-row">
+                                <div class="conn-field">
+                                    <label for="pair-code-input" class="conn-label">6-Digit TV Pairing Code</label>
+                                    <input
+                                        type="tel"
+                                        id="pair-code-input"
+                                        class="conn-input conn-mono"
+                                        maxlength="6"
+                                        inputmode="numeric"
+                                        autocomplete="off"
+                                        placeholder="e.g. 482910"
+                                    >
+                                </div>
+                                <div class="conn-field">
+                                    <label for="pair-uid-input" class="conn-label">Or 10-Digit Fire TV UID</label>
+                                    <input
+                                        type="tel"
+                                        id="pair-uid-input"
+                                        class="conn-input conn-mono"
+                                        maxlength="10"
+                                        inputmode="numeric"
+                                        autocomplete="off"
+                                        placeholder="e.g. 1234567890"
+                                    >
+                                </div>
+                            </div>
+
+                            <div class="conn-field">
+                                <label for="connector-device-name" class="conn-label">Phone Name (shown on TV)</label>
+                                <input
+                                    type="text"
+                                    id="connector-device-name"
+                                    class="conn-input"
+                                    maxlength="32"
+                                    placeholder="e.g. Living Room Phone"
+                                    value="Phone Camera"
+                                >
+                            </div>
+
+                            <div id="pair-feedback" class="conn-feedback hidden" role="status"></div>
+
+                            <div class="conn-btn-row">
+                                <button type="submit" id="pair-submit-btn" class="conn-primary-btn">
+                                    Connect to Fire TV
+                                </button>
+                                <button type="button" id="open-qr-scan-btn" class="conn-secondary-btn">
+                                    Scan TV QR
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div class="conn-card conn-side-card">
+                        <h2 class="conn-h2">Paired TV &amp; Saved Devices</h2>
+                        <div id="paired-tv-panel" class="conn-paired-box hidden">
+                            <div class="conn-paired-row">
+                                <div>
+                                    <div id="paired-tv-name" class="conn-paired-title">Fire TV</div>
+                                    <div id="paired-tv-uid" class="conn-paired-sub conn-mono">UID: ----------</div>
+                                </div>
+                                <button type="button" id="unpair-card-btn" class="conn-danger-outline-btn">Disconnect</button>
+                            </div>
+                            <div class="conn-paired-next">
+                                <button type="button" id="goto-studio-btn" class="conn-secondary-btn conn-full">Open Cam &amp; Mic Preview</button>
+                                <button type="button" id="goto-remote-btn" class="conn-secondary-btn conn-full">Open TV Remote</button>
+                            </div>
+                        </div>
+
+                        <div id="unpaired-hint-box" class="conn-empty-box">
+                            <strong>Where to find the Pairing Code?</strong>
+                            <p>Open ZingTalk TV on your television and select <b>Phone Cam</b> in the top bar. Enter the 6-digit code shown there or scan the TV QR code.</p>
+                        </div>
+
+                        <div class="conn-divider"></div>
+
+                        <div class="conn-saved-head">
+                            <h3 class="conn-h3">Recent Fire TVs</h3>
+                            <button type="button" id="clear-saved-tvs-btn" class="conn-text-btn">Clear</button>
+                        </div>
+                        <div id="saved-tvs-list" class="conn-saved-list"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 2: CAM & MIC STUDIO -->
+            <section id="tab-studio" class="conn-view hidden" aria-labelledby="desk-tab-studio">
+                <div class="conn-grid-2col">
+                    <div class="conn-card conn-preview-card">
+                        <div class="conn-preview-header">
+                            <h2 class="conn-h2">Camera Preview</h2>
+                            <div class="conn-preview-actions">
+                                <button type="button" id="toggle-preview-btn" class="conn-primary-btn conn-btn-compact">Start Preview</button>
+                                <button type="button" id="flip-cam-btn" class="conn-secondary-btn conn-btn-compact">Flip Cam</button>
+                            </div>
+                        </div>
+
+                        <div class="conn-video-frame">
+                            <video id="connector-preview-video" autoplay muted playsinline></video>
+                            <div id="preview-fallback" class="conn-video-fallback">
+                                <strong>Camera preview paused</strong>
+                                <span>Tap Start Preview to test framing or wait for a call on Fire TV — your phone camera turns on automatically when paired.</span>
+                            </div>
+                            <div class="conn-video-scrim">
+                                <span id="preview-res-readout" class="conn-mono">720p HD</span>
+                                <span aria-hidden="true">·</span>
+                                <span id="preview-cam-readout">Front Camera</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="conn-card conn-controls-card">
+                        <h2 class="conn-h2">Video &amp; Echo Guard Settings</h2>
+                        <p class="conn-muted">
+                            Tune microphone echo cancellation so TV speaker audio does not echo back to your friend.
+                        </p>
+
+                        <div class="conn-control-group">
+                            <label class="conn-label" for="res-select">Upload Resolution</label>
+                            <div class="conn-segmented" id="res-select" role="group" aria-label="Upload video resolution">
+                                <button type="button" class="conn-seg-btn" data-res="480p">480p Saver</button>
+                                <button type="button" class="conn-seg-btn active" data-res="720p">720p HD</button>
+                                <button type="button" class="conn-seg-btn" data-res="1080p">1080p Full</button>
+                            </div>
+                        </div>
+
+                        <div class="conn-divider"></div>
+
+                        <div class="conn-control-row">
+                            <div>
+                                <div class="conn-setting-title">Mic Mute</div>
+                                <div class="conn-setting-sub">Silences microphone uplink immediately</div>
+                            </div>
+                            <button type="button" id="studio-mute-btn" class="conn-toggle-btn" aria-pressed="false">Active</button>
+                        </div>
+
+                        <div class="conn-control-row">
+                            <div>
+                                <div class="conn-setting-title">Camera Video</div>
+                                <div class="conn-setting-sub">Pause or resume outgoing video track</div>
+                            </div>
+                            <button type="button" id="studio-cam-btn" class="conn-toggle-btn" aria-pressed="true">On</button>
+                        </div>
+
+                        <div class="conn-control-row">
+                            <div>
+                                <div class="conn-setting-title">Echo Guard &amp; 90Hz High-Pass Filter</div>
+                                <div class="conn-setting-sub">Filters TV speaker rumble &amp; background hum</div>
+                            </div>
+                            <button type="button" id="studio-echo-btn" class="conn-toggle-btn active" aria-pressed="true">Enabled</button>
+                        </div>
+
+                        <div class="conn-divider"></div>
+
+                        <div class="conn-meter-block">
+                            <div class="conn-meter-head">
+                                <span class="conn-label">Live Mic Input Level</span>
+                                <span id="mic-meter-status" class="conn-mono conn-muted-sm">Idle</span>
+                            </div>
+                            <div class="conn-meter-track" aria-hidden="true">
+                                <div id="mic-meter-fill" class="conn-meter-fill"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 3: TV REMOTE & VIRTUAL KEYBOARD -->
+            <section id="tab-remote" class="conn-view hidden" aria-labelledby="desk-tab-remote">
+                <div class="conn-grid-2col">
+                    <div class="conn-card conn-remote-card">
+                        <div class="conn-remote-head">
+                            <h2 class="conn-h2">Fire TV D-Pad Remote</h2>
+                            <span id="remote-target-label" class="conn-muted-sm conn-mono">No TV paired</span>
+                        </div>
+
+                        <div class="conn-dpad-pad" role="group" aria-label="TV directional pad">
+                            <button type="button" class="conn-dpad-btn conn-dpad-up" data-remote-key="ArrowUp" aria-label="Up">Up</button>
+                            <button type="button" class="conn-dpad-btn conn-dpad-left" data-remote-key="ArrowLeft" aria-label="Left">Left</button>
+                            <button type="button" class="conn-dpad-ok" data-remote-key="Enter" aria-label="Select OK">OK</button>
+                            <button type="button" class="conn-dpad-btn conn-dpad-right" data-remote-key="ArrowRight" aria-label="Right">Right</button>
+                            <button type="button" class="conn-dpad-btn conn-dpad-down" data-remote-key="ArrowDown" aria-label="Down">Down</button>
+                        </div>
+
+                        <div class="conn-remote-row">
+                            <button type="button" class="conn-secondary-btn conn-remote-act" data-remote-key="Back">Back</button>
+                            <button type="button" class="conn-secondary-btn conn-remote-act" data-remote-key="Home">Home</button>
+                            <button type="button" class="conn-secondary-btn conn-remote-act" data-remote-key="Menu">Guide / Menu</button>
+                            <button type="button" class="conn-secondary-btn conn-remote-act" data-remote-key="MediaPlayPause">Mute Toggle</button>
+                        </div>
+                    </div>
+
+                    <div class="conn-card conn-keyboard-card">
+                        <h2 class="conn-h2">Virtual TV Keyboard</h2>
+                        <p class="conn-muted">
+                            Focus any input box on Fire TV (10-digit UID dialer, contact name, or chat message) and send text straight from your phone keyboard.
+                        </p>
+
+                        <form id="remote-text-form" class="conn-form">
+                            <div class="conn-field">
+                                <label for="remote-text-input" class="conn-label">Text to Type on TV</label>
+                                <input
+                                    type="text"
+                                    id="remote-text-input"
+                                    class="conn-input"
+                                    maxlength="240"
+                                    placeholder="Type UID, contact name, or chat message..."
+                                >
+                            </div>
+                            <div class="conn-btn-row">
+                                <button type="submit" id="remote-send-text-btn" class="conn-primary-btn">Send to TV</button>
+                                <button type="button" id="remote-send-enter-btn" class="conn-secondary-btn">Send + Enter</button>
+                            </div>
+                        </form>
+
+                        <div class="conn-divider"></div>
+
+                        <div class="conn-quick-actions">
+                            <h3 class="conn-h3">Call Shortcuts</h3>
+                            <div class="conn-btn-row">
+                                <button type="button" class="conn-secondary-btn conn-tv-ctrl" data-tv-ctrl="answer_call">Answer Call</button>
+                                <button type="button" class="conn-secondary-btn conn-tv-ctrl" data-tv-ctrl="reject_call">Decline Call</button>
+                                <button type="button" class="conn-danger-outline-btn conn-tv-ctrl" data-tv-ctrl="end_call">Hang Up Call</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 4: FULL GUIDE PAGE -->
+            <section id="tab-guide" class="conn-view hidden" aria-labelledby="desk-tab-guide">
+                <div class="conn-guide-wrap">
+                    <div class="conn-card conn-guide-hero">
+                        <div class="conn-section-meta">
+                            <span>Option 2 Architecture</span>
+                            <span aria-hidden="true">·</span>
+                            <span>Zero TV Stick Encode Load</span>
+                        </div>
+                        <h2 class="conn-h1">How to Use ZingTalk Connector with Fire TV</h2>
+                        <p class="conn-lead">
+                            Turn any Android smartphone into a wireless HD webcam, microphone, and touch remote for ZingTalk TV — without buying a USB webcam.
+                        </p>
+                    </div>
+
+                    <div class="conn-guide-grid">
+                        <article class="conn-card conn-guide-step">
+                            <div class="conn-step-num conn-mono">01</div>
+                            <h3 class="conn-h2">How Split-Mesh Calling Works</h3>
+                            <p>
+                                Unlike slow screen-mirroring, ZingTalk runs two direct paths in parallel:
+                            </p>
+                            <ul class="conn-list">
+                                <li><strong>Phone Camera to Friend:</strong> Your phone's camera and mic stream 720p/1080p directly to your friend via WebRTC.</li>
+                                <li><strong>Friend Video to Fire TV:</strong> Your friend's video goes straight to your television screen in HD.</li>
+                                <li><strong>Why it feels smooth:</strong> Your Fire TV Stick only decodes incoming video and never has to encode camera video, preventing heat and stutter.</li>
+                            </ul>
+                        </article>
+
+                        <article class="conn-card conn-guide-step">
+                            <div class="conn-step-num conn-mono">02</div>
+                            <h3 class="conn-h2">Step-by-Step Pairing</h3>
+                            <ol class="conn-list">
+                                <li>Open <strong>ZingTalk TV</strong> on your Amazon Fire TV and sign in (Email or Guest Mode).</li>
+                                <li>Select <strong>Phone Cam</strong> on the TV top bar to open the 6-digit Pairing Code &amp; QR screen.</li>
+                                <li>Open <strong>ZingTalk Connector</strong> on this phone, go to <strong>Pair TV</strong>, type the 6-digit code (or tap <strong>Scan TV QR</strong>), and tap <strong>Connect to Fire TV</strong>.</li>
+                                <li>Your TV top bar updates to <strong>Phone Cam Ready</strong>. Keep ZingTalk Connector open while calling.</li>
+                            </ol>
+                        </article>
+
+                        <article class="conn-card conn-guide-step">
+                            <div class="conn-step-num conn-mono">03</div>
+                            <h3 class="conn-h2">Best Phone Placement &amp; Zero Echo Tips</h3>
+                            <ul class="conn-list">
+                                <li>Place your phone upright near the TV (below or beside the screen) on a stand or tripod, 3 to 6 feet from the sofa.</li>
+                                <li>Keep TV speaker volume at a comfortable medium level (avoid max TV volume facing the phone mic).</li>
+                                <li>Keep <strong>Echo Guard &amp; 90Hz Filter</strong> enabled in the <strong>Cam &amp; Mic</strong> tab to cut TV cabinet bass resonance.</li>
+                                <li>Both Wi-Fi and mobile data (4G/5G) work anywhere thanks to TURN relay support.</li>
+                            </ul>
+                        </article>
+
+                        <article class="conn-card conn-guide-step">
+                            <div class="conn-step-num conn-mono">04</div>
+                            <h3 class="conn-h2">Remote Control &amp; Troubleshooting</h3>
+                            <ul class="conn-list">
+                                <li><strong>Start or Answer Calls:</strong> Use the TV remote or the <strong>TV Remote</strong> tab here — your phone camera uplink starts automatically the second the call connects.</li>
+                                <li><strong>Fast Typing:</strong> Use <strong>Virtual TV Keyboard</strong> to paste or type 10-digit UIDs and chat messages onto your TV effortlessly.</li>
+                                <li><strong>If code expired:</strong> Pairing codes expire after 30 minutes; press <strong>New Code</strong> on Fire TV.</li>
+                                <li><strong>Minimum Age &amp; Privacy:</strong> Strictly 18+ adults only. Zero server message storage.</li>
+                            </ul>
+                        </article>
+                    </div>
+
+                    <div class="conn-legal-links">
+                        <a href="privacy.html" target="_blank">Privacy Policy (18+)</a>
+                        <span aria-hidden="true">·</span>
+                        <a href="terms.html" target="_blank">Terms of Service</a>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Mobile Bottom Tab Bar (60px height; combined with 52px top bar = 112px = 13.2% <= 15%) -->
+        <nav class="conn-bottom-nav" aria-label="Mobile navigation">
+            <button type="button" class="conn-bottom-tab active" data-tab="pair" id="mob-tab-pair">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17 7h-4v2h4c1.65 0 3 1.35 3 3s-1.35 3-3 3h-4v2h4c2.76 0 5-2.24 5-5s-2.24-5-5-5zm-6 8H7c-1.65 0-3-1.35-3-3s1.35-3 3-3h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-2zm-3-4h8v2H8z"/></svg>
+                <span>Pair TV</span>
+            </button>
+            <button type="button" class="conn-bottom-tab" data-tab="studio" id="mob-tab-studio">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+                <span>Cam &amp; Mic</span>
+            </button>
+            <button type="button" class="conn-bottom-tab" data-tab="remote" id="mob-tab-remote">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15 7.5V2H9v5.5l3 3 3-3zM7.5 9H2v6h5.5l3-3-3-3zM9 16.5V22h6v-5.5l-3-3-3 3zM16.5 9l-3 3 3 3H22V9h-5.5z"/></svg>
+                <span>Remote</span>
+            </button>
+            <button type="button" class="conn-bottom-tab" data-tab="guide" id="mob-tab-guide">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg>
+                <span>Guide</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- QR Scanner Modal -->
+    <div id="qr-modal" class="conn-modal hidden" role="dialog" aria-modal="true" aria-labelledby="qr-modal-title">
+        <div class="conn-modal-card">
+            <div class="conn-modal-head">
+                <h2 id="qr-modal-title" class="conn-h2">Scan Fire TV QR Code</h2>
+                <button type="button" id="close-qr-modal-btn" class="conn-ghost-btn" aria-label="Close scanner">Close</button>
+            </div>
+            <div class="conn-qr-viewport">
+                <video id="qr-scan-video" autoplay muted playsinline></video>
+                <div id="qr-scan-msg" class="conn-qr-msg">Point rear camera at the QR code on your Fire TV screen.</div>
+            </div>
+            <div class="conn-field" style="margin-top: 12px;">
+                <label for="qr-manual-input" class="conn-label">Or Paste QR Link (zingtalk://pair?...)</label>
+                <div class="conn-btn-row">
+                    <input type="text" id="qr-manual-input" class="conn-input conn-mono" placeholder="zingtalk://pair?uid=...&code=...">
+                    <button type="button" id="qr-apply-manual-btn" class="conn-primary-btn conn-btn-compact">Pair</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="conn-toast" class="conn-toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="app.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+            });
+        }
+    </script>
+</body>
+</html>

@@ -41,6 +41,11 @@ loadEnvFile();
 
 const { Server } = require('socket.io');
 const admin = require('firebase-admin');
+const {
+    normalizeUid,
+    normalizePairCode,
+    SplitMeshRegistry
+} = require('./lib/split-mesh');
 let nodemailer = null;
 try {
     nodemailer = require('nodemailer');
@@ -62,6 +67,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Global connected users registry (UID -> socket.id)
 const connectedUsers = new Map();
+const splitMesh = new SplitMeshRegistry();
 
 // ==========================================================================
 // SERVER ADMIN & ANALYTICS PERSISTENCE ENGINE
@@ -591,6 +597,7 @@ app.use(express.static(__dirname, { index: false }));
 app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use('/tv', express.static(path.join(__dirname, 'packages', 'tv')));
 app.use('/mobile', express.static(path.join(__dirname, 'packages', 'mobile')));
+app.use('/connector', express.static(path.join(__dirname, 'packages', 'connector')));
 
 // In-Memory Database Fallback for users and contacts
 const inMemoryUsers = new Map();
@@ -1304,6 +1311,260 @@ async function checkUserUidExists(targetUid) {
         socket.emit('report_ack', { status: 'success', message: 'Report submitted.' });
     });
 
+    // ----------------- Option 2: Split-Mesh Phone Camera & TV Remote Orchestration -----------------
+    const activeCallPeers = new Map(); // uid -> { peerUid, callType, tvAsCaller }
+
+    function resolveSocketUid() {
+        for (const [u, sId] of connectedUsers.entries()) {
+            if (sId === socket.id) return u;
+        }
+        return null;
+    }
+
+    function maybeTriggerSplitMeshUplink(tvUid, friendUid, callType, tvAsCaller, friendName = '') {
+        const cleanTv = normalizeUid(tvUid);
+        const cleanFriend = normalizeUid(friendUid);
+        if (!cleanTv || !cleanFriend) return null;
+        const connector = splitMesh.getConnectorForTv(cleanTv);
+        if (!connector) return null;
+
+        const session = splitMesh.registerSplitCallSession({
+            tvUid: cleanTv,
+            friendUid: cleanFriend,
+            friendName: friendName || `UID ${cleanFriend}`,
+            callType: callType === 'audio' ? 'audio' : 'video',
+            tvAsCaller
+        });
+        if (session) {
+            io.to(connector.socketId).emit('connector_start_uplink', {
+                callSessionId: session.callSessionId,
+                tvUid: session.tvUid,
+                friendUid: session.friendUid,
+                friendName: session.friendName,
+                callType: session.callType,
+                tvAsCaller: session.tvAsCaller
+            });
+            console.log(`[Split-Mesh] Started direct Phone -> Friend uplink: TV[${cleanTv}] + Phone[${connector.connectorId}] -> Friend[${cleanFriend}] (${session.callType})`);
+        }
+        return session;
+    }
+
+    function stopSplitMeshForUid(uid, reason = 'call_ended') {
+        const cleared = splitMesh.clearSplitCallForUid(uid);
+        cleared.forEach((session) => {
+            if (session.connectorSocketId) {
+                io.to(session.connectorSocketId).emit('connector_stop_uplink', {
+                    callSessionId: session.callSessionId,
+                    tvUid: session.tvUid,
+                    friendUid: session.friendUid,
+                    reason
+                });
+            }
+        });
+    }
+
+    socket.on('tv_register_pairing', (data) => {
+        const tvUid = normalizeUid(data?.tvUid || resolveSocketUid());
+        if (!tvUid) {
+            socket.emit('tv_pairing_error', { message: 'Sign in on Fire TV first to generate a pairing code.' });
+            return;
+        }
+        const preferred = data?.forceNew ? String(Math.floor(100000 + Math.random() * 900000)) : null;
+        const result = splitMesh.registerTvPairing(tvUid, data?.tvName || 'Fire TV', preferred);
+        if (result.ok) {
+            socket.join(`tv_ctrl_${tvUid}`);
+            const currentConnector = splitMesh.getConnectorForTv(tvUid);
+            socket.emit('tv_pairing_code_assigned', {
+                tvUid: result.tvUid,
+                code: result.code,
+                qrPayload: result.qrPayload,
+                connectorConnected: Boolean(currentConnector),
+                connectorDeviceName: currentConnector ? currentConnector.deviceName : null
+            });
+        }
+    });
+
+    socket.on('connector_pair', (data) => {
+        const res = splitMesh.pairConnector({
+            code: data?.code,
+            tvUid: data?.tvUid,
+            connectorSocketId: socket.id,
+            deviceName: data?.deviceName || 'ZingTalk Connector Phone',
+            resolution: data?.resolution || '720p',
+            facingMode: data?.facingMode || 'user',
+            isTvOnlineFn: (uid) => isUserOnline(uid)
+        });
+
+        if (!res.ok) {
+            socket.emit('connector_pair_error', { message: res.error || 'Pairing failed.' });
+            return;
+        }
+
+        if (res.replacedSocketId) {
+            io.to(res.replacedSocketId).emit('connector_unpaired', {
+                tvUid: res.tvUid,
+                reason: 'Another Connector Phone paired with this TV.'
+            });
+        }
+
+        socket.join(`tv_ctrl_${res.tvUid}`);
+        socket.emit('connector_paired', {
+            ok: true,
+            tvUid: res.tvUid,
+            tvName: res.tvName,
+            code: res.code,
+            connectorId: res.connectorId,
+            deviceName: res.deviceName
+        });
+
+        sendSignalingEvent(res.tvUid, 'tv_connector_status', {
+            connected: true,
+            tvUid: res.tvUid,
+            connectorId: res.connectorId,
+            deviceName: res.deviceName
+        });
+
+        console.log(`[Split-Mesh] Connector[${res.connectorId}] (${res.deviceName}) paired to TV[${res.tvUid}]`);
+    });
+
+    socket.on('connector_unpair', () => {
+        const removed = splitMesh.unpairByConnector(socket.id);
+        if (removed) {
+            socket.leave(`tv_ctrl_${removed.tvUid}`);
+            socket.emit('connector_unpaired', { tvUid: removed.tvUid, reason: 'Unpaired by user.' });
+            sendSignalingEvent(removed.tvUid, 'tv_connector_status', {
+                connected: false,
+                tvUid: removed.tvUid
+            });
+        }
+    });
+
+    socket.on('tv_unpair_connector', (data) => {
+        const tvUid = normalizeUid(data?.tvUid || resolveSocketUid());
+        if (!tvUid) return;
+        const removed = splitMesh.unpairByTv(tvUid);
+        if (removed) {
+            io.to(removed.socketId).emit('connector_unpaired', {
+                tvUid,
+                reason: 'Disconnected from Fire TV.'
+            });
+            sendSignalingEvent(tvUid, 'tv_connector_status', { connected: false, tvUid });
+        }
+    });
+
+    socket.on('connector_media_state', (data) => {
+        const tvUid = splitMesh.getTvForConnector(socket.id) || normalizeUid(data?.tvUid);
+        if (!tvUid) return;
+        sendSignalingEvent(tvUid, 'tv_connector_media_state', {
+            tvUid,
+            micMuted: Boolean(data?.micMuted),
+            videoOff: Boolean(data?.videoOff),
+            facingMode: data?.facingMode === 'environment' ? 'environment' : 'user',
+            resolution: data?.resolution || '720p',
+            noiseGateEnabled: data?.noiseGateEnabled !== false
+        });
+    });
+
+    socket.on('tv_connector_control', (data) => {
+        const tvUid = normalizeUid(data?.tvUid || resolveSocketUid());
+        if (!tvUid) return;
+        const connector = splitMesh.getConnectorForTv(tvUid);
+        if (connector) {
+            io.to(connector.socketId).emit('connector_remote_control', {
+                action: data?.action,
+                value: data?.value
+            });
+        }
+    });
+
+    socket.on('tv_remote_key', (data) => {
+        const tvUid = splitMesh.getTvForConnector(socket.id) || normalizeUid(data?.tvUid);
+        if (!tvUid || !data?.key) return;
+        sendSignalingEvent(tvUid, 'tv_remote_key', {
+            key: String(data.key).slice(0, 24),
+            fromConnector: true
+        });
+    });
+
+    socket.on('tv_remote_text', (data) => {
+        const tvUid = splitMesh.getTvForConnector(socket.id) || normalizeUid(data?.tvUid);
+        if (!tvUid || typeof data?.text !== 'string') return;
+        sendSignalingEvent(tvUid, 'tv_remote_text', {
+            text: data.text.slice(0, 500),
+            submit: Boolean(data.submit),
+            fromConnector: true
+        });
+    });
+
+    socket.on('connector_end_split_call', (data) => {
+        const tvUid = splitMesh.getTvForConnector(socket.id) || normalizeUid(data?.tvUid);
+        if (!tvUid) return;
+        const session = splitMesh.getSplitCallSessionByTv(tvUid);
+        if (session?.friendUid) {
+            sendSignalingEvent(session.friendUid, 'webrtc_call_ended', { fromTvUid: tvUid });
+            sendSignalingEvent(session.friendUid, 'call_ended', { fromTvUid: tvUid });
+        }
+        sendSignalingEvent(tvUid, 'webrtc_call_ended', { endedByConnector: true });
+        sendSignalingEvent(tvUid, 'call_ended', { endedByConnector: true });
+        stopSplitMeshForUid(tvUid, 'ended_by_connector');
+    });
+
+    socket.on('split_webrtc_offer', (data) => {
+        if (!data || !data.offer) return;
+        const tvUid = splitMesh.getTvForConnector(socket.id) || normalizeUid(data.tvUid);
+        const friendUid = normalizeUid(data.targetUid || data.friendUid);
+        if (!tvUid || !friendUid) return;
+        sendSignalingEvent(friendUid, 'split_webrtc_offer_received', {
+            offer: data.offer,
+            tvUid,
+            callerUid: tvUid,
+            callType: data.callType || 'video',
+            meshRole: 'connector_uplink',
+            fromConnector: true
+        });
+    });
+
+    socket.on('split_webrtc_answer', (data) => {
+        if (!data || !data.answer) return;
+        const tvUid = normalizeUid(data.targetTvUid || data.tvUid || data.targetUid);
+        if (!tvUid) return;
+        const connector = splitMesh.getConnectorForTv(tvUid);
+        if (connector) {
+            io.to(connector.socketId).emit('split_webrtc_answer_received', {
+                answer: data.answer,
+                tvUid,
+                friendUid: normalizeUid(data.friendUid || resolveSocketUid())
+            });
+        }
+    });
+
+    socket.on('split_webrtc_ice_candidate', (data) => {
+        if (!data || !data.candidate) return;
+        const pairedTv = splitMesh.getTvForConnector(socket.id);
+        if (pairedTv) {
+            // Connector -> Friend
+            const friendUid = normalizeUid(data.targetUid || data.friendUid);
+            if (!friendUid) return;
+            sendSignalingEvent(friendUid, 'split_webrtc_ice_candidate_received', {
+                candidate: data.candidate,
+                tvUid: pairedTv,
+                fromConnector: true
+            });
+        } else {
+            // Friend -> Connector
+            const tvUid = normalizeUid(data.targetTvUid || data.tvUid || data.targetUid);
+            if (!tvUid) return;
+            const connector = splitMesh.getConnectorForTv(tvUid);
+            if (connector) {
+                io.to(connector.socketId).emit('split_webrtc_ice_candidate_received', {
+                    candidate: data.candidate,
+                    tvUid,
+                    fromConnector: false
+                });
+            }
+        }
+    });
+
     socket.on('initiate_call', async (data) => {
         if (!data) return;
         const rawTarget = data.targetUid || data.receiverUid;
@@ -1344,28 +1605,88 @@ async function checkUserUidExists(targetUid) {
             return;
         }
 
+        // Tag Split-Mesh availability if caller is a TV paired with a Connector Phone
+        const callerConnector = callerUid ? splitMesh.getConnectorForTv(callerUid) : null;
+        if (callerConnector || data.hasConnector) {
+            data.hasConnector = true;
+            data.connectorSplitMesh = true;
+        }
+        if (callerUid && targetUid) {
+            activeCallPeers.set(callerUid, {
+                peerUid: targetUid,
+                callType: data.type || 'video',
+                callerName: data.callerName || ''
+            });
+            activeCallPeers.set(targetUid, {
+                peerUid: callerUid,
+                callType: data.type || 'video',
+                callerName: data.callerName || ''
+            });
+        }
+
         sendSignalingEvent(targetUid, 'incoming_call', data);
     });
 
     socket.on('cancel_call', (data) => {
         if (!data || !data.targetUid) return;
+        const senderUid = resolveSocketUid();
+        if (senderUid) stopSplitMeshForUid(senderUid, 'call_cancelled');
+        stopSplitMeshForUid(data.targetUid, 'call_cancelled');
         sendSignalingEvent(data.targetUid, 'call_cancelled', data);
     });
 
     socket.on('call_response', (data) => {
         if (!data || !data.targetUid) return;
-        sendSignalingEvent(data.targetUid, 'call_response_received', data);
+        const responderUid = normalizeUid(data.responderUid || resolveSocketUid());
+        const callerUid = normalizeUid(data.targetUid);
+        const callInfo = activeCallPeers.get(responderUid) || activeCallPeers.get(callerUid) || {};
+        const callType = data.type || callInfo.callType || 'video';
+
         if (data.status === 'accepted') {
+            const responderConnector = responderUid ? splitMesh.getConnectorForTv(responderUid) : null;
+            const callerConnector = callerUid ? splitMesh.getConnectorForTv(callerUid) : null;
+            if (responderConnector) {
+                data.hasConnector = true;
+                data.connectorSplitMesh = true;
+            }
+            sendSignalingEvent(data.targetUid, 'call_response_received', data);
             sendSignalingEvent(data.targetUid, 'call_accepted', data);
+
+            // Start Split-Mesh uplinks cleanly for whichever side(s) use a paired Connector Phone
+            if (callerConnector) {
+                maybeTriggerSplitMeshUplink(callerUid, responderUid, callType, true, callInfo.callerName || '');
+            }
+            if (responderConnector) {
+                maybeTriggerSplitMeshUplink(responderUid, callerUid, callType, false, callInfo.callerName || '');
+            }
+        } else {
+            if (responderUid) stopSplitMeshForUid(responderUid, 'call_declined');
+            if (callerUid) stopSplitMeshForUid(callerUid, 'call_declined');
+            sendSignalingEvent(data.targetUid, 'call_response_received', data);
         }
     });
 
     socket.on('answer_call', (data) => {
         const targetUid = data?.callerUid || data?.targetUid;
         if (!targetUid) return;
-        const responsePayload = { targetUid, callerUid: targetUid, status: 'accepted' };
+        const responderUid = normalizeUid(resolveSocketUid());
+        const responderConnector = responderUid ? splitMesh.getConnectorForTv(responderUid) : null;
+        const callerConnector = splitMesh.getConnectorForTv(targetUid);
+        const responsePayload = {
+            targetUid,
+            callerUid: targetUid,
+            status: 'accepted',
+            hasConnector: Boolean(responderConnector),
+            connectorSplitMesh: Boolean(responderConnector)
+        };
         sendSignalingEvent(targetUid, 'call_response_received', responsePayload);
         sendSignalingEvent(targetUid, 'call_accepted', responsePayload);
+        if (callerConnector && responderUid) {
+            maybeTriggerSplitMeshUplink(targetUid, responderUid, data?.type || 'video', true);
+        }
+        if (responderConnector && responderUid) {
+            maybeTriggerSplitMeshUplink(responderUid, targetUid, data?.type || 'video', false);
+        }
     });
 
     socket.on('webrtc_offer', (data) => {
@@ -1388,12 +1709,26 @@ async function checkUserUidExists(targetUid) {
 
     socket.on('webrtc_end_call', (data) => {
         if (!data || !data.targetUid) return;
+        const senderUid = resolveSocketUid();
+        if (senderUid) {
+            stopSplitMeshForUid(senderUid, 'call_ended');
+            activeCallPeers.delete(senderUid);
+        }
+        stopSplitMeshForUid(data.targetUid, 'call_ended');
+        activeCallPeers.delete(normalizeUid(data.targetUid));
         sendSignalingEvent(data.targetUid, 'webrtc_call_ended', data);
         sendSignalingEvent(data.targetUid, 'call_ended', data);
     });
 
     socket.on('end_call', (data) => {
         if (!data || !data.targetUid) return;
+        const senderUid = resolveSocketUid();
+        if (senderUid) {
+            stopSplitMeshForUid(senderUid, 'call_ended');
+            activeCallPeers.delete(senderUid);
+        }
+        stopSplitMeshForUid(data.targetUid, 'call_ended');
+        activeCallPeers.delete(normalizeUid(data.targetUid));
         sendSignalingEvent(data.targetUid, 'webrtc_call_ended', data);
         sendSignalingEvent(data.targetUid, 'call_ended', data);
     });
@@ -1462,10 +1797,29 @@ async function checkUserUidExists(targetUid) {
 
     // Transient Socket Disconnect (Preserves persistent Alexa pairings & contact cache for seamless reconnect)
     socket.on('disconnect', () => {
+        const removedConnector = splitMesh.unpairByConnector(socket.id);
+        if (removedConnector) {
+            sendSignalingEvent(removedConnector.tvUid, 'tv_connector_status', {
+                connected: false,
+                tvUid: removedConnector.tvUid,
+                reason: 'connector_disconnected'
+            });
+            console.log(`[Split-Mesh] Connector[${removedConnector.connectorId}] disconnected from TV[${removedConnector.tvUid}]`);
+        }
+
         for (const [uid, socketId] of connectedUsers.entries()) {
             if (socketId === socket.id) {
                 connectedUsers.delete(uid);
                 socket.leave(uid);
+                stopSplitMeshForUid(uid, 'user_disconnected');
+                const pairedConn = splitMesh.getConnectorForTv(uid);
+                if (pairedConn) {
+                    io.to(pairedConn.socketId).emit('connector_unpaired', {
+                        tvUid: uid,
+                        reason: 'Fire TV went offline.'
+                    });
+                    splitMesh.unpairByTv(uid);
+                }
                 if (lastActiveTvUid === uid) {
                     lastActiveTvUid = null;
                 }
@@ -3262,6 +3616,12 @@ app.get('/mobile*', (req, res) => {
     if (fs.existsSync(mobPath)) return res.sendFile(mobPath);
     const rootPath = path.join(__dirname, 'index.html');
     if (fs.existsSync(rootPath)) return res.sendFile(rootPath);
+    return renderServerStatus(req, res);
+});
+
+app.get('/connector*', (req, res) => {
+    const connPath = path.join(__dirname, 'packages', 'connector', 'index.html');
+    if (fs.existsSync(connPath)) return res.sendFile(connPath);
     return renderServerStatus(req, res);
 });
 

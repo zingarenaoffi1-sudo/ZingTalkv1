@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZingTalk - Privacy Policy</title>
+    <meta name="description" content="Official Privacy Policy for ZingTalk applications (Mobile and TV). Includes strict 18+ age restriction, advertising disclosures, and zero server storage architecture.">
+    <link rel="icon" type="image/png" href="assets/icon.png">
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-surface: #121826;
+            --bg-card: #182234;
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-cyan: #00e5ff;
+            --accent-blue: #3b82f6;
+            --accent-emerald: #10b981;
+            --accent-amber: #f59e0b;
+            --accent-rose: #f43f5e;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.7;
+            padding: 0;
+        }
+
+        header {
+            background: linear-gradient(180deg, rgba(0, 229, 255, 0.12) 0%, rgba(10, 14, 23, 0.95) 100%), var(--bg-surface);
+            border-bottom: 1px solid var(--border-color);
+            padding: 48px 24px 36px;
+            text-align: center;
+        }
+
+        .header-content {
+            max-width: 860px;
+            margin: 0 auto;
+        }
+
+        .logo-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0, 229, 255, 0.1);
+            border: 1px solid rgba(0, 229, 255, 0.3);
+            padding: 8px 18px;
+            border-radius: 9999px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--accent-cyan);
+            margin-bottom: 18px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        h1 {
+            font-size: 36px;
+            font-weight: 800;
+            color: #ffffff;
+            margin-bottom: 12px;
+            letter-spacing: -0.5px;
+        }
+
+        .meta-bar {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 24px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 14px;
+        }
+
+        .meta-item strong {
+            color: var(--text-primary);
+        }
+
+        main {
+            max-width: 860px;
+            margin: 40px auto 80px;
+            padding: 0 24px;
+        }
+
+        /* Prominent Alert Callout Boxes */
+        .callout-box {
+            border-radius: var(--radius-lg);
+            padding: 24px 28px;
+            margin-bottom: 32px;
+            border: 1px solid;
+            background: var(--bg-card);
+        }
+
+        .callout-danger {
+            background: rgba(244, 63, 94, 0.08);
+            border-color: rgba(244, 63, 94, 0.35);
+        }
+
+        .callout-danger h3 {
+            color: #ff6b81;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+
+        .callout-warning {
+            background: rgba(245, 158, 11, 0.08);
+            border-color: rgba(245, 158, 11, 0.35);
+        }
+
+        .callout-warning h3 {
+            color: #fbbf24;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+
+        .section-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 32px;
+            margin-bottom: 28px;
+        }
+
+        h2 {
+            font-size: 22px;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        h3 {
+            font-size: 17px;
+            font-weight: 600;
+            color: var(--accent-cyan);
+            margin: 20px 0 10px;
+        }
+
+        p {
+            color: var(--text-secondary);
+            font-size: 15px;
+            margin-bottom: 14px;
+        }
+
+        p strong {
+            color: var(--text-primary);
+        }
+
+        ul, ol {
+            color: var(--text-secondary);
+            font-size: 15px;
+            padding-left: 24px;
+            margin-bottom: 16px;
+        }
+
+        li {
+            margin-bottom: 8px;
+        }
+
+        li strong {
+            color: var(--text-primary);
+        }
+
+        code {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--accent-cyan);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-family: monospace;
+        }
+
+        .table-responsive {
+            overflow-x: auto;
+            margin: 18px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        th, td {
+            padding: 12px 16px;
+            border: 1px solid var(--border-color);
+            text-align: left;
+        }
+
+        th {
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 14px;
+            margin-top: 24px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-radius: var(--radius-md);
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: var(--accent-cyan);
+            color: #050811;
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        footer {
+            border-top: 1px solid var(--border-color);
+            background: var(--bg-surface);
+            padding: 32px 24px;
+            text-align: center;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        footer a {
+            color: var(--accent-cyan);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-content">
+            <div class="logo-badge">
+                <span>⚡ ZingTalk Security & Compliance</span>
+            </div>
+            <h1>ZingTalk Privacy Policy</h1>
+            <p style="color: var(--text-secondary); max-width: 650px; margin: 0 auto;">
+                Transparent privacy disclosures covering real-time communication, zero server recording, third-party advertising, and strict 18+ adult age requirements across Mobile and TV platforms.
+            </p>
+            <div class="meta-bar">
+                <div class="meta-item"><strong>Last Updated:</strong> November 04, 2026</div>
+                <div class="meta-item"><strong>Support Contact:</strong> <code>support.zing.app@gmail.com</code></div>
+            </div>
+        </div>
+    </header>
+
+    <main>
+
+        <!-- 1. STRICT 18+ AGE RESTRICTION & MINOR PROTECTION CALLOUT (MANDATORY REQUIREMENT) -->
+        <div class="callout-box callout-danger" id="coppa-section">
+            <h3>⚠️ Strict Age Restriction & Adult Requirement (18+ Only)</h3>
+            <p>
+                <strong>ZingTalk is strictly intended exclusively for adult individuals aged 18 and older.</strong> In accordance with Amazon Appstore Target Audience policies for Restricted Age Groups (18+), COPPA, and international data protection laws, <strong>ZingTalk DOES NOT permit minors or anyone under 18 years of age to register, log in, or use this application.</strong>
+            </p>
+            <ul style="margin-bottom: 12px;">
+                <li><strong>No Minor Data Collection:</strong> We do not knowingly collect, request, solicit, maintain, or process personally identifiable information from anyone under the age of 18.</li>
+                <li><strong>Third-Party Advertising Compliance:</strong> Because ZingTalk displays third-party commercial advertisements to fund free server infrastructure, minors under the age of 18 are legally restricted from accessing the service.</li>
+                <li><strong>Immediate Account Termination:</strong> If we discover or are notified that an account belongs to an individual under the age of 18, we will immediately and permanently delete the account, terminate active session tokens, and erase all related records from our database.</li>
+                <li><strong>Guardian & Parental Deletion Requests:</strong> Parents or legal guardians who believe an individual under 18 has accessed ZingTalk may contact us directly at <a href="mailto:support.zing.app@gmail.com?subject=Underage%20Account%20Deletion%20Request" style="color: #ff6b81; font-weight: 700;">support.zing.app@gmail.com</a>. Upon verification, we will permanently purge the account within 24 hours.</li>
+            </ul>
+        </div>
+
+        <!-- 2. ADVERTISING & MONETIZATION DISCLOSURE CALLOUT (MANDATORY REQUIREMENT) -->
+        <div class="callout-box callout-warning" id="ads-section">
+            <h3>📢 Advertisements & Third-Party Ad Networks Disclosure</h3>
+            <p>
+                <strong>ZingTalk uses Third-Party Advertising to keep voice calls, HD video calls, and instant messaging 100% free for all users worldwide.</strong>
+            </p>
+            <p>
+                To support high-bandwidth real-time media relay infrastructure and continuous application maintenance, ZingTalk displays commercial advertisements (including banner ads, interstitial full-screen ads, and native promotional units) provided by certified third-party advertising partners and mobile ad networks.
+            </p>
+            <ul style="margin-bottom: 12px;">
+                <li><strong>Non-Personalized & Contextual Advertising:</strong> In accordance with our strict 18+ age policy and store guidelines, ad networks serve standard contextual or device-level ads.</li>
+                <li><strong>Data Collected by Ad SDKs:</strong> Third-party ad networks may automatically receive technical device identifiers, such as advertising identifiers (GAID / Fire Ad ID), approximate location (country/city level from IP, never precise GPS), device model, and OS version to deliver advertisements and detect click fraud.</li>
+                <li><strong>User Ad Privacy Controls:</strong> You have full control over personalized ads. You can reset or opt out of targeted advertising at any time via your device settings:
+                    <br>&bull; <em>Android Mobile:</em> Settings &rarr; Google &rarr; Ads &rarr; Reset or Delete advertising ID.
+                    <br>&bull; <em>Smart TV / Fire TV:</em> Settings &rarr; Preferences &rarr; Advertising ID &rarr; Interest-Based Ads [OFF].
+                </li>
+            </ul>
+        </div>
+
+        <!-- 3. INTRODUCTION & SCOPE -->
+        <div class="section-card">
+            <h2>1. Introduction & Scope</h2>
+            <p>
+                This Privacy Policy explains how <strong>ZingTalk Developer Team</strong> ("ZingTalk", "we", "us", or "our") collects, uses, handles, and protects your information across all official distributions of the application:
+            </p>
+            <ul>
+                <li><strong>ZingTalk Mobile:</strong> Native Android Smartphone & Tablet Application.</li>
+                <li><strong>ZingTalk TV:</strong> Smart TV, Fire TV, and Android TV living room application.</li>
+            </ul>
+            <p>
+                By downloading, installing, registering for, or using ZingTalk, you accept and consent to the data practices described in this Privacy Policy.
+            </p>
+        </div>
+
+        <!-- 4. ZERO SERVER STORAGE & CALL PRIVACY ARCHITECTURE -->
+        <div class="section-card">
+            <h2>2. Zero Server Storage & Calling Privacy</h2>
+            <p>
+                ZingTalk is architected from the ground up around strict privacy principles:
+            </p>
+            <ul>
+                <li><strong>Zero Call Audio & Video Recording:</strong> All one-on-one voice and video calls operate over direct <strong>WebRTC (Web Real-Time Communication)</strong> peer-to-peer pipelines protected by DTLS (Datagram Transport Layer Security) and SRTP (Secure Real-Time Transport Protocol) 256-bit encryption. <strong>ZingTalk servers NEVER record, listen to, intercept, analyze, or archive audio conversations or video streams.</strong></li>
+                <li><strong>Ephemeral Signaling:</strong> Signaling servers are used solely to exchange initial session handshakes (SDP offers/answers and ICE candidate network routing). Once the callers are connected directly, media flows strictly device-to-device. Handshake signaling metadata is immediately discarded from memory.</li>
+                <li><strong>Zero Cloud Message Archiving:</strong> Instant text messages and media attachments flow directly between online participants. Messages are not written to permanent cloud databases or log disks. If a recipient is temporarily offline, encrypted message packets are held in volatile server RAM solely until delivery and are permanently deleted the millisecond delivery is confirmed.</li>
+                <li><strong>100% Local Contacts Storage:</strong> Saved contacts and address book shortcuts reside strictly inside your local device storage (<code>localStorage</code>). ZingTalk never uploads, synchronizes, sells, or shares your personal contacts list to cloud databases.</li>
+            </ul>
+        </div>
+
+        <!-- 5. INFORMATION WE COLLECT -->
+        <div class="section-card">
+            <h2>3. Information We Collect</h2>
+            <p>We collect only the minimal data required to provide reliable communication services:</p>
+
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Data Category</th>
+                            <th>Data Elements Collected</th>
+                            <th>Purpose & Storage</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Account Credentials</strong></td>
+                            <td>Email address, Display Name, Account Password (salted & hashed via Firebase Auth).</td>
+                            <td>Authentication and account security. Stored securely in Google Firebase Authentication.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Unique Identifier (UID)</strong></td>
+                            <td>A randomized 10-digit numeric ID (e.g. <code>2156774755</code>).</td>
+                            <td>Enables peer calling and messaging without requiring personal mobile phone numbers or SIM cards.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>VoIP Call Status</strong></td>
+                            <td>Call initiation status (ringing, connected, busy, ended).</td>
+                            <td>Delivered in real-time to trigger native incoming call screens and notifications. Never recorded.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Device Diagnostics</strong></td>
+                            <td>OS version, platform type (Mobile / TV), connection state.</td>
+                            <td>Ensuring network compatibility, server capacity balancing, and stability debugging.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Advertising Telemetry</strong></td>
+                            <td>Anonymous Advertising ID (GAID / Fire Ad ID), IP address, ad impression events.</td>
+                            <td>Handled directly by certified third-party ad networks for ad delivery and fraud prevention.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 6. ANDROID & TV OS PERMISSIONS DISCLOSURE -->
+        <div class="section-card">
+            <h2>4. Android & TV Permissions Disclosure</h2>
+            <p>
+                In compliance with Google Play Store Developer Policies and Appstore Guidelines, here is the transparent breakdown of device permissions ZingTalk requests and why each is required:
+            </p>
+            <ul>
+                <li><code>RECORD_AUDIO</code>: Essential to capture microphone audio during real-time voice and video calls. Microphone audio is processed live and transmitted directly to your call partner; it is never stored.</li>
+                <li><code>CAMERA</code>: Essential to capture camera video for two-way HD video calling. Video is streamed live peer-to-peer and is never saved.</li>
+                <li><code>POST_NOTIFICATIONS</code> (Android 13+ / API 33+): Used exclusively to alert you of incoming voice and video calls (heads-up banner) and show persistent active call status in the notification shade.</li>
+                <li><code>FOREGROUND_SERVICE_PHONE_CALL</code> & <code>FOREGROUND_SERVICE_MICROPHONE</code> (Android 14+ / API 34+): Mandated by modern Android OS to prevent the operating system from terminating active voice/video calls when you minimize the app, switch apps, or lock your screen.</li>
+                <li><code>USE_FULL_SCREEN_INTENT</code>: Permits ZingTalk to display the high-priority incoming call notification over the lock screen so you never miss an incoming call.</li>
+                <li><code>VIBRATE</code> & <code>WAKE_LOCK</code>: Vibrates the device during incoming call ringing and keeps the screen active while you are actively speaking on a call.</li>
+                <li><code>MODIFY_AUDIO_SETTINGS</code>: Routes call audio between phone earpiece, loudspeaker, and connected Bluetooth headsets.</li>
+            </ul>
+        </div>
+
+        <!-- 7. DATA SHARING & THIRD-PARTY SERVICES -->
+        <div class="section-card">
+            <h2>5. Third-Party Service Providers</h2>
+            <p>
+                We do not sell, rent, or trade your personal information. We partner only with reputable cloud infrastructure and advertising providers who adhere to strict data security standards:
+            </p>
+            <ul>
+                <li><strong>Google Firebase (Google LLC):</strong> Used for secure user authentication (email/password), security token issuance, and password resets. Subject to <a href="https://policies.google.com/privacy" target="_blank" style="color: var(--accent-cyan);">Google Privacy Policy</a>.</li>
+                <li><strong>Certified Third-Party Advertising Networks:</strong> Used to deliver commercial advertisements within the applications. Subject to the respective ad partner privacy policies and age-appropriate advertising regulations.</li>
+                <li><strong>Push Notification & OS Services:</strong> Used for incoming call notification delivery on supported devices.</li>
+            </ul>
+        </div>
+
+        <!-- 8. USER DATA RIGHTS & ACCOUNT DELETION (GOOGLE PLAY COMPLIANCE) -->
+        <div class="section-card">
+            <h2>6. User Data Rights & Account Deletion</h2>
+            <p>
+                We believe you should have complete autonomy over your personal data:
+            </p>
+            <ul>
+                <li><strong>Right to Permanent Account Deletion:</strong> You can permanently delete your ZingTalk account and wipe all associated credentials from our database at any time:
+                    <ol style="margin-top: 8px; margin-bottom: 8px;">
+                        <li>Send an email from your registered ZingTalk account address to <a href="mailto:support.zing.app@gmail.com?subject=Delete%20My%20ZingTalk%20Account" style="color: var(--accent-cyan); font-weight: 700;">support.zing.app@gmail.com</a> with the subject <em>"Delete My ZingTalk Account"</em>.</li>
+                        <li>Include your 10-digit UID in the email body.</li>
+                        <li>Our administrative engine will verify your request and permanently delete your authentication record, active sessions, and profile records within <strong>48 hours</strong>.</li>
+                    </ol>
+                </li>
+                <li><strong>Right to Local Data Clearance:</strong> Because chat history and saved contacts are stored strictly in your local device cache, tapping <strong>"Sign Out"</strong> inside the app or clearing the app cache in device Settings immediately and permanently wipes all local messages and contacts.</li>
+                <li><strong>GDPR & CCPA Rights:</strong> Users have the right to request access to personal data, request data portability, and request restriction of data processing. ZingTalk does not sell personal information.</li>
+            </ul>
+        </div>
+
+        <!-- 9. NO EMERGENCY CALLING DISCLAIMER -->
+        <div class="section-card">
+            <h2>7. No Emergency Services Disclaimer</h2>
+            <p>
+                <strong>CRITICAL SAFETY NOTICE:</strong> ZingTalk is an over-the-top (OTT) VoIP communication tool. <strong>ZingTalk DOES NOT provide access to emergency dispatchers, police, fire departments, ambulances, or national emergency numbers (such as 911 in the USA, 112 in the EU, 100/108 in India, or 999 in the UK).</strong>
+            </p>
+            <p>
+                You must always maintain an active traditional mobile phone line, landline, or cellular service to reach emergency medical and protective services.
+            </p>
+        </div>
+
+        <!-- 10. CHANGES TO THIS PRIVACY POLICY -->
+        <div class="section-card">
+            <h2>8. Changes to This Privacy Policy</h2>
+            <p>
+                We may periodically update this Privacy Policy to reflect enhancements to our calling features, updates in advertising regulations, or statutory legal requirements. Any modifications will be posted to this page with an updated "Last Updated" revision date. Continued use of ZingTalk after any revision constitutes your acceptance of the revised Privacy Policy.
+            </p>
+        </div>
+
+        <!-- 11. CONTACT US -->
+        <div class="section-card">
+            <h2>9. Contact Us</h2>
+            <p>
+                If you have questions, feedback, age eligibility inquiries, or account deletion requests regarding this Privacy Policy, please contact our dedicated developer support team:
+            </p>
+            <div style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border-color); padding: 18px 24px; border-radius: var(--radius-md); margin-top: 14px;">
+                <p style="margin-bottom: 6px;"><strong>App Name:</strong> ZingTalk (Mobile & TV)</p>
+                <p style="margin-bottom: 6px;"><strong>Developer Team:</strong> ZingTalk Engineering Team</p>
+                <p style="margin-bottom: 6px;"><strong>Official Support Email:</strong> <a href="mailto:support.zing.app@gmail.com" style="color: var(--accent-cyan); font-weight: 700;">support.zing.app@gmail.com</a></p>
+                <p style="margin-bottom: 0;"><strong>Official Support Portal:</strong> <a href="https://support-zing.github.io/ZingTalk/" style="color: var(--accent-cyan);" target="_blank">https://support-zing.github.io/ZingTalk/</a></p>
+            </div>
+            <div class="btn-group">
+                <a href="terms.html" class="btn btn-primary">📄 View Terms of Service</a>
+            </div>
+        </div>
+
+    </main>
+
+    <footer>
+        <p>&copy; 2026 ZingTalk Developer Team. All rights reserved.</p>
+        <p style="margin-top: 6px;">
+            <a href="privacy.html">Privacy Policy</a> &bull; 
+            <a href="terms.html">Terms of Service</a> &bull; 
+            <a href="mailto:support.zing.app@gmail.com">Contact Support</a>
+        </p>
+    </footer>
+
+</body>
+</html>

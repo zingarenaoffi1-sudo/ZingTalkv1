@@ -10,6 +10,7 @@ const filesToCopy = [
     'index.html',
     'style.css',
     'app.js',
+    'qr.js',
     'manifest.json',
     'service-worker.js',
     'privacy.html',
@@ -23,7 +24,7 @@ if (!fs.existsSync(androidPublicDir)) {
 
 // Sync latest TV files from packages/tv to root so web preview & dist always have the latest TV bundle
 const tvPkgDir = path.join(__dirname, 'packages', 'tv');
-['index.html', 'style.css', 'app.js', 'manifest.json', 'service-worker.js', 'privacy.html', 'terms.html'].forEach(file => {
+['index.html', 'style.css', 'app.js', 'qr.js', 'manifest.json', 'service-worker.js', 'privacy.html', 'terms.html'].forEach(file => {
     const tvFile = path.join(tvPkgDir, file);
     const rootFile = path.join(__dirname, file);
     if (fs.existsSync(tvFile)) {
@@ -41,22 +42,24 @@ filesToCopy.forEach(file => {
     }
 });
 
-// Sync Packages (TV and Mobile)
-const packages = ['tv', 'mobile'];
+// Sync Packages (TV, Mobile, and Connector)
+const packages = ['tv', 'mobile', 'connector'];
 packages.forEach(pkg => {
     const pkgDir = path.join(__dirname, 'packages', pkg);
     const pkgDist = path.join(pkgDir, 'dist');
     if (!fs.existsSync(pkgDist)) {
         fs.mkdirSync(pkgDist, { recursive: true });
     }
-    ['index.html', 'style.css', 'app.js', 'manifest.json', 'service-worker.js', 'capacitor.config.json', 'privacy.html', 'terms.html'].forEach(f => {
+    ['index.html', 'style.css', 'app.js', 'qr.js', 'manifest.json', 'service-worker.js', 'capacitor.config.json', 'privacy.html', 'terms.html'].forEach(f => {
         let src = path.join(pkgDir, f);
-        if (!fs.existsSync(src)) {
+        if (!fs.existsSync(src) && f !== 'qr.js') {
             src = path.join(__dirname, f);
         }
         if (fs.existsSync(src)) {
             fs.copyFileSync(src, path.join(pkgDist, f));
-            fs.copyFileSync(src, path.join(pkgDir, f));
+            if (src !== path.join(pkgDir, f)) {
+                fs.copyFileSync(src, path.join(pkgDir, f));
+            }
         }
     });
 });
