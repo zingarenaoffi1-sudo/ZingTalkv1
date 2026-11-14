@@ -508,8 +508,10 @@ if (fs.existsSync(stylesPath)) {
         <item name="android:navigationBarColor">#090d16</item>
     </style>
 
-    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.AppCompat.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:background">@null</item>
         <item name="android:windowBackground">#090d16</item>
         <item name="android:colorBackground">#090d16</item>
         <item name="android:statusBarColor">#090d16</item>
