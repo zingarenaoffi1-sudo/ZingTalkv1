@@ -214,18 +214,18 @@ export function generateQrMatrix(text) {
         }
     }
 
-    // Write 15-bit format bits for ECC-L + Mask 0
+    // Write 15-bit format bits for ECC-L + Mask 0 (MSB bit 14 first per ISO-18004)
     const fmt = FORMAT_L_STRINGS[maskId];
     for (let i = 0; i < 15; i++) {
-        const bit = (fmt >> i) & 1;
-        // Horizontal format strip
+        const bit = (fmt >> (14 - i)) & 1;
+        // Top-left strip: (8,0)..(8,8)..(0,8)
         if (i < 6) setMod(8, i, bit === 1, true);
         else if (i === 6) setMod(8, 7, bit === 1, true);
         else if (i === 7) setMod(8, 8, bit === 1, true);
         else if (i === 8) setMod(7, 8, bit === 1, true);
         else setMod(14 - i, 8, bit === 1, true);
 
-        // Vertical format strip
+        // Bottom-left + top-right strip: (size-1,8)..(size-7,8) and (8,size-8)..(8,size-1)
         if (i < 7) setMod(size - 1 - i, 8, bit === 1, true);
         else if (i === 7) setMod(8, size - 8, bit === 1, true);
         else setMod(8, size - 15 + i, bit === 1, true);

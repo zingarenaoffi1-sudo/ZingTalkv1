@@ -94,6 +94,17 @@ for (const sPath of socketIoPaths) {
     }
 }
 
+// Copy pure-JS offline jsQR decoder runtime bundle for ZingTalk Connector
+const jsqrPath = path.join(__dirname, 'node_modules/jsqr/dist/jsQR.js');
+if (fs.existsSync(jsqrPath)) {
+    const connDir = path.join(__dirname, 'packages', 'connector');
+    const connDist = path.join(connDir, 'dist');
+    if (!fs.existsSync(connDist)) fs.mkdirSync(connDist, { recursive: true });
+    fs.copyFileSync(jsqrPath, path.join(connDir, 'jsQR.js'));
+    fs.copyFileSync(jsqrPath, path.join(connDist, 'jsQR.js'));
+    fs.copyFileSync(jsqrPath, path.join(androidPublicDir, 'jsQR.js'));
+}
+
 // Copy assets folder
 function copyDirSync(src, dest) {
     if (!fs.existsSync(src)) return;

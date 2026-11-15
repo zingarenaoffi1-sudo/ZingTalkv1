@@ -17,6 +17,7 @@
     <link rel="manifest" href="manifest.json">
     <script src="capacitor.js"></script>
     <script src="socket.io.min.js"></script>
+    <script src="jsQR.js"></script>
 </head>
 <body class="conn-body">
 
@@ -423,10 +424,14 @@
         <div class="conn-modal-card">
             <div class="conn-modal-head">
                 <h2 id="qr-modal-title" class="conn-h2">Scan Fire TV QR Code</h2>
-                <button type="button" id="close-qr-modal-btn" class="conn-ghost-btn" aria-label="Close scanner">Close</button>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button type="button" id="qr-switch-cam-btn" class="conn-ghost-btn" aria-label="Switch scanner camera">Switch Cam</button>
+                    <button type="button" id="close-qr-modal-btn" class="conn-ghost-btn" aria-label="Close scanner">Close</button>
+                </div>
             </div>
             <div class="conn-qr-viewport">
                 <video id="qr-scan-video" autoplay muted playsinline></video>
+                <div class="conn-qr-reticle" aria-hidden="true"></div>
                 <div id="qr-scan-msg" class="conn-qr-msg">Point rear camera at the QR code on your Fire TV screen.</div>
             </div>
             <div class="conn-field" style="margin-top: 12px;">

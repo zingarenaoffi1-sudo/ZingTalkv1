@@ -133,12 +133,36 @@ test('SplitMeshRegistry manages single active connector per TV, replacement, unp
   assert.equal(registry.getConnectorForTv('1112223334'), null);
 });
 
-test('Zero-CDN QR SVG generator renders valid ISO-18004 matrix and SVG markup', () => {
+test('Zero-CDN QR SVG generator renders valid ISO-18004 matrix decodable by jsQR', async () => {
+  const { default: jsQR } = await import('jsqr');
   const payload = 'zingtalk://pair?uid=9876543210&code=654321';
   const matrix = generateQrMatrix(payload);
   assert.ok(Array.isArray(matrix));
   assert.ok(matrix.length >= 21);
   assert.equal(matrix.length, matrix[0].length);
+
+  // Render QR matrix to RGBA pixel buffer and verify standard QR scanner (jsQR) decodes it cleanly
+  const scale = 6;
+  const quiet = 4;
+  const dim = (matrix.length + quiet * 2) * scale;
+  const rgba = new Uint8ClampedArray(dim * dim * 4).fill(255);
+  for (let r = 0; r < matrix.length; r++) {
+    for (let c = 0; c < matrix.length; c++) {
+      if (matrix[r][c] === 1) {
+        for (let dy = 0; dy < scale; dy++) {
+          for (let dx = 0; dx < scale; dx++) {
+            const idx = (((r + quiet) * scale + dy) * dim + ((c + quiet) * scale + dx)) * 4;
+            rgba[idx] = 0;
+            rgba[idx + 1] = 0;
+            rgba[idx + 2] = 0;
+          }
+        }
+      }
+    }
+  }
+  const decoded = jsQR(rgba, dim, dim);
+  assert.ok(decoded, 'jsQR must decode generated TV QR matrix');
+  assert.equal(decoded.data, payload);
 
   const svg = renderQrSvg(payload);
   assert.ok(svg.startsWith('<svg '));
@@ -148,7 +172,7 @@ test('Zero-CDN QR SVG generator renders valid ISO-18004 matrix and SVG markup', 
 
 test('All 3 APKs, How to Use guides, and Connector CI pipeline files are properly wired', () => {
   const connectorDir = path.resolve('packages/connector');
-  for (const file of ['index.html', 'style.css', 'app.js', 'manifest.json', 'privacy.html', 'terms.html']) {
+  for (const file of ['index.html', 'style.css', 'app.js', 'jsQR.js', 'manifest.json', 'privacy.html', 'terms.html']) {
     assert.ok(fs.existsSync(path.join(connectorDir, file)), `Missing connector file: ${file}`);
   }
 
@@ -157,6 +181,8 @@ test('All 3 APKs, How to Use guides, and Connector CI pipeline files are properl
   assert.ok(connectorHtml.includes('id="tab-studio"'));
   assert.ok(connectorHtml.includes('id="tab-remote"'));
   assert.ok(connectorHtml.includes('id="tab-guide"'));
+  assert.ok(connectorHtml.includes('id="qr-switch-cam-btn"'));
+  assert.ok(connectorHtml.includes('<script src="jsQR.js"></script>'));
   assert.ok(connectorHtml.includes('How to Use'));
   assert.match(connectorHtml, /strictly 18\+ adults only/i);
 
@@ -194,10 +220,15 @@ test('EC2 deploy safety and Connector Android permissions bridge are properly wi
   assert.ok(connApp.includes('ensureAndroidMediaPermissions'));
   assert.ok(connApp.includes('ZingNativeBridge'));
   assert.ok(connApp.includes('checkServerConnectivity'));
+  assert.ok(connApp.includes('decodeQrFrameWithJsQr'));
+  assert.ok(connApp.includes('stopStreamVideoTracks'));
+  assert.ok(connApp.includes('acquireVideoOnlyStream'));
 
   const prepAndroid = fs.readFileSync(path.resolve('scripts/prepare-android.js'), 'utf8');
   assert.ok(prepAndroid.includes('onRequestPermissionsResult'));
   assert.ok(prepAndroid.includes('hasCameraPermission'));
   assert.ok(prepAndroid.includes('hasMicPermission'));
+  assert.ok(prepAndroid.includes("'jsQR.js'"));
 });
+
 

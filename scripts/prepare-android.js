@@ -828,10 +828,12 @@ if (!fs.existsSync(androidPublicDir)) {
 const platformSourceDir = targetPlatform === 'mobile'
     ? path.join('packages', 'mobile')
     : (targetPlatform === 'connector' ? path.join('packages', 'connector') : path.join('packages', 'tv'));
-const filesToSync = ['index.html', 'style.css', 'app.js', 'qr.js', 'manifest.json', 'service-worker.js', 'capacitor.js', 'socket.io.min.js', 'privacy.html', 'terms.html'];
+const filesToSync = ['index.html', 'style.css', 'app.js', 'qr.js', 'jsQR.js', 'manifest.json', 'service-worker.js', 'capacitor.js', 'socket.io.min.js', 'privacy.html', 'terms.html'];
 filesToSync.forEach(f => {
     let src = path.join(platformSourceDir, f);
-    if (!fs.existsSync(src) && f !== 'qr.js') {
+    if (!fs.existsSync(src) && f === 'jsQR.js') {
+        src = path.join('.', 'node_modules', 'jsqr', 'dist', 'jsQR.js');
+    } else if (!fs.existsSync(src) && f !== 'qr.js') {
         src = path.join('.', f);
     }
     if (fs.existsSync(src)) {

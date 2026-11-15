@@ -607,6 +607,10 @@ a:focus-visible {
     display: block;
 }
 
+.conn-video-frame video.is-mirrored {
+    transform: scaleX(-1);
+}
+
 .conn-video-fallback {
     position: absolute;
     inset: 0;
@@ -929,7 +933,22 @@ a:focus-visible {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 10px;
     margin-bottom: 12px;
+}
+
+.conn-modal-head .conn-h2 {
+    font-size: 16px;
+    margin-bottom: 0;
+}
+
+.conn-modal .conn-field .conn-btn-row {
+    flex-wrap: nowrap;
+}
+
+.conn-modal .conn-field .conn-input {
+    flex: 1;
+    min-width: 0;
 }
 
 .conn-qr-viewport {
@@ -946,6 +965,19 @@ a:focus-visible {
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+
+.conn-qr-reticle {
+    position: absolute;
+    left: 50%;
+    top: 38%;
+    width: 158px;
+    height: 158px;
+    transform: translate(-50%, -50%);
+    border: 2px solid rgba(0, 210, 157, 0.85);
+    border-radius: 16px;
+    box-shadow: 0 0 0 999px rgba(9, 13, 22, 0.42);
+    pointer-events: none;
 }
 
 .conn-qr-msg {

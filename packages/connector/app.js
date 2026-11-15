@@ -66,6 +66,8 @@ let activeSplitSession = null;
 
 let currentResolution = "720p";
 let currentFacingMode = "user";
+let currentVideoDeviceId = null;
+let isSwitchingCamera = false;
 let isMicMuted = false;
 let isVideoOff = false;
 let echoGuardEnabled = true;
@@ -78,6 +80,11 @@ let audioProcessedTrack = null;
 // QR Scanner state
 let qrScanStream = null;
 let qrScanTimer = null;
+let qrScanBusy = false;
+let qrScanFacingMode = "environment";
+let qrScanCanvas = null;
+let qrScanCtx = null;
+let pendingPairRequest = null;
 
 function sanitizeServerUrl(rawUrl, fallbackUrl = PRODUCTION_SERVER_URL) {
     if (!rawUrl || typeof rawUrl !== "string") return fallbackUrl;
@@ -281,6 +288,16 @@ function sanitizeUid(raw) {
 function parsePairingInput(raw) {
     const str = String(raw || "").trim();
     if (!str) return null;
+    if (str.startsWith("{")) {
+        try {
+            const obj = JSON.parse(str);
+            const uid = sanitizeUid(obj.uid || obj.tvUid || "");
+            const code = sanitizeCode(obj.code || obj.pairCode || "");
+            if (code.length === 6 || uid.length === 10) {
+                return { uid, code };
+            }
+        } catch (_) {}
+    }
     try {
         if (/^zingtalk:\/\//i.test(str) || str.includes("code=") || str.includes("uid=")) {
             const url = new URL(str.replace(/^zingtalk:\/\//i, "https://zingtalk.local/"));
@@ -428,8 +445,12 @@ function updateStudioControlsUI() {
 
     const resLabel = document.getElementById("preview-res-readout");
     const camLabel = document.getElementById("preview-cam-readout");
+    const previewVideo = document.getElementById("connector-preview-video");
     if (resLabel) resLabel.textContent = `${currentResolution} HD`;
     if (camLabel) camLabel.textContent = currentFacingMode === "environment" ? "Rear Camera" : "Front Camera";
+    if (previewVideo) {
+        previewVideo.classList.toggle("is-mirrored", currentFacingMode !== "environment");
+    }
 }
 
 function syncMediaStateToTv() {
@@ -543,6 +564,113 @@ function buildEchoGuardedStream(rawStream) {
     }
 }
 
+function delayMs(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function stopStreamVideoTracks(stream) {
+    if (!stream) return;
+    stream.getVideoTracks().forEach((t) => {
+        try { t.stop(); } catch (_) {}
+        try { stream.removeTrack(t); } catch (_) {}
+    });
+    if (stream._rawStream) {
+        stream._rawStream.getVideoTracks().forEach((t) => {
+            try { t.stop(); } catch (_) {}
+            try { stream._rawStream.removeTrack(t); } catch (_) {}
+        });
+    }
+}
+
+function attachPreviewVideoTrack(videoTrack) {
+    const previewVideo = document.getElementById("connector-preview-video");
+    const fallback = document.getElementById("preview-fallback");
+    if (!previewVideo) return;
+    if (videoTrack) {
+        previewVideo.srcObject = new MediaStream([videoTrack]);
+        previewVideo.play().catch(() => {});
+        fallback?.classList.add("hidden");
+    } else {
+        previewVideo.srcObject = null;
+        fallback?.classList.remove("hidden");
+    }
+}
+
+async function pickCameraDeviceId(targetFacing, excludeDeviceId = null) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return null;
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter((d) => d.kind === "videoinput" && d.deviceId);
+        if (cams.length === 0) return null;
+
+        const wantBack = targetFacing === "environment";
+        const backRe = /back|rear|environment|facing back|wide|ultra|macro/i;
+        const frontRe = /front|user|selfie|facing front/i;
+
+        const labelMatch = cams.find((c) => (
+            c.deviceId !== excludeDeviceId &&
+            (wantBack ? backRe.test(c.label || "") : frontRe.test(c.label || ""))
+        ));
+        if (labelMatch) return labelMatch.deviceId;
+
+        if (cams.length > 1) {
+            if (excludeDeviceId) {
+                const other = cams.find((c) => c.deviceId !== excludeDeviceId);
+                if (other) return other.deviceId;
+            }
+            return wantBack ? cams[cams.length - 1].deviceId : cams[0].deviceId;
+        }
+        return cams[0].deviceId;
+    } catch (_) {
+        return null;
+    }
+}
+
+async function acquireVideoOnlyStream(targetFacing, resSpec, excludeDeviceId = null, allowGenericFallback = false) {
+    const targetDeviceId = await pickCameraDeviceId(targetFacing, excludeDeviceId);
+    const attempts = [];
+    if (targetDeviceId) {
+        attempts.push({ deviceId: { exact: targetDeviceId }, ...resSpec });
+    }
+    attempts.push({ facingMode: { exact: targetFacing }, ...resSpec });
+    attempts.push({ facingMode: { exact: targetFacing } });
+    if (targetDeviceId) {
+        attempts.push({ deviceId: { exact: targetDeviceId } });
+    }
+    if (allowGenericFallback) {
+        attempts.push({ facingMode: targetFacing, ...resSpec });
+        attempts.push({ facingMode: targetFacing });
+        attempts.push(true);
+    }
+
+    let lastErr = null;
+    for (const vConstraint of attempts) {
+        try {
+            const s = await navigator.mediaDevices.getUserMedia({ video: vConstraint, audio: false });
+            const track = s.getVideoTracks()[0];
+            if (track) return { stream: s, track };
+            s.getTracks().forEach((t) => { try { t.stop(); } catch (_) {} });
+        } catch (err) {
+            lastErr = err;
+        }
+    }
+    throw lastErr || new Error("Target camera unavailable");
+}
+
+function inferFacingFromTrack(track, fallbackFacing) {
+    if (!track) return fallbackFacing;
+    try {
+        const settings = typeof track.getSettings === "function" ? track.getSettings() : {};
+        if (settings.facingMode === "environment" || settings.facingMode === "user") {
+            return settings.facingMode;
+        }
+    } catch (_) {}
+    const lbl = String(track.label || "");
+    if (/back|rear|environment/i.test(lbl)) return "environment";
+    if (/front|user|selfie/i.test(lbl)) return "user";
+    return fallbackFacing;
+}
+
 async function acquireConnectorMedia(needVideo = true) {
     const audioConstraints = {
         echoCancellation: true,
@@ -552,8 +680,9 @@ async function acquireConnectorMedia(needVideo = true) {
         sampleRate: { ideal: 48000 }
     };
     const resSpec = RESOLUTION_MAP[currentResolution] || RESOLUTION_MAP["720p"];
+    const targetDeviceId = needVideo ? await pickCameraDeviceId(currentFacingMode, null) : null;
     const videoConstraints = needVideo
-        ? { facingMode: currentFacingMode, ...resSpec }
+        ? (targetDeviceId ? { deviceId: { exact: targetDeviceId }, ...resSpec } : { facingMode: currentFacingMode, ...resSpec })
         : false;
 
     let rawStream = null;
@@ -563,32 +692,44 @@ async function acquireConnectorMedia(needVideo = true) {
         if (needVideo) {
             try {
                 rawStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: { facingMode: currentFacingMode } });
-            } catch (err) {
-                rawStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
-                showToast("Camera unavailable on this device — continuing with Phone Mic.");
+            } catch (_) {
+                try {
+                    rawStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: true });
+                } catch (err) {
+                    rawStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+                    showToast("Camera unavailable on this device — continuing with Phone Mic.");
+                }
             }
         } else {
             rawStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
         }
     }
+
+    const vTrack = rawStream?.getVideoTracks?.()[0];
+    if (vTrack) {
+        currentVideoDeviceId = vTrack.getSettings?.().deviceId || currentVideoDeviceId;
+        currentFacingMode = inferFacingFromTrack(vTrack, currentFacingMode);
+    }
     return rawStream;
 }
 
 async function togglePreview() {
-    const previewVideo = document.getElementById("connector-preview-video");
-    const fallback = document.getElementById("preview-fallback");
     const btn = document.getElementById("toggle-preview-btn");
 
     if (previewStream) {
         previewStream.getTracks().forEach((t) => {
             try { t.stop(); } catch (_) {}
         });
+        if (previewStream._rawStream) {
+            previewStream._rawStream.getTracks().forEach((t) => {
+                try { t.stop(); } catch (_) {}
+            });
+        }
         previewStream = null;
         if (!connectorPeerConnection) {
             cleanupAudioPipeline();
         }
-        if (previewVideo) previewVideo.srcObject = null;
-        fallback?.classList.remove("hidden");
+        attachPreviewVideoTrack(null);
         if (btn) btn.textContent = "Start Preview";
         return;
     }
@@ -599,15 +740,15 @@ async function togglePreview() {
     }
 
     try {
+        if (qrScanStream) {
+            stopQrScanner();
+            await delayMs(140);
+        }
         await ensureAndroidMediaPermissions(true);
         const raw = await acquireConnectorMedia(true);
         previewStream = buildEchoGuardedStream(raw);
         previewStream._rawStream = raw;
-        if (previewVideo) {
-            previewVideo.srcObject = raw;
-            previewVideo.play().catch(() => {});
-        }
-        fallback?.classList.add("hidden");
+        attachPreviewVideoTrack(raw.getVideoTracks()[0] || null);
         if (btn) btn.textContent = "Stop Preview";
         applyMediaToggleTracks();
         await refreshPermissionsUI();
@@ -632,42 +773,77 @@ function applyMediaToggleTracks() {
 }
 
 async function switchConnectorCamera() {
-    currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
-    updateStudioControlsUI();
+    if (isSwitchingCamera) return;
+    const prevFacing = currentFacingMode;
+    const prevDeviceId = currentVideoDeviceId;
+    const nextFacing = prevFacing === "user" ? "environment" : "user";
 
     const targetStreams = [previewStream, uplinkStream].filter(Boolean);
     if (targetStreams.length === 0) {
+        currentFacingMode = nextFacing;
+        updateStudioControlsUI();
         syncMediaStateToTv();
+        showToast(`Camera preference set to ${currentFacingMode === "environment" ? "Rear" : "Front"} Camera`);
         return;
     }
 
+    isSwitchingCamera = true;
+    const flipBtn = document.getElementById("flip-cam-btn");
+    if (flipBtn) flipBtn.disabled = true;
+
     try {
         const resSpec = RESOLUTION_MAP[currentResolution] || RESOLUTION_MAP["720p"];
-        const camStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: currentFacingMode, ...resSpec }
-        });
-        const newVideoTrack = camStream.getVideoTracks()[0];
-        if (!newVideoTrack) return;
+
+        // Android Camera2 HAL requires releasing the active camera sensor BEFORE opening the other sensor
+        attachPreviewVideoTrack(null);
+        stopStreamVideoTracks(previewStream);
+        stopStreamVideoTracks(uplinkStream);
+        await delayMs(150);
+
+        let acquired = null;
+        try {
+            acquired = await acquireVideoOnlyStream(nextFacing, resSpec, prevDeviceId, false);
+            currentFacingMode = inferFacingFromTrack(acquired.track, nextFacing);
+        } catch (_) {
+            // Single-camera device or rear/front hardware unavailable: restore previous camera gracefully
+            acquired = await acquireVideoOnlyStream(prevFacing, resSpec, null, true);
+            currentFacingMode = inferFacingFromTrack(acquired.track, prevFacing);
+            showToast("Second camera unavailable on this device — kept active camera.");
+        }
+
+        const newVideoTrack = acquired.track;
+        currentVideoDeviceId = newVideoTrack.getSettings?.().deviceId || currentVideoDeviceId;
         newVideoTrack.enabled = !isVideoOff;
 
         if (connectorPeerConnection) {
-            const sender = connectorPeerConnection.getSenders().find((s) => s.track && s.track.kind === "video");
-            if (sender) await sender.replaceTrack(newVideoTrack);
+            const sender = connectorPeerConnection.getSenders().find((s) => !s.track || s.track.kind === "video");
+            if (sender) {
+                await sender.replaceTrack(newVideoTrack);
+            } else if (uplinkStream) {
+                connectorPeerConnection.addTrack(newVideoTrack, uplinkStream);
+            }
         }
 
         if (previewStream) {
-            previewStream.getVideoTracks().forEach((t) => {
-                previewStream.removeTrack(t);
-                try { t.stop(); } catch (_) {}
-            });
             previewStream.addTrack(newVideoTrack);
-            const previewVideo = document.getElementById("connector-preview-video");
-            if (previewVideo) previewVideo.srcObject = previewStream;
         }
+        if (uplinkStream && uplinkStream !== previewStream) {
+            uplinkStream.addTrack(newVideoTrack);
+        }
+
+        attachPreviewVideoTrack(newVideoTrack);
+        updateStudioControlsUI();
         syncMediaStateToTv();
-        showToast(`Switched to ${currentFacingMode === "environment" ? "Rear" : "Front"} Camera`);
-    } catch (_) {
-        showToast("Could not switch camera on this device.");
+        if (currentFacingMode !== prevFacing) {
+            showToast(`Switched to ${currentFacingMode === "environment" ? "Rear" : "Front"} Camera`);
+        }
+    } catch (err) {
+        currentFacingMode = prevFacing;
+        updateStudioControlsUI();
+        showToast("Could not switch camera: " + (err?.message || "Camera busy"));
+    } finally {
+        isSwitchingCamera = false;
+        if (flipBtn) flipBtn.disabled = false;
     }
 }
 
@@ -789,12 +965,13 @@ function stopSplitMeshUplink() {
     updateStudioControlsUI();
 }
 
-// ----------------- QR Scanner Modal -----------------
+// ----------------- QR Scanner Modal (Offline jsQR + Native BarcodeDetector) -----------------
 function stopQrScanner() {
     if (qrScanTimer) {
         clearInterval(qrScanTimer);
         qrScanTimer = null;
     }
+    qrScanBusy = false;
     if (qrScanStream) {
         qrScanStream.getTracks().forEach((t) => {
             try { t.stop(); } catch (_) {}
@@ -806,13 +983,85 @@ function stopQrScanner() {
     document.getElementById("qr-modal")?.classList.add("hidden");
 }
 
-async function openQrScanner() {
+function handleDecodedQrValue(rawValue, msgEl) {
+    const parsed = parsePairingInput(rawValue);
+    if (!parsed || !parsed.code) {
+        if (msgEl) msgEl.textContent = "QR detected, but not a ZingTalk TV code. Aim at the Fire TV QR screen.";
+        return false;
+    }
+    stopQrScanner();
+    const codeInp = document.getElementById("pair-code-input");
+    const uidInp = document.getElementById("pair-uid-input");
+    if (codeInp && parsed.code) codeInp.value = parsed.code;
+    if (uidInp && parsed.uid) uidInp.value = parsed.uid;
+    showToast(`QR scanned (${parsed.code})! Connecting to Fire TV...`);
+    submitPairingRequest(parsed.code, parsed.uid);
+    return true;
+}
+
+function decodeQrFrameWithJsQr(vid) {
+    if (typeof window.jsQR !== "function") return null;
+    const vw = vid?.videoWidth || 0;
+    const vh = vid?.videoHeight || 0;
+    if (!vw || !vh) return null;
+
+    const maxSide = 640;
+    const scale = Math.min(1, maxSide / Math.max(vw, vh));
+    const w = Math.max(120, Math.round(vw * scale));
+    const h = Math.max(120, Math.round(vh * scale));
+
+    if (!qrScanCanvas) {
+        qrScanCanvas = document.createElement("canvas");
+        qrScanCtx = qrScanCanvas.getContext("2d", { willReadFrequently: true });
+    }
+    if (!qrScanCtx) return null;
+    if (qrScanCanvas.width !== w || qrScanCanvas.height !== h) {
+        qrScanCanvas.width = w;
+        qrScanCanvas.height = h;
+    }
+    qrScanCtx.drawImage(vid, 0, 0, w, h);
+    const imgData = qrScanCtx.getImageData(0, 0, w, h);
+    const decoded = window.jsQR(imgData.data, w, h, { inversionAttempts: "attemptBoth" });
+    return decoded && decoded.data ? decoded.data : null;
+}
+
+async function openQrScanner(targetFacing = qrScanFacingMode) {
     const modal = document.getElementById("qr-modal");
     const vid = document.getElementById("qr-scan-video");
     const msgEl = document.getElementById("qr-scan-msg");
+
+    if (uplinkStream && connectorPeerConnection) {
+        showToast("Live call active — enter the 6-digit TV code manually or end call first.");
+        return;
+    }
+
+    // Release active preview stream before opening QR camera so Android HAL doesn't throw NotReadableError
+    if (previewStream) {
+        previewStream.getTracks().forEach((t) => { try { t.stop(); } catch (_) {} });
+        if (previewStream._rawStream) {
+            previewStream._rawStream.getTracks().forEach((t) => { try { t.stop(); } catch (_) {} });
+        }
+        previewStream = null;
+        attachPreviewVideoTrack(null);
+        const pBtn = document.getElementById("toggle-preview-btn");
+        if (pBtn) pBtn.textContent = "Start Preview";
+        await delayMs(140);
+    }
+
+    if (qrScanTimer) {
+        clearInterval(qrScanTimer);
+        qrScanTimer = null;
+    }
+    if (qrScanStream) {
+        qrScanStream.getTracks().forEach((t) => { try { t.stop(); } catch (_) {} });
+        qrScanStream = null;
+        await delayMs(140);
+    }
+
+    qrScanFacingMode = targetFacing === "user" ? "user" : "environment";
     modal?.classList.remove("hidden");
 
-    if (msgEl) msgEl.textContent = "Requesting camera permission for QR scanner...";
+    if (msgEl) msgEl.textContent = "Opening camera for QR scanner...";
     await ensureAndroidMediaPermissions(true);
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -821,31 +1070,52 @@ async function openQrScanner() {
     }
 
     try {
-        qrScanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        const resSpec = { width: { ideal: 1280 }, height: { ideal: 720 } };
+        const acquired = await acquireVideoOnlyStream(qrScanFacingMode, resSpec, null, true);
+        qrScanStream = acquired.stream;
+        qrScanFacingMode = inferFacingFromTrack(acquired.track, qrScanFacingMode);
         setBadgeStatus("perm-cam-status", "Granted", "is-ok");
+
         if (vid) {
             vid.srcObject = qrScanStream;
-            vid.play().catch(() => {});
+            await vid.play().catch(() => {});
         }
-        if ("BarcodeDetector" in window) {
-            if (msgEl) msgEl.textContent = "Point rear camera at the QR code on your Fire TV screen.";
-            const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
-            qrScanTimer = setInterval(async () => {
-                if (!vid || vid.readyState < 2) return;
-                try {
-                    const codes = await detector.detect(vid);
-                    if (codes && codes.length > 0 && codes[0].rawValue) {
-                        const parsed = parsePairingInput(codes[0].rawValue);
-                        if (parsed) {
-                            stopQrScanner();
-                            submitPairingRequest(parsed.code, parsed.uid);
-                        }
+
+        const hasJsQr = typeof window.jsQR === "function";
+        const nativeDetector = ("BarcodeDetector" in window)
+            ? (() => { try { return new window.BarcodeDetector({ formats: ["qr_code"] }); } catch (_) { return null; } })()
+            : null;
+
+        if (!hasJsQr && !nativeDetector) {
+            if (msgEl) msgEl.textContent = "QR decoder unavailable here — enter the 6-digit TV code manually.";
+            return;
+        }
+
+        if (msgEl) {
+            msgEl.textContent = `Align Fire TV QR code inside box (${qrScanFacingMode === "environment" ? "Rear" : "Front"} Cam)...`;
+        }
+
+        qrScanTimer = setInterval(async () => {
+            if (qrScanBusy || !vid || vid.readyState < 2 || !qrScanStream) return;
+            qrScanBusy = true;
+            try {
+                if (hasJsQr) {
+                    const jsQrVal = decodeQrFrameWithJsQr(vid);
+                    if (jsQrVal && handleDecodedQrValue(jsQrVal, msgEl)) {
+                        return;
                     }
-                } catch (_) {}
-            }, 350);
-        } else if (msgEl) {
-            msgEl.textContent = "QR camera preview active. If auto-scan isn't supported here, enter the 6-digit code shown on TV.";
-        }
+                }
+                if (nativeDetector) {
+                    const codes = await nativeDetector.detect(vid);
+                    if (codes && codes.length > 0 && codes[0].rawValue) {
+                        handleDecodedQrValue(codes[0].rawValue, msgEl);
+                    }
+                }
+            } catch (_) {
+            } finally {
+                qrScanBusy = false;
+            }
+        }, 180);
     } catch (_) {
         await refreshPermissionsUI();
         if (msgEl) msgEl.textContent = "Camera permission needed for QR scan. Tap 'Allow Cam & Mic' or enter the 6-digit TV code manually.";
@@ -861,11 +1131,13 @@ function submitPairingRequest(code, tvUid) {
         return;
     }
     if (!socket || !socket.connected) {
-        setPairFeedback("Connecting to ZingTalk server... please retry in a moment.", false);
+        pendingPairRequest = { code: cleanCode, tvUid: cleanUid };
+        setPairFeedback("Connecting to ZingTalk server... pairing automatically as soon as online.", true);
         connectSocket();
         return;
     }
 
+    pendingPairRequest = null;
     const deviceName = document.getElementById("connector-device-name")?.value.trim() || "Phone Camera";
     try {
         localStorage.setItem(LAST_DEVICE_NAME_KEY, deviceName);
@@ -902,7 +1174,11 @@ function connectSocket() {
         const label = document.getElementById("server-conn-label");
         if (label) label.textContent = "Server online";
         setBadgeStatus("perm-srv-status", "Online", "is-ok");
-        if (pairedCode || pairedTvUid) {
+        if (pendingPairRequest) {
+            const req = pendingPairRequest;
+            pendingPairRequest = null;
+            submitPairingRequest(req.code, req.tvUid);
+        } else if (pairedCode || pairedTvUid) {
             submitPairingRequest(pairedCode, pairedTvUid);
         }
     });
@@ -1089,7 +1365,11 @@ function initConnector() {
     });
 
     // QR Modal
-    document.getElementById("open-qr-scan-btn")?.addEventListener("click", openQrScanner);
+    document.getElementById("open-qr-scan-btn")?.addEventListener("click", () => openQrScanner(qrScanFacingMode));
+    document.getElementById("qr-switch-cam-btn")?.addEventListener("click", () => {
+        const nextScanFacing = qrScanFacingMode === "environment" ? "user" : "environment";
+        openQrScanner(nextScanFacing);
+    });
     document.getElementById("close-qr-modal-btn")?.addEventListener("click", stopQrScanner);
     document.getElementById("qr-apply-manual-btn")?.addEventListener("click", () => {
         const raw = document.getElementById("qr-manual-input")?.value || "";
