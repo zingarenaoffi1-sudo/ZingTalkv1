@@ -536,6 +536,45 @@ a:focus-visible {
     color: var(--text-muted);
 }
 
+/* Permissions & Server Check */
+.conn-perm-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.conn-perm-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.conn-perm-badge {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text-muted);
+}
+
+.conn-perm-badge.is-ok {
+    color: var(--accent);
+}
+
+.conn-perm-badge.is-warn {
+    color: #fbbf24;
+}
+
+.conn-perm-badge.is-err {
+    color: #fca5a5;
+}
+
 /* Cam & Mic Studio */
 .conn-preview-header {
     display: flex;

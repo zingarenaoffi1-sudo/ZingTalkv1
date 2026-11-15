@@ -108,6 +108,24 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQ_CODE) {
+            try {
+                final WebView webView = this.getBridge().getWebView();
+                if (webView != null) {
+                    webView.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('zing-permissions-result')); window.onNativePermissionsResult && window.onNativePermissionsResult();", null);
+                        }
+                    });
+                }
+            } catch (Exception ignored) {}
+        }
+    }
+
+    @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
@@ -394,6 +412,31 @@ public class MainActivity extends BridgeActivity {
             } catch (Exception e) {
                 return true;
             }
+        }
+
+        @JavascriptInterface
+        public boolean hasCameraPermission() {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+            try {
+                return ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public boolean hasMicPermission() {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+            try {
+                return ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public boolean hasAllPermissions() {
+            return hasCameraPermission() && hasMicPermission();
         }
     }
 }

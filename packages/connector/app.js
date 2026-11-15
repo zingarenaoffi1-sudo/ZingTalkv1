@@ -83,6 +83,144 @@ function showToast(msg) {
     }, 3000);
 }
 
+function setBadgeStatus(id, label, stateClass = "") {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = label;
+    el.className = `conn-perm-badge${stateClass ? ` ${stateClass}` : ""}`;
+}
+
+async function refreshPermissionsUI() {
+    let camGranted = false;
+    let micGranted = false;
+    let camDenied = false;
+    let micDenied = false;
+
+    const bridge = window.ZingNativeBridge;
+    if (bridge && typeof bridge.hasCameraPermission === "function") {
+        try { camGranted = Boolean(bridge.hasCameraPermission()); } catch (_) {}
+        try { micGranted = Boolean(bridge.hasMicPermission()); } catch (_) {}
+        setBadgeStatus("perm-cam-status", camGranted ? "Granted" : "Tap Allow", camGranted ? "is-ok" : "is-warn");
+        setBadgeStatus("perm-mic-status", micGranted ? "Granted" : "Tap Allow", micGranted ? "is-ok" : "is-warn");
+        return { camGranted, micGranted };
+    }
+
+    if (navigator.permissions && navigator.permissions.query) {
+        try {
+            const camP = await navigator.permissions.query({ name: "camera" });
+            camGranted = camP.state === "granted";
+            camDenied = camP.state === "denied";
+        } catch (_) {}
+        try {
+            const micP = await navigator.permissions.query({ name: "microphone" });
+            micGranted = micP.state === "granted";
+            micDenied = micP.state === "denied";
+        } catch (_) {}
+    }
+
+    setBadgeStatus(
+        "perm-cam-status",
+        camGranted ? "Granted" : (camDenied ? "Blocked" : "Ready on Ask"),
+        camGranted ? "is-ok" : (camDenied ? "is-err" : "is-warn")
+    );
+    setBadgeStatus(
+        "perm-mic-status",
+        micGranted ? "Granted" : (micDenied ? "Blocked" : "Ready on Ask"),
+        micGranted ? "is-ok" : (micDenied ? "is-err" : "is-warn")
+    );
+    return { camGranted, micGranted };
+}
+
+async function ensureAndroidMediaPermissions(needVideo = true) {
+    const bridge = window.ZingNativeBridge;
+    if (!bridge) {
+        await refreshPermissionsUI();
+        return true;
+    }
+
+    const hasCam = typeof bridge.hasCameraPermission === "function" ? bridge.hasCameraPermission() : false;
+    const hasMic = typeof bridge.hasMicPermission === "function" ? bridge.hasMicPermission() : false;
+    if ((needVideo ? hasCam : true) && hasMic) {
+        await refreshPermissionsUI();
+        return true;
+    }
+
+    const waitForResult = new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            window.removeEventListener("zing-permissions-result", onRes);
+            clearTimeout(timer);
+            resolve();
+        };
+        const onRes = () => setTimeout(finish, 180);
+        window.addEventListener("zing-permissions-result", onRes);
+        const timer = setTimeout(finish, 12000);
+    });
+
+    try {
+        if (typeof bridge.requestAllPermissions === "function") {
+            bridge.requestAllPermissions();
+        } else if (typeof bridge.requestCallPermissions === "function") {
+            bridge.requestCallPermissions(needVideo ? "video" : "audio");
+        }
+    } catch (_) {}
+
+    await waitForResult;
+    const status = await refreshPermissionsUI();
+    return needVideo ? (status.camGranted || status.micGranted) : status.micGranted;
+}
+
+async function requestBrowserAndNativePermissions() {
+    const bridge = window.ZingNativeBridge;
+    if (bridge && typeof bridge.requestAllPermissions === "function") {
+        await ensureAndroidMediaPermissions(true);
+    }
+
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+            const probe = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+            probe.getTracks().forEach((t) => { try { t.stop(); } catch (_) {} });
+            setBadgeStatus("perm-cam-status", "Granted", "is-ok");
+            setBadgeStatus("perm-mic-status", "Granted", "is-ok");
+            showToast("Camera & Microphone permissions granted!");
+            return true;
+        } catch (err) {
+            await refreshPermissionsUI();
+            showToast("Allow Camera & Mic in Android Settings or popup: " + (err.message || "Denied"));
+            return false;
+        }
+    }
+    await refreshPermissionsUI();
+    return false;
+}
+
+async function checkServerConnectivity() {
+    const url = getServerUrl();
+    setBadgeStatus("perm-srv-status", "Checking...", "is-warn");
+    try {
+        const res = await fetch(`${url}/api/health`, { method: "GET", cache: "no-store" });
+        if (res.ok) {
+            setBadgeStatus("perm-srv-status", "Online", "is-ok");
+            const label = document.getElementById("server-conn-label");
+            if (label) label.textContent = socket && socket.connected ? "Server online" : "Connecting socket...";
+            if (!socket || !socket.connected) connectSocket();
+            showToast("ZingTalk server is online!");
+            return true;
+        }
+        setBadgeStatus("perm-srv-status", `HTTP ${res.status}`, "is-err");
+        showToast(`Server returned HTTP ${res.status} — check port 3000 service.`);
+    } catch (_) {
+        setBadgeStatus("perm-srv-status", "Offline", "is-err");
+        const label = document.getElementById("server-conn-label");
+        if (label) label.textContent = "Server unreachable";
+        showToast("Server unreachable right now. Retrying...");
+        connectSocket();
+    }
+    return false;
+}
+
 function setPairFeedback(msg, isOk = false) {
     const el = document.getElementById("pair-feedback");
     if (!el) return;
@@ -424,6 +562,7 @@ async function togglePreview() {
     }
 
     try {
+        await ensureAndroidMediaPermissions(true);
         const raw = await acquireConnectorMedia(true);
         previewStream = buildEchoGuardedStream(raw);
         previewStream._rawStream = raw;
@@ -434,7 +573,9 @@ async function togglePreview() {
         fallback?.classList.add("hidden");
         if (btn) btn.textContent = "Stop Preview";
         applyMediaToggleTracks();
+        await refreshPermissionsUI();
     } catch (err) {
+        await refreshPermissionsUI();
         showToast("Allow camera & microphone permissions: " + (err.message || "Permission denied"));
     }
 }
@@ -512,6 +653,7 @@ async function startSplitMeshUplink(session) {
 
     try {
         const wantVideo = session.callType !== "audio";
+        await ensureAndroidMediaPermissions(wantVideo);
         const raw = await acquireConnectorMedia(wantVideo);
         uplinkStream = buildEchoGuardedStream(raw);
         uplinkStream._rawStream = raw;
@@ -632,6 +774,9 @@ async function openQrScanner() {
     const msgEl = document.getElementById("qr-scan-msg");
     modal?.classList.remove("hidden");
 
+    if (msgEl) msgEl.textContent = "Requesting camera permission for QR scanner...";
+    await ensureAndroidMediaPermissions(true);
+
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         if (msgEl) msgEl.textContent = "Camera unavailable — paste the pairing link or enter the 6-digit code.";
         return;
@@ -639,11 +784,13 @@ async function openQrScanner() {
 
     try {
         qrScanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        setBadgeStatus("perm-cam-status", "Granted", "is-ok");
         if (vid) {
             vid.srcObject = qrScanStream;
             vid.play().catch(() => {});
         }
         if ("BarcodeDetector" in window) {
+            if (msgEl) msgEl.textContent = "Point rear camera at the QR code on your Fire TV screen.";
             const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
             qrScanTimer = setInterval(async () => {
                 if (!vid || vid.readyState < 2) return;
@@ -662,7 +809,8 @@ async function openQrScanner() {
             msgEl.textContent = "QR camera preview active. If auto-scan isn't supported here, enter the 6-digit code shown on TV.";
         }
     } catch (_) {
-        if (msgEl) msgEl.textContent = "Camera permission needed for QR scan, or enter the 6-digit TV code manually.";
+        await refreshPermissionsUI();
+        if (msgEl) msgEl.textContent = "Camera permission needed for QR scan. Tap 'Allow Cam & Mic' or enter the 6-digit TV code manually.";
     }
 }
 
@@ -715,6 +863,7 @@ function connectSocket() {
     socket.on("connect", () => {
         const label = document.getElementById("server-conn-label");
         if (label) label.textContent = "Server online";
+        setBadgeStatus("perm-srv-status", "Online", "is-ok");
         if (pairedCode || pairedTvUid) {
             submitPairingRequest(pairedCode, pairedTvUid);
         }
@@ -723,6 +872,13 @@ function connectSocket() {
     socket.on("disconnect", () => {
         const label = document.getElementById("server-conn-label");
         if (label) label.textContent = "Reconnecting...";
+        setBadgeStatus("perm-srv-status", "Reconnecting", "is-warn");
+    });
+
+    socket.on("connect_error", () => {
+        const label = document.getElementById("server-conn-label");
+        if (label) label.textContent = "Server offline — retrying...";
+        setBadgeStatus("perm-srv-status", "Unreachable", "is-err");
     });
 
     socket.on("connector_paired", (data) => {
@@ -834,6 +990,22 @@ function initConnector() {
     updatePairingUI();
     updateStudioControlsUI();
     connectSocket();
+    refreshPermissionsUI();
+    window.addEventListener("zing-permissions-result", () => { refreshPermissionsUI(); });
+
+    // Prompt Android OS Camera/Mic runtime permissions cleanly on initial APK launch
+    if (window.ZingNativeBridge && typeof window.ZingNativeBridge.requestAllPermissions === "function") {
+        setTimeout(() => {
+            try {
+                if (!window.ZingNativeBridge.hasAllPermissions || !window.ZingNativeBridge.hasAllPermissions()) {
+                    window.ZingNativeBridge.requestAllPermissions();
+                }
+            } catch (_) {}
+        }, 450);
+    }
+
+    document.getElementById("grant-perms-btn")?.addEventListener("click", requestBrowserAndNativePermissions);
+    document.getElementById("check-server-btn")?.addEventListener("click", checkServerConnectivity);
 
     document.querySelectorAll("[data-tab]").forEach((btn) => {
         btn.addEventListener("click", () => switchTab(btn.dataset.tab));

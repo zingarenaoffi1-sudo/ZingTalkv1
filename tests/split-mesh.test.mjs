@@ -176,3 +176,28 @@ test('All 3 APKs, How to Use guides, and Connector CI pipeline files are properl
   assert.ok(buildWorkflow.includes('node scripts/prepare-android.js connector'));
   assert.ok(buildWorkflow.includes('ZingTalk-Connector.apk'));
 });
+
+test('EC2 deploy safety and Connector Android permissions bridge are properly wired', () => {
+  const serverSrc = fs.readFileSync(path.resolve('server.js'), 'utf8');
+  assert.ok(serverSrc.includes('FALLBACK_PAIR_TTL_MS'), 'server.js must include standalone SplitMeshRegistry fallback');
+  assert.ok(serverSrc.includes("app.get('/', (req, res) => renderServerStatus(req, res))"), 'Admin panel route / must remain intact');
+
+  const deployYml = fs.readFileSync(path.resolve('.github/workflows/deploy.yml'), 'utf8');
+  assert.ok(deployYml.includes('lib/split-mesh.js') && deployYml.includes("'lib/**'"), 'deploy.yml must sync lib/split-mesh.js');
+
+  const connHtml = fs.readFileSync(path.resolve('packages/connector/index.html'), 'utf8');
+  assert.ok(connHtml.includes('id="grant-perms-btn"'));
+  assert.ok(connHtml.includes('id="check-server-btn"'));
+  assert.ok(connHtml.includes('<script src="app.js" defer></script>'));
+
+  const connApp = fs.readFileSync(path.resolve('packages/connector/app.js'), 'utf8');
+  assert.ok(connApp.includes('ensureAndroidMediaPermissions'));
+  assert.ok(connApp.includes('ZingNativeBridge'));
+  assert.ok(connApp.includes('checkServerConnectivity'));
+
+  const prepAndroid = fs.readFileSync(path.resolve('scripts/prepare-android.js'), 'utf8');
+  assert.ok(prepAndroid.includes('onRequestPermissionsResult'));
+  assert.ok(prepAndroid.includes('hasCameraPermission'));
+  assert.ok(prepAndroid.includes('hasMicPermission'));
+});
+

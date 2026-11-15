@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'server.js'
+      - 'lib/**'
       - 'package.json'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
@@ -57,12 +58,14 @@ jobs:
             [ -f "Firebase_Admin_SDK" ] && cp -p "Firebase_Admin_SDK" "/tmp/Firebase_Admin_SDK.bak" 2>/dev/null || true
             [ -f "ssl_proxy.js" ] && cp -p "ssl_proxy.js" "/tmp/ssl_proxy.js.bak" 2>/dev/null || true
 
+            mkdir -p lib
             if [ -d ".git" ]; then
               git fetch origin main || true
-              git checkout origin/main -- server.js package.json package-lock.json 2>/dev/null || git pull origin main || true
+              git checkout origin/main -- server.js package.json package-lock.json lib 2>/dev/null || git pull origin main || true
             else
               curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/server.js" -o server.js.tmp && mv server.js.tmp server.js || true
               curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/package.json" -o package.json.tmp && mv package.json.tmp package.json || true
+              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/lib/split-mesh.js" -o lib/split-mesh.js.tmp && mv lib/split-mesh.js.tmp lib/split-mesh.js || true
             fi
 
             [ -f "/tmp/Firebase_Admin_SDK.bak" ] && cp -p "/tmp/Firebase_Admin_SDK.bak" "Firebase_Admin_SDK" 2>/dev/null || true

@@ -149,6 +149,30 @@
                         <div class="conn-divider"></div>
 
                         <div class="conn-saved-head">
+                            <h3 class="conn-h3">Permissions &amp; Server Check</h3>
+                        </div>
+                        <div class="conn-perm-list" id="conn-perm-list">
+                            <div class="conn-perm-row">
+                                <span>Camera</span>
+                                <span id="perm-cam-status" class="conn-perm-badge">Checking...</span>
+                            </div>
+                            <div class="conn-perm-row">
+                                <span>Microphone</span>
+                                <span id="perm-mic-status" class="conn-perm-badge">Checking...</span>
+                            </div>
+                            <div class="conn-perm-row">
+                                <span>ZingTalk Server</span>
+                                <span id="perm-srv-status" class="conn-perm-badge">Connecting...</span>
+                            </div>
+                        </div>
+                        <div class="conn-btn-row" style="margin-top: 12px;">
+                            <button type="button" id="grant-perms-btn" class="conn-primary-btn conn-btn-compact">Allow Cam &amp; Mic</button>
+                            <button type="button" id="check-server-btn" class="conn-secondary-btn conn-btn-compact">Check Server</button>
+                        </div>
+
+                        <div class="conn-divider"></div>
+
+                        <div class="conn-saved-head">
                             <h3 class="conn-h3">Recent Fire TVs</h3>
                             <button type="button" id="clear-saved-tvs-btn" class="conn-text-btn">Clear</button>
                         </div>
@@ -417,7 +441,7 @@
 
     <div id="conn-toast" class="conn-toast" role="status" aria-live="polite"></div>
 
-    <script type="module" src="app.js"></script>
+    <script src="app.js" defer></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
