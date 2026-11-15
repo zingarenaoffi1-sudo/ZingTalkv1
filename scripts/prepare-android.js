@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { buildProtectedPlatformBundle } = require('../lib/protect-bundle');
 
 const targetPlatform = (process.argv[2] || 'tv').toLowerCase();
 const packageName = targetPlatform === 'tv'
@@ -646,6 +647,13 @@ if (fs.existsSync(appGradlePath)) {
     if (!content.includes('signingConfig signingConfigs.release')) {
         content = content.replace(/(buildTypes\s*\{\s*release\s*\{)/, '$1\n            signingConfig signingConfigs.release');
     }
+    content = content.replace(/minifyEnabled\s+(false|true)/g, 'minifyEnabled true');
+    if (/shrinkResources\s+(false|true)/.test(content)) {
+        content = content.replace(/shrinkResources\s+(false|true)/g, 'shrinkResources true');
+    } else {
+        content = content.replace(/(minifyEnabled\s+true)/, '$1\n            shrinkResources true');
+    }
+    content = content.replace(/getDefaultProguardFile\(['"]proguard-android\.txt['"]\)/g, "getDefaultProguardFile('proguard-android-optimize.txt')");
 
     // Remove any previous manifest minSdk post-processor block before re-appending
     content = content.replace(/\/\/ --- ZINGTALK_MIN_SDK_HOOK_START ---[\s\S]*?\/\/ --- ZINGTALK_MIN_SDK_HOOK_END ---/g, '').trim();
@@ -801,73 +809,82 @@ if (fs.existsSync(cordovaManifestPath)) {
     }
 }
 
-// 6. ProGuard Rules
+// 6. ProGuard / R8 Rules (Idempotent & Clean - Obfuscates Java/DEX while protecting WebView JS Bridge & Capacitor)
 const proguardPath = path.join('android', 'app', 'proguard-rules.pro');
-if (fs.existsSync(proguardPath)) {
-    let currentRules = fs.readFileSync(proguardPath, 'utf8');
-    if (!currentRules.includes('com.google.firebase')) {
-        const rules = `
+const cleanProGuardRules = `# ZingTalk Production R8 / ProGuard Rules
+-repackageclasses 'z'
+-allowaccessmodification
+-renamesourcefileattribute SourceFile
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,JavascriptInterface
+
+# Keep Launch Activity Entry & Native WebView JS Bridge Methods
+-keep public class * extends com.getcapacitor.BridgeActivity
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keep class android.webkit.** { *; }
+
+# Keep Capacitor Core & Native Plugins
 -keep class com.getcapacitor.** { *; }
 -keep class * extends com.getcapacitor.Plugin { *; }
--keepclassmembers class * extends com.getcapacitor.Plugin { public <methods>; }
+-keepclassmembers class * extends com.getcapacitor.Plugin {
+    public <methods>;
+}
+
+# Keep Firebase Authentication & Google Play Services
 -keep class com.google.firebase.** { *; }
 -keep class com.google.android.gms.** { *; }
+-keep class io.capawesome.capacitorjs.plugins.firebase.authentication.** { *; }
 -dontwarn com.google.firebase.**
 -dontwarn com.google.android.gms.**
--keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }
--keep class android.webkit.** { *; }
+
+# Keep WebRTC & MediaCodec Decoders
 -keep class org.webrtc.** { *; }
 -dontwarn org.webrtc.**
 `;
-        fs.appendFileSync(proguardPath, '\n' + rules.trim() + '\n', 'utf8');
-    }
+if (fs.existsSync(path.dirname(proguardPath))) {
+    fs.writeFileSync(proguardPath, cleanProGuardRules, 'utf8');
+    console.log('[prepare-android] ✅ Written clean R8/ProGuard obfuscation rules to android/app/proguard-rules.pro');
 }
 
-// 7. Copy platform web assets to android/app/src/main/assets/public
-const androidPublicDir = path.join('android', 'app', 'src', 'main', 'assets', 'public');
-if (!fs.existsSync(androidPublicDir)) {
-    fs.mkdirSync(androidPublicDir, { recursive: true });
-}
-const platformSourceDir = targetPlatform === 'mobile'
-    ? path.join('packages', 'mobile')
-    : (targetPlatform === 'connector' ? path.join('packages', 'connector') : path.join('packages', 'tv'));
-const filesToSync = ['index.html', 'style.css', 'app.js', 'qr.js', 'jsQR.js', 'manifest.json', 'service-worker.js', 'capacitor.js', 'socket.io.min.js', 'privacy.html', 'terms.html'];
-filesToSync.forEach(f => {
-    let src = path.join(platformSourceDir, f);
-    if (!fs.existsSync(src) && f === 'jsQR.js') {
-        src = path.join('.', 'node_modules', 'jsqr', 'dist', 'jsQR.js');
-    } else if (!fs.existsSync(src) && f !== 'qr.js') {
-        src = path.join('.', f);
+// 7 & 8. Build strictly protected (obfuscated/minified) web bundle directly into android/app/src/main/assets/public
+// and synchronize capacitor.config.json
+(async () => {
+    const androidPublicDir = path.join('android', 'app', 'src', 'main', 'assets', 'public');
+    await buildProtectedPlatformBundle(targetPlatform, androidPublicDir, path.resolve(__dirname, '..'));
+    if (targetPlatform === 'connector' && !fs.existsSync(path.join(androidPublicDir, 'jsQR.js'))) {
+        throw new Error("Missing required offline 'jsQR.js' decoder in Connector Android bundle");
     }
-    if (fs.existsSync(src)) {
-        fs.copyFileSync(src, path.join(androidPublicDir, f));
-    }
+
+    // Ensure Cordova stubs exist inside public/
+    fs.writeFileSync(path.join(androidPublicDir, 'cordova.js'), '// Capacitor Cordova Stub\n', 'utf8');
+    fs.writeFileSync(
+        path.join(androidPublicDir, 'cordova_plugins.js'),
+        'cordova.define("cordova/plugin_list", function(require, exports, module) {\n  module.exports = [];\n  module.exports.metadata = {};\n});\n',
+        'utf8'
+    );
+
+    console.log(`[prepare-android] ✅ Cleanly synced obfuscated & minified [${targetPlatform}] bundle into ${androidPublicDir}`);
+
+    const capConfigsToSync = [
+        path.join('android', 'app', 'src', 'main', 'assets', 'capacitor.config.json'),
+        path.join('.', 'capacitor.config.json')
+    ];
+    capConfigsToSync.forEach(cfgPath => {
+        if (fs.existsSync(cfgPath)) {
+            try {
+                const raw = fs.readFileSync(cfgPath, 'utf8');
+                const parsed = JSON.parse(raw);
+                parsed.appId = packageName;
+                parsed.appName = appDisplayName;
+                fs.writeFileSync(cfgPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
+                console.log(`[prepare-android] ✅ Updated ${cfgPath} with appId="${packageName}"`);
+            } catch (e) {}
+        }
+    });
+
+    console.log(`[prepare-android] Android project successfully configured for ${targetPlatform}!`);
+})().catch((err) => {
+    console.error('[prepare-android] Failed:', err);
+    process.exit(1);
 });
-// Clean any heavy submission assets like screenshots from the APK assets directory
-const unwantedScreenshots = path.join(androidPublicDir, 'screenshots');
-if (fs.existsSync(unwantedScreenshots)) {
-    fs.rmSync(unwantedScreenshots, { recursive: true, force: true });
-}
-
-console.log(`[prepare-android] ✅ Synchronized web bundle from ${platformSourceDir} to Android assets public directory!`);
-
-// 8. Synchronize capacitor.config.json in assets & root with packageName
-const capConfigsToSync = [
-    path.join('android', 'app', 'src', 'main', 'assets', 'capacitor.config.json'),
-    path.join('.', 'capacitor.config.json')
-];
-capConfigsToSync.forEach(cfgPath => {
-    if (fs.existsSync(cfgPath)) {
-        try {
-            const raw = fs.readFileSync(cfgPath, 'utf8');
-            const parsed = JSON.parse(raw);
-            parsed.appId = packageName;
-            parsed.appName = appDisplayName;
-            fs.writeFileSync(cfgPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
-            console.log(`[prepare-android] ✅ Updated ${cfgPath} with appId="${packageName}"`);
-        } catch (e) {}
-    }
-});
-
-console.log(`[prepare-android] Android project successfully configured for ${targetPlatform}!`);

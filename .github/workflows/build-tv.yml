@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'packages/tv/**'
+      - 'lib/**'
       - 'index.html'
       - 'app.js'
       - 'style.css'

@@ -1,111 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const { buildProtectedPlatformBundle } = require('./lib/protect-bundle');
 
-const distDir = path.join(__dirname, 'dist');
-if (!fs.existsSync(distDir)) {
-    fs.mkdirSync(distDir, { recursive: true });
-}
-
-const filesToCopy = [
-    'index.html',
-    'style.css',
-    'app.js',
-    'qr.js',
-    'manifest.json',
-    'service-worker.js',
-    'privacy.html',
-    'terms.html'
-];
-
-const androidPublicDir = path.join(__dirname, 'android', 'app', 'src', 'main', 'assets', 'public');
-if (!fs.existsSync(androidPublicDir)) {
-    fs.mkdirSync(androidPublicDir, { recursive: true });
-}
-
-// Sync latest TV files from packages/tv to root so web preview & dist always have the latest TV bundle
-const tvPkgDir = path.join(__dirname, 'packages', 'tv');
-['index.html', 'style.css', 'app.js', 'qr.js', 'manifest.json', 'service-worker.js', 'privacy.html', 'terms.html'].forEach(file => {
-    const tvFile = path.join(tvPkgDir, file);
-    const rootFile = path.join(__dirname, file);
-    if (fs.existsSync(tvFile)) {
-        fs.copyFileSync(tvFile, rootFile);
-    }
-});
-
-filesToCopy.forEach(file => {
-    const srcPath = path.join(__dirname, file);
-    const destPath = path.join(distDir, file);
-    if (fs.existsSync(srcPath)) {
-        fs.copyFileSync(srcPath, destPath);
-        const androidDest = path.join(androidPublicDir, file);
-        fs.copyFileSync(srcPath, androidDest);
-    }
-});
-
-// Sync Packages (TV, Mobile, and Connector)
-const packages = ['tv', 'mobile', 'connector'];
-packages.forEach(pkg => {
-    const pkgDir = path.join(__dirname, 'packages', pkg);
-    const pkgDist = path.join(pkgDir, 'dist');
-    if (!fs.existsSync(pkgDist)) {
-        fs.mkdirSync(pkgDist, { recursive: true });
-    }
-    ['index.html', 'style.css', 'app.js', 'qr.js', 'manifest.json', 'service-worker.js', 'capacitor.config.json', 'privacy.html', 'terms.html'].forEach(f => {
-        let src = path.join(pkgDir, f);
-        if (!fs.existsSync(src) && f !== 'qr.js') {
-            src = path.join(__dirname, f);
-        }
-        if (fs.existsSync(src)) {
-            fs.copyFileSync(src, path.join(pkgDist, f));
-            if (src !== path.join(pkgDir, f)) {
-                fs.copyFileSync(src, path.join(pkgDir, f));
-            }
-        }
-    });
-});
-
-// Copy Capacitor runtime bundle
-const capCorePath = path.join(__dirname, 'node_modules/@capacitor/core/dist/capacitor.js');
-if (fs.existsSync(capCorePath)) {
-    fs.copyFileSync(capCorePath, path.join(distDir, 'capacitor.js'));
-    fs.copyFileSync(capCorePath, path.join(__dirname, 'capacitor.js'));
-    fs.copyFileSync(capCorePath, path.join(androidPublicDir, 'capacitor.js'));
-    packages.forEach(pkg => {
-        fs.copyFileSync(capCorePath, path.join(__dirname, 'packages', pkg, 'dist', 'capacitor.js'));
-        fs.copyFileSync(capCorePath, path.join(__dirname, 'packages', pkg, 'capacitor.js'));
-    });
-}
-
-// Copy Socket.IO client runtime bundle
-const socketIoPaths = [
-    path.join(__dirname, 'node_modules/socket.io/client-dist/socket.io.min.js'),
-    path.join(__dirname, 'node_modules/socket.io-client/dist/socket.io.min.js')
-];
-for (const sPath of socketIoPaths) {
-    if (fs.existsSync(sPath)) {
-        fs.copyFileSync(sPath, path.join(distDir, 'socket.io.min.js'));
-        fs.copyFileSync(sPath, path.join(__dirname, 'socket.io.min.js'));
-        fs.copyFileSync(sPath, path.join(androidPublicDir, 'socket.io.min.js'));
-        packages.forEach(pkg => {
-            fs.copyFileSync(sPath, path.join(__dirname, 'packages', pkg, 'dist', 'socket.io.min.js'));
-            fs.copyFileSync(sPath, path.join(__dirname, 'packages', pkg, 'socket.io.min.js'));
-        });
-        break;
-    }
-}
-
-// Copy pure-JS offline jsQR decoder runtime bundle for ZingTalk Connector
-const jsqrPath = path.join(__dirname, 'node_modules/jsqr/dist/jsQR.js');
-if (fs.existsSync(jsqrPath)) {
-    const connDir = path.join(__dirname, 'packages', 'connector');
-    const connDist = path.join(connDir, 'dist');
-    if (!fs.existsSync(connDist)) fs.mkdirSync(connDist, { recursive: true });
-    fs.copyFileSync(jsqrPath, path.join(connDir, 'jsQR.js'));
-    fs.copyFileSync(jsqrPath, path.join(connDist, 'jsQR.js'));
-    fs.copyFileSync(jsqrPath, path.join(androidPublicDir, 'jsQR.js'));
-}
-
-// Copy assets folder
 function copyDirSync(src, dest) {
     if (!fs.existsSync(src)) return;
     if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
@@ -121,27 +17,76 @@ function copyDirSync(src, dest) {
     }
 }
 
-copyDirSync(path.join(__dirname, 'assets'), path.join(distDir, 'assets'));
-copyDirSync(path.join(__dirname, 'assets'), path.join(androidPublicDir, 'assets'));
-packages.forEach(pkg => {
-    const pkgAssetSrc = path.join(__dirname, 'packages', pkg, 'assets');
-    const pkgAssetDist = path.join(__dirname, 'packages', pkg, 'dist', 'assets');
-    if (fs.existsSync(pkgAssetSrc)) {
-        copyDirSync(pkgAssetSrc, pkgAssetDist);
-    } else {
-        copyDirSync(path.join(__dirname, 'assets'), pkgAssetDist);
+async function main() {
+    const rootDir = __dirname;
+    const packages = ['tv', 'mobile', 'connector'];
+
+    // 1. Keep root TV files synced from packages/tv for GitHub Pages & security test parity
+    const tvPkgDir = path.join(rootDir, 'packages', 'tv');
+    ['index.html', 'style.css', 'app.js', 'qr.js', 'manifest.json', 'service-worker.js', 'privacy.html', 'terms.html'].forEach(file => {
+        const tvFile = path.join(tvPkgDir, file);
+        const rootFile = path.join(rootDir, file);
+        if (fs.existsSync(tvFile)) {
+            fs.copyFileSync(tvFile, rootFile);
+        }
+    });
+
+    // 2. Keep vendor runtime bundles synced inside each package folder for web preview (/tv, /mobile, /connector)
+    const capCorePath = path.join(rootDir, 'node_modules/@capacitor/core/dist/capacitor.js');
+    if (fs.existsSync(capCorePath)) {
+        fs.copyFileSync(capCorePath, path.join(rootDir, 'capacitor.js'));
+        packages.forEach(pkg => {
+            fs.copyFileSync(capCorePath, path.join(rootDir, 'packages', pkg, 'capacitor.js'));
+        });
     }
+
+    const socketIoPaths = [
+        path.join(rootDir, 'node_modules/socket.io/client-dist/socket.io.min.js'),
+        path.join(rootDir, 'node_modules/socket.io-client/dist/socket.io.min.js')
+    ];
+    for (const sPath of socketIoPaths) {
+        if (fs.existsSync(sPath)) {
+            fs.copyFileSync(sPath, path.join(rootDir, 'socket.io.min.js'));
+            packages.forEach(pkg => {
+                fs.copyFileSync(sPath, path.join(rootDir, 'packages', pkg, 'socket.io.min.js'));
+            });
+            break;
+        }
+    }
+
+    const jsqrPath = path.join(rootDir, 'node_modules/jsqr/dist/jsQR.js');
+    if (fs.existsSync(jsqrPath)) {
+        fs.copyFileSync(jsqrPath, path.join(rootDir, 'packages', 'connector', 'jsQR.js'));
+    }
+
+    // 3. Build obfuscated & minified production bundles for all 3 platforms
+    for (const pkg of packages) {
+        const pkgDist = path.join(rootDir, 'packages', pkg, 'dist');
+        await buildProtectedPlatformBundle(pkg, pkgDist, rootDir);
+        console.log(`[build-dist] Protected obfuscated bundle ready: packages/${pkg}/dist`);
+    }
+
+    // 4. Populate root dist/ cleanly with protected TV bundle as default
+    const distDir = path.join(rootDir, 'dist');
+    fs.rmSync(distDir, { recursive: true, force: true });
+    copyDirSync(path.join(rootDir, 'packages', 'tv', 'dist'), distDir);
+
+    // 5. Populate android/app/src/main/assets/public cleanly with protected TV bundle + Cordova stubs
+    const androidPublicDir = path.join(rootDir, 'android', 'app', 'src', 'main', 'assets', 'public');
+    fs.rmSync(androidPublicDir, { recursive: true, force: true });
+    copyDirSync(distDir, androidPublicDir);
+
+    fs.writeFileSync(path.join(androidPublicDir, 'cordova.js'), '// Capacitor Cordova Stub\n', 'utf8');
+    fs.writeFileSync(
+        path.join(androidPublicDir, 'cordova_plugins.js'),
+        'cordova.define("cordova/plugin_list", function(require, exports, module) {\n  module.exports = [];\n  module.exports.metadata = {};\n});\n',
+        'utf8'
+    );
+
+    console.log('[build-dist] Protected distribution bundles built successfully for TV, Mobile, Connector, and Web.');
+}
+
+main().catch((err) => {
+    console.error('[build-dist] Build failed:', err);
+    process.exit(1);
 });
-// Note: Amazon Appstore screenshots are kept at root /screenshots for web preview & submission, NOT bundled into APK assets
-
-// Ensure Cordova stubs
-const cordovaStubPath = path.join(androidPublicDir, 'cordova.js');
-if (!fs.existsSync(cordovaStubPath)) {
-    fs.writeFileSync(cordovaStubPath, '// Capacitor Cordova Stub\n', 'utf8');
-}
-const cordovaPluginsStubPath = path.join(androidPublicDir, 'cordova_plugins.js');
-if (!fs.existsSync(cordovaPluginsStubPath)) {
-    fs.writeFileSync(cordovaPluginsStubPath, 'cordova.define("cordova/plugin_list", function(require, exports, module) {\n  module.exports = [];\n  module.exports.metadata = {};\n});\n', 'utf8');
-}
-
-console.log('[build-dist] Distribution bundle built successfully for TV, Mobile, and Web.');

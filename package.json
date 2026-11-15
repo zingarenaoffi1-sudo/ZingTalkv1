@@ -20,6 +20,9 @@
     "socket.io": "^4.7.2"
   },
   "devDependencies": {
+    "clean-css": "^5.3.3",
+    "html-minifier-terser": "^7.2.0",
+    "javascript-obfuscator": "^5.10.1",
     "socket.io-client": "^4.8.4"
   }
 }

@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'packages/mobile/**'
+      - 'lib/**'
       - 'scripts/**'
       - 'android/**'
       - 'build-dist.js'
@@ -35,14 +36,12 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install Dependencies & Prepare Mobile Assets
+      - name: Install Dependencies & Prepare Protected Mobile Assets
         run: |
           npm install --no-audit --prefer-offline --legacy-peer-deps
           npm run build
-          # Ensure mobile dist is copied as primary for mobile/tablet build
-          rm -rf dist/*
-          cp -r packages/mobile/* dist/ 2>/dev/null || true
-          cp -r packages/mobile/dist/* dist/ 2>/dev/null || true
+          rm -rf dist && mkdir -p dist
+          cp -r packages/mobile/dist/. dist/
 
       - name: Configure Capacitor for Mobile & Add Android Platform
         run: |
@@ -58,8 +57,6 @@ jobs:
             cp google-services.json android/app/google-services.json
           fi
           npx cap sync android
-          mkdir -p android/app/src/main/assets/public
-          cp -r packages/mobile/* android/app/src/main/assets/public/ 2>/dev/null || true
 
       - name: Inject Mobile Brand Icons
         run: |
