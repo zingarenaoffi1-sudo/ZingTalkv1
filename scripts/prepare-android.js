@@ -72,6 +72,12 @@ public class MainActivity extends BridgeActivity {
             WebView webView = this.getBridge().getWebView();
             if (webView != null) {
                 webView.setBackgroundColor(android.graphics.Color.parseColor("#090d16"));
+                webView.setFocusable(true);
+                webView.setFocusableInTouchMode(true);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    webView.setDefaultFocusHighlightEnabled(false);
+                }
+                webView.requestFocus();
                 WebSettings settings = webView.getSettings();
                 settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
                 settings.setDomStorageEnabled(true);
@@ -110,6 +116,29 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception ignored) {}
 
         handleIntentAction(getIntent());
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        if (event != null && event.getAction() == android.view.KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+            int keyCode = event.getKeyCode();
+            if (keyCode == android.view.KeyEvent.KEYCODE_MENU || keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
+                final String cmd = (keyCode == android.view.KeyEvent.KEYCODE_MENU) ? "Menu" : "MediaPlayPause";
+                try {
+                    final WebView webView = this.getBridge() != null ? this.getBridge().getWebView() : null;
+                    if (webView != null) {
+                        webView.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                webView.evaluateJavascript("window.handleConnectorRemoteCommand && window.handleConnectorRemoteCommand('" + cmd + "');", null);
+                            }
+                        });
+                        return true;
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     @Override

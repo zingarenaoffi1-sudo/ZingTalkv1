@@ -110,6 +110,16 @@
       "lastSeenTime": "2026-11-15T10:07:02.157Z",
       "totalConnections": 2
     },
+    "4293000292": {
+      "uid": "4293000292",
+      "name": "Room Ruby",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-15",
+      "lastSeenDate": "2026-11-15",
+      "firstSeenTime": "2026-11-15T11:54:38.744Z",
+      "lastSeenTime": "2026-11-15T11:54:39.275Z",
+      "totalConnections": 2
+    },
     "4894702393": {
       "uid": "4894702393",
       "name": "Guest",
@@ -219,10 +229,11 @@
         "2517327056",
         "2649269842",
         "2397755189",
-        "3868738106"
+        "3868738106",
+        "4293000292"
       ],
       "returningUsers": [],
-      "totalConnections": 11
+      "totalConnections": 13
     }
   }
 }
