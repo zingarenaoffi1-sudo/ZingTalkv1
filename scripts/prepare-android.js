@@ -611,9 +611,13 @@ const appGradlePath = path.join('android', 'app', 'build.gradle');
 if (fs.existsSync(appGradlePath)) {
     let content = fs.readFileSync(appGradlePath, 'utf8');
 
-    // Enforce consistent applicationId and namespace
+    // Enforce consistent applicationId, namespace, and Amazon Appstore versionCode / versionName
+    const versionCode = targetPlatform === 'tv' ? 2 : 1;
+    const versionName = targetPlatform === 'tv' ? '1.1' : '1.0';
     content = content.replace(/applicationId\s+"[^"]+"/, `applicationId "${packageName}"`);
     content = content.replace(/namespace\s*=?\s*"[^"]+"/, `namespace = "${packageName}"`);
+    content = content.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`);
+    content = content.replace(/versionName\s+"[^"]+"/, `versionName "${versionName}"`);
 
     const keystoreFileName = targetPlatform === 'tv'
         ? 'zingtalk-tv-release.keystore'

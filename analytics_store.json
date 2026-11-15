@@ -10,6 +10,36 @@
       "lastSeenTime": "2026-11-05T15:49:44.332Z",
       "totalConnections": 1
     },
+    "1460316957": {
+      "uid": "1460316957",
+      "name": "Living Room Fire TV",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-15",
+      "lastSeenDate": "2026-11-15",
+      "firstSeenTime": "2026-11-15T10:02:25.331Z",
+      "lastSeenTime": "2026-11-15T10:02:25.839Z",
+      "totalConnections": 2
+    },
+    "2356875876": {
+      "uid": "2356875876",
+      "name": "Rahul Sharma",
+      "platform": "Mobile",
+      "firstSeenDate": "2026-11-15",
+      "lastSeenDate": "2026-11-15",
+      "firstSeenTime": "2026-11-15T10:03:36.383Z",
+      "lastSeenTime": "2026-11-15T10:03:36.383Z",
+      "totalConnections": 1
+    },
+    "2397755189": {
+      "uid": "2397755189",
+      "name": "Rahul Sharma",
+      "platform": "Mobile",
+      "firstSeenDate": "2026-11-15",
+      "lastSeenDate": "2026-11-15",
+      "firstSeenTime": "2026-11-15T10:06:55.808Z",
+      "lastSeenTime": "2026-11-15T10:06:55.808Z",
+      "totalConnections": 1
+    },
     "2402933040": {
       "uid": "2402933040",
       "name": "Living Room TV",
@@ -18,6 +48,26 @@
       "lastSeenDate": "2026-11-14",
       "firstSeenTime": "2026-11-14T14:42:23.739Z",
       "lastSeenTime": "2026-11-14T14:42:24.255Z",
+      "totalConnections": 2
+    },
+    "2517327056": {
+      "uid": "2517327056",
+      "name": "Rahul Sharma",
+      "platform": "Mobile",
+      "firstSeenDate": "2026-11-15",
+      "lastSeenDate": "2026-11-15",
+      "firstSeenTime": "2026-11-15T10:04:06.210Z",
+      "lastSeenTime": "2026-11-15T10:04:06.210Z",
+      "totalConnections": 1
+    },
+    "2649269842": {
+      "uid": "2649269842",
+      "name": "Living Room Fire TV",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-15",
+      "lastSeenDate": "2026-11-15",
+      "firstSeenTime": "2026-11-15T10:05:15.559Z",
+      "lastSeenTime": "2026-11-15T10:05:16.047Z",
       "totalConnections": 2
     },
     "2857714421": {
@@ -49,6 +99,16 @@
       "firstSeenTime": "2026-11-05T08:56:34.229Z",
       "lastSeenTime": "2026-11-05T08:56:34.229Z",
       "totalConnections": 1
+    },
+    "3868738106": {
+      "uid": "3868738106",
+      "name": "Living Room Fire TV",
+      "platform": "Fire TV",
+      "firstSeenDate": "2026-11-15",
+      "lastSeenDate": "2026-11-15",
+      "firstSeenTime": "2026-11-15T10:07:01.629Z",
+      "lastSeenTime": "2026-11-15T10:07:02.157Z",
+      "totalConnections": 2
     },
     "4894702393": {
       "uid": "4894702393",
@@ -153,10 +213,16 @@
     },
     "2026-11-15": {
       "newUsers": [
-        "5129741732"
+        "5129741732",
+        "1460316957",
+        "2356875876",
+        "2517327056",
+        "2649269842",
+        "2397755189",
+        "3868738106"
       ],
       "returningUsers": [],
-      "totalConnections": 2
+      "totalConnections": 11
     }
   }
 }
