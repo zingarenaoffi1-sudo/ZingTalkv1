@@ -66,6 +66,7 @@ jobs:
               curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/server.js" -o server.js.tmp && mv server.js.tmp server.js || true
               curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/package.json" -o package.json.tmp && mv package.json.tmp package.json || true
               curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/lib/split-mesh.js" -o lib/split-mesh.js.tmp && mv lib/split-mesh.js.tmp lib/split-mesh.js || true
+              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/lib/security.js" -o lib/security.js.tmp && mv lib/security.js.tmp lib/security.js || true
             fi
 
             [ -f "/tmp/Firebase_Admin_SDK.bak" ] && cp -p "/tmp/Firebase_Admin_SDK.bak" "Firebase_Admin_SDK" 2>/dev/null || true

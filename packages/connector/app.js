@@ -4,6 +4,7 @@ const PRODUCTION_SERVER_URL = "https://zingtalk.duckdns.org";
 const SAVED_TVS_KEY = "zingTalkConnectorSavedTvs";
 const LAST_DEVICE_NAME_KEY = "zingTalkConnectorDeviceName";
 
+// Ephemeral TURN credentials are fetched dynamically from the authenticated server after pairing (zero static secrets in APK)
 const RTC_CONFIG = {
     iceServers: [
         {
@@ -15,18 +16,36 @@ const RTC_CONFIG = {
         },
         {
             urls: ["stun:zingtalk.duckdns.org:3478"]
-        },
-        {
-            urls: [
-                "turn:zingtalk.duckdns.org:3478?transport=udp",
-                "turn:zingtalk.duckdns.org:3478?transport=tcp"
-            ],
-            username: "zingtalk",
-            credential: "zingtalkpassword"
         }
     ],
     iceCandidatePoolSize: 8
 };
+
+let lastIceFetchAt = 0;
+async function refreshIceServers(force = false) {
+    const now = Date.now();
+    if (!force && lastIceFetchAt && (now - lastIceFetchAt) < 15 * 60 * 1000) return;
+    if (!socket || !socket.connected) return;
+    await new Promise((resolve) => {
+        let done = false;
+        const timer = setTimeout(() => { if (!done) { done = true; resolve(); } }, 1200);
+        try {
+            socket.emit("request_turn_credentials", {}, (res) => {
+                if (!done) {
+                    done = true;
+                    clearTimeout(timer);
+                    if (res && res.ok && Array.isArray(res.iceServers)) {
+                        RTC_CONFIG.iceServers = res.iceServers;
+                        lastIceFetchAt = Date.now();
+                    }
+                    resolve();
+                }
+            });
+        } catch (_) {
+            if (!done) { done = true; clearTimeout(timer); resolve(); }
+        }
+    });
+}
 
 const RESOLUTION_MAP = {
     "480p": { width: { ideal: 640, max: 854 }, height: { ideal: 480, max: 480 }, frameRate: { ideal: 24, max: 30 } },
@@ -60,13 +79,31 @@ let audioProcessedTrack = null;
 let qrScanStream = null;
 let qrScanTimer = null;
 
+function sanitizeServerUrl(rawUrl, fallbackUrl = PRODUCTION_SERVER_URL) {
+    if (!rawUrl || typeof rawUrl !== "string") return fallbackUrl;
+    const trimmed = rawUrl.trim();
+    if (!trimmed || /^javascript:/i.test(trimmed) || /^data:/i.test(trimmed)) return fallbackUrl;
+    try {
+        const parsed = new URL(trimmed);
+        const host = parsed.hostname.toLowerCase();
+        const isLocal = host === "localhost" || host === "127.0.0.1";
+        if (parsed.protocol === "https:" && (host === "zingtalk.duckdns.org" || isLocal || host.endsWith(".run.app") || host.endsWith(".ai.studio"))) {
+            return parsed.origin;
+        }
+        if (parsed.protocol === "http:" && isLocal) {
+            return parsed.origin;
+        }
+    } catch (_) {}
+    return fallbackUrl;
+}
+
 function getServerUrl() {
     try {
         const saved = localStorage.getItem("zingTalkServerUrl");
-        if (saved && saved.trim()) return saved.trim();
+        if (saved && saved.trim()) return sanitizeServerUrl(saved.trim(), PRODUCTION_SERVER_URL);
         const { protocol, host, origin } = window.location;
         if (protocol.startsWith("http") && (host.includes(":3000") || host.includes("run.app") || host.includes("ai.studio") || host.includes("duckdns"))) {
-            return origin;
+            return sanitizeServerUrl(origin, PRODUCTION_SERVER_URL);
         }
     } catch (_) {}
     return PRODUCTION_SERVER_URL;
@@ -666,6 +703,7 @@ async function startSplitMeshUplink(session) {
             fallback?.classList.add("hidden");
         }
 
+        await refreshIceServers();
         connectorPeerConnection = new RTCPeerConnection(RTC_CONFIG);
         connectorIceQueue = [];
 
@@ -818,8 +856,8 @@ async function openQrScanner() {
 function submitPairingRequest(code, tvUid) {
     const cleanCode = sanitizeCode(code);
     const cleanUid = sanitizeUid(tvUid);
-    if (cleanCode.length !== 6 && cleanUid.length !== 10) {
-        setPairFeedback("Enter the 6-digit pairing code or 10-digit Fire TV UID.", false);
+    if (cleanCode.length !== 6) {
+        setPairFeedback("Enter the 6-digit Pairing Code shown on your Fire TV screen.", false);
         return;
     }
     if (!socket || !socket.connected) {
@@ -881,6 +919,13 @@ function connectSocket() {
         setBadgeStatus("perm-srv-status", "Unreachable", "is-err");
     });
 
+    socket.on("turn_credentials", (payload) => {
+        if (payload && Array.isArray(payload.iceServers)) {
+            RTC_CONFIG.iceServers = payload.iceServers;
+            lastIceFetchAt = Date.now();
+        }
+    });
+
     socket.on("connector_paired", (data) => {
         if (!data || !data.tvUid) return;
         pairedTvUid = data.tvUid;
@@ -890,6 +935,7 @@ function connectSocket() {
         saveTvEntry(pairedTvUid, pairedTvName, pairedCode);
         updatePairingUI();
         syncMediaStateToTv();
+        refreshIceServers(true);
         showToast(`Connected to ${pairedTvName}`);
     });
 

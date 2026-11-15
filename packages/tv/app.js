@@ -187,15 +187,33 @@ export function detectClientPlatform() {
     return "Web Browser";
 }
 
+export function sanitizeServerUrl(rawUrl, fallbackUrl = DUCKDNS_SIGNALING_URL) {
+    if (!rawUrl || typeof rawUrl !== "string") return fallbackUrl;
+    const trimmed = rawUrl.trim();
+    if (!trimmed || /^javascript:/i.test(trimmed) || /^data:/i.test(trimmed)) return fallbackUrl;
+    try {
+        const parsed = new URL(trimmed);
+        const host = parsed.hostname.toLowerCase();
+        const isLocal = host === "localhost" || host === "127.0.0.1";
+        if (parsed.protocol === "https:" && (host === "zingtalk.duckdns.org" || isLocal || host.endsWith(".run.app") || host.endsWith(".ai.studio"))) {
+            return parsed.origin;
+        }
+        if (parsed.protocol === "http:" && isLocal) {
+            return parsed.origin;
+        }
+    } catch (_) {}
+    return fallbackUrl;
+}
+
 export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
-    if (saved && saved.trim()) return saved.trim();
+    if (saved && saved.trim()) return sanitizeServerUrl(saved.trim(), DUCKDNS_SIGNALING_URL);
 
     if (typeof window !== "undefined" && window.location) {
         const h = window.location.host || "";
         const p = window.location.protocol || "";
         if (p.startsWith("http") && (h.includes(":3000") || h.includes("run.app") || h.includes("ai.studio") || h.includes("duckdns"))) {
-            return window.location.origin;
+            return sanitizeServerUrl(window.location.origin, DUCKDNS_SIGNALING_URL);
         }
     }
     return DUCKDNS_SIGNALING_URL;
@@ -227,36 +245,92 @@ export function updateUidDisplays(uid) {
     if (modalUid) modalUid.innerText = my10DigitUid;
 }
 
+// Ephemeral TURN credentials are fetched dynamically from the authenticated server (no static secrets in APK)
 const rtcConfig = {
     iceServers: [
-        { 
+        {
             urls: [
                 "stun:stun.l.google.com:19302",
                 "stun:stun1.l.google.com:19302",
                 "stun:stun2.l.google.com:19302",
                 "stun:stun3.l.google.com:19302",
                 "stun:stun4.l.google.com:19302"
-            ] 
-        },
-        { 
-            urls: [
-                "stun:zingtalk.duckdns.org:3478"
-            ] 
+            ]
         },
         {
-            urls: [
-                "turn:zingtalk.duckdns.org:3478?transport=udp",
-                "turn:zingtalk.duckdns.org:3478?transport=tcp"
-            ],
-            username: "zingtalk",
-            credential: "zingtalkpassword"
+            urls: ["stun:zingtalk.duckdns.org:3478"]
         },
-        { 
-            urls: ["stun:global.stun.twilio.com:3478"] 
+        {
+            urls: ["stun:global.stun.twilio.com:3478"]
         }
     ],
     iceCandidatePoolSize: 10
 };
+
+let lastIceFetchAt = 0;
+async function emitAuthenticatedLogin(targetSocket, userObj) {
+    if (!targetSocket || !targetSocket.connected || !userObj) return;
+    let idToken = null;
+    try {
+        if (auth?.currentUser && typeof auth.currentUser.getIdToken === "function") {
+            idToken = await auth.currentUser.getIdToken();
+        }
+    } catch (_) {}
+    targetSocket.emit("login_user", {
+        email: userObj.email || null,
+        name: userObj.displayName || userObj.name || (userObj.email ? userObj.email.split("@")[0] : "TV User"),
+        authUid: userObj.uid || null,
+        uid: my10DigitUid || userObj.zingUid || null,
+        idToken,
+        sessionToken: userObj.sessionToken || null,
+        isAnonymous: Boolean(userObj.isAnonymous),
+        isGuest: Boolean(userObj.isAnonymous),
+        platform: "Fire TV",
+        contacts: myContacts
+    });
+}
+
+async function refreshIceServers(force = false) {
+    const now = Date.now();
+    if (!force && lastIceFetchAt && (now - lastIceFetchAt) < 15 * 60 * 1000) return;
+    if (socket && socket.connected) {
+        await new Promise((resolve) => {
+            let done = false;
+            const timer = setTimeout(() => { if (!done) { done = true; resolve(); } }, 1200);
+            try {
+                socket.emit("request_turn_credentials", {}, (res) => {
+                    if (!done) {
+                        done = true;
+                        clearTimeout(timer);
+                        if (res && res.ok && Array.isArray(res.iceServers)) {
+                            rtcConfig.iceServers = res.iceServers;
+                            lastIceFetchAt = Date.now();
+                        }
+                        resolve();
+                    }
+                });
+            } catch (_) {
+                if (!done) { done = true; clearTimeout(timer); resolve(); }
+            }
+        });
+        return;
+    }
+    const token = currentUser?.sessionToken;
+    if (!token) return;
+    try {
+        const res = await fetch(`${getEffectiveServerUrl()}/api/turn-credentials`, {
+            headers: { "x-zing-session": token },
+            cache: "no-store"
+        });
+        if (res.ok) {
+            const payload = await res.json();
+            if (payload && Array.isArray(payload.iceServers)) {
+                rtcConfig.iceServers = payload.iceServers;
+                lastIceFetchAt = Date.now();
+            }
+        }
+    } catch (_) {}
+}
 
 // Clean in-memory user states (isolated per user UID)
 let myContacts = [];
@@ -807,16 +881,7 @@ function loginUserSession(user) {
     }
 
     if (socket && socket.connected) {
-        socket.emit("login_user", {
-            email: user.email,
-            name: displayName,
-            authUid: user.uid,
-            uid: my10DigitUid || user.zingUid,
-            isAnonymous: Boolean(user.isAnonymous),
-            isGuest: Boolean(user.isAnonymous),
-            platform: "Fire TV",
-            contacts: myContacts
-        });
+        emitAuthenticatedLogin(socket, user);
         if (my10DigitUid) {
             socket.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
             requestTvPairingCode(false);
@@ -970,20 +1035,7 @@ export function registerSocketListeners(s) {
 
         // Only emit login_user if an actual user session is active!
         if (currentUser) {
-            const displayName = currentUser.displayName || currentUser.name || "TV User";
-            const email = currentUser.email || null;
-            const authUid = currentUser.uid || null;
-
-            s.emit("login_user", {
-                email: email,
-                name: displayName,
-                authUid: authUid,
-                uid: my10DigitUid || currentUser.zingUid,
-                platform: "Fire TV",
-                isAnonymous: Boolean(currentUser.isAnonymous),
-                isGuest: Boolean(currentUser.isAnonymous),
-                contacts: myContacts
-            });
+            emitAuthenticatedLogin(s, currentUser);
             if (my10DigitUid) {
                 s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
                 requestTvPairingCode(false);
@@ -1006,15 +1058,26 @@ export function registerSocketListeners(s) {
         updateServerStatusBadge(false, "Connecting to AWS...");
     });
 
+    s.on("turn_credentials", (payload) => {
+        if (payload && Array.isArray(payload.iceServers)) {
+            rtcConfig.iceServers = payload.iceServers;
+            lastIceFetchAt = Date.now();
+        }
+    });
+
     s.on("user_data", (data) => {
         if (!currentUser) return;
         if (data && data.uid) {
             updateUidDisplays(data.uid);
             loadUserStorageData(data.uid);
             currentUser.zingUid = String(data.uid);
+            if (data.sessionToken) {
+                currentUser.sessionToken = data.sessionToken;
+            }
             persistSessionBackup("zingTalkTvSession", JSON.stringify(currentUser));
             saveUserUidToFirestore(currentUser, data.uid);
             requestTvPairingCode(false);
+            refreshIceServers(true);
         }
         renderContacts(myContacts);
         if (my10DigitUid && myContacts.length > 0) {
@@ -1402,6 +1465,7 @@ export function registerSocketListeners(s) {
         connectorIceCandidatesQueue = [];
 
         try {
+            await refreshIceServers();
             connectorPeerConnection = new RTCPeerConnection(rtcConfig);
             connectorPeerConnection.ontrack = (event) => {
                 const remote = document.getElementById("remote-video");
@@ -1531,7 +1595,7 @@ function renderContacts(contacts) {
         card.innerHTML = `
             <div class="tv-contact-info-block" style="flex: 1; min-width: 0;">
                 <div class="tv-avatar-circle" style="position: relative;">
-                    ${(contact.name || "U").charAt(0).toUpperCase()}
+                    ${escapeHtml((contact.name || "U").charAt(0).toUpperCase())}
                 </div>
                 <div style="flex: 1; min-width: 0; padding-right: 6px;">
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
@@ -1539,7 +1603,7 @@ function renderContacts(contacts) {
                         ${unread > 0 ? `<span class="tv-unread-pill" style="background: #00d29d; color: #081018; font-size: 11px; font-weight: 800; border-radius: 12px; padding: 2px 7px; min-width: 18px; text-align: center; box-shadow: 0 0 8px rgba(0,210,157,0.5);">${unread}</span>` : ''}
                     </div>
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-top: 2px;">
-                        <span class="tv-contact-uid-txt" style="font-size: 12px; opacity: 0.75;">UID: ${contact.uid}</span>
+                        <span class="tv-contact-uid-txt" style="font-size: 12px; opacity: 0.75;">UID: ${escapeHtml(contact.uid)}</span>
                         ${lastTime ? `<span style="font-size: 10px; color: ${unread > 0 ? '#00d29d' : 'rgba(255,255,255,0.45)'};">${escapeHtml(lastTime)}</span>` : ''}
                     </div>
                     ${lastText ? `<div class="tv-contact-last-msg" style="font-size: 12px; color: ${unread > 0 ? '#00e5aa' : 'rgba(255,255,255,0.6)'}; font-weight: ${unread > 0 ? '600' : '400'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px;">${unread > 0 ? '💬 ' : ''}${escapeHtml(lastText.slice(0, 32))}</div>` : ''}
@@ -1725,7 +1789,7 @@ function appendMessage(data, type) {
     div.className = `tv-msg ${type === 'msg-sent' ? 'tv-msg-sent' : 'tv-msg-received'}`;
     div.innerHTML = `
         <div>${escapeHtml(data.text)}</div>
-        <div class="tv-msg-meta">${data.timestamp || ''}</div>
+        <div class="tv-msg-meta">${escapeHtml(data.timestamp || '')}</div>
     `;
     area.appendChild(div);
     area.scrollTop = area.scrollHeight;
@@ -2109,6 +2173,7 @@ async function startWebRTC(isCaller) {
         }
     }
 
+    await refreshIceServers();
     peerConnection = new RTCPeerConnection(rtcConfig);
     isStartingWebRTC = false;
 

@@ -37,14 +37,32 @@ try {
 
 const DUCKDNS_SIGNALING_URL = "https://zingtalk.duckdns.org";
 
+export function sanitizeServerUrl(rawUrl, fallbackUrl = DUCKDNS_SIGNALING_URL) {
+    if (!rawUrl || typeof rawUrl !== "string") return fallbackUrl;
+    const trimmed = rawUrl.trim();
+    if (!trimmed || /^javascript:/i.test(trimmed) || /^data:/i.test(trimmed)) return fallbackUrl;
+    try {
+        const parsed = new URL(trimmed);
+        const host = parsed.hostname.toLowerCase();
+        const isLocal = host === "localhost" || host === "127.0.0.1";
+        if (parsed.protocol === "https:" && (host === "zingtalk.duckdns.org" || isLocal || host.endsWith(".run.app") || host.endsWith(".ai.studio"))) {
+            return parsed.origin;
+        }
+        if (parsed.protocol === "http:" && isLocal) {
+            return parsed.origin;
+        }
+    } catch (_) {}
+    return fallbackUrl;
+}
+
 export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
-    if (saved && saved.trim()) return saved.trim();
+    if (saved && saved.trim()) return sanitizeServerUrl(saved.trim(), DUCKDNS_SIGNALING_URL);
     if (typeof window !== "undefined" && window.location) {
         const h = window.location.host || "";
         const p = window.location.protocol || "";
         if (p.startsWith("http") && (h.includes(":3000") || h.includes("run.app") || h.includes("ai.studio") || h.includes("duckdns"))) {
-            return window.location.origin;
+            return sanitizeServerUrl(window.location.origin, DUCKDNS_SIGNALING_URL);
         }
     }
     return DUCKDNS_SIGNALING_URL;
@@ -104,21 +122,78 @@ export async function saveUserUidToFirestore(user, uid) {
     } catch (_) {}
 }
 
+// Ephemeral TURN credentials are fetched dynamically from the authenticated server (no static secrets in APK)
 const rtcConfig = {
     iceServers: [
         { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
-        { urls: ["stun:zingtalk.duckdns.org:3478"] },
-        {
-            urls: [
-                "turn:zingtalk.duckdns.org:3478?transport=udp",
-                "turn:zingtalk.duckdns.org:3478?transport=tcp"
-            ],
-            username: "zingtalk",
-            credential: "zingtalkpassword"
-        }
+        { urls: ["stun:zingtalk.duckdns.org:3478"] }
     ],
     iceCandidatePoolSize: 10
 };
+
+let lastIceFetchAt = 0;
+async function emitAuthenticatedMobileLogin(targetSocket, userObj) {
+    if (!targetSocket || !targetSocket.connected || !userObj) return;
+    let idToken = null;
+    try {
+        if (auth?.currentUser && typeof auth.currentUser.getIdToken === "function") {
+            idToken = await auth.currentUser.getIdToken();
+        }
+    } catch (_) {}
+    targetSocket.emit("login_user", {
+        email: userObj.email || null,
+        name: userObj.displayName || "Mobile User",
+        authUid: userObj.uid || null,
+        uid: my10DigitUid || userObj.zingUid || null,
+        idToken,
+        sessionToken: userObj.sessionToken || null,
+        isGuest: !userObj.email,
+        platform: "Mobile",
+        contacts: myContacts
+    });
+}
+
+async function refreshIceServers(force = false) {
+    const now = Date.now();
+    if (!force && lastIceFetchAt && (now - lastIceFetchAt) < 15 * 60 * 1000) return;
+    if (socket && socket.connected) {
+        await new Promise((resolve) => {
+            let done = false;
+            const timer = setTimeout(() => { if (!done) { done = true; resolve(); } }, 1200);
+            try {
+                socket.emit("request_turn_credentials", {}, (res) => {
+                    if (!done) {
+                        done = true;
+                        clearTimeout(timer);
+                        if (res && res.ok && Array.isArray(res.iceServers)) {
+                            rtcConfig.iceServers = res.iceServers;
+                            lastIceFetchAt = Date.now();
+                        }
+                        resolve();
+                    }
+                });
+            } catch (_) {
+                if (!done) { done = true; clearTimeout(timer); resolve(); }
+            }
+        });
+        return;
+    }
+    const token = currentUser?.sessionToken;
+    if (!token) return;
+    try {
+        const res = await fetch(`${getEffectiveServerUrl()}/api/turn-credentials`, {
+            headers: { "x-zing-session": token },
+            cache: "no-store"
+        });
+        if (res.ok) {
+            const payload = await res.json();
+            if (payload && Array.isArray(payload.iceServers)) {
+                rtcConfig.iceServers = payload.iceServers;
+                lastIceFetchAt = Date.now();
+            }
+        }
+    } catch (_) {}
+}
 
 let currentUser = null;
 let my10DigitUid = null;
@@ -722,15 +797,7 @@ function connectSocket() {
     const serverUrl = getEffectiveServerUrl();
     if (socket && socket.connected) {
         if (currentUser) {
-            socket.emit("login_user", {
-                email: currentUser.email,
-                name: currentUser.displayName,
-                authUid: currentUser.uid,
-                uid: my10DigitUid || currentUser.zingUid,
-                isGuest: !currentUser.email,
-                platform: "Mobile",
-                contacts: myContacts
-            });
+            emitAuthenticatedMobileLogin(socket, currentUser);
         }
         return;
     }
@@ -756,18 +823,17 @@ function connectSocket() {
 
     socket.on("connect", () => {
         if (currentUser) {
-            socket.emit("login_user", {
-                email: currentUser.email,
-                name: currentUser.displayName,
-                authUid: currentUser.uid,
-                uid: my10DigitUid || currentUser.zingUid,
-                isGuest: !currentUser.email,
-                platform: "Mobile",
-                contacts: myContacts
-            });
+            emitAuthenticatedMobileLogin(socket, currentUser);
             if (my10DigitUid && myContacts.length > 0) {
                 socket.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
             }
+        }
+    });
+
+    socket.on("turn_credentials", (payload) => {
+        if (payload && Array.isArray(payload.iceServers)) {
+            rtcConfig.iceServers = payload.iceServers;
+            lastIceFetchAt = Date.now();
         }
     });
 
@@ -777,9 +843,13 @@ function connectSocket() {
             loadContacts();
             if (currentUser) {
                 currentUser.zingUid = data.uid;
+                if (data.sessionToken) {
+                    currentUser.sessionToken = data.sessionToken;
+                }
                 localStorage.setItem("zingTalkMobileSession", JSON.stringify(currentUser));
                 saveUserUidToFirestore(currentUser, data.uid);
             }
+            refreshIceServers(true);
             if (myContacts.length > 0) {
                 socket.emit("sync_contacts", { uid: data.uid, contacts: myContacts });
             }
@@ -971,6 +1041,7 @@ function connectSocket() {
         connectorIceCandidatesQueue = [];
 
         try {
+            await refreshIceServers();
             connectorPeerConnection = new RTCPeerConnection(rtcConfig);
 
             connectorPeerConnection.ontrack = (event) => {
@@ -1150,6 +1221,7 @@ async function switchCamera() {
 }
 
 async function setupPeerConnection() {
+    await refreshIceServers();
     peerConnection = new RTCPeerConnection(rtcConfig);
     if (localStream) {
         localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));

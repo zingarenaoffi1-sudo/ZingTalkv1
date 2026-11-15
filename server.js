@@ -42,6 +42,83 @@ loadEnvFile();
 const { Server } = require('socket.io');
 const admin = require('firebase-admin');
 let normalizeUid, normalizePairCode, SplitMeshRegistry;
+let timingSafeEqualHex, FixedWindowRateLimiter, issueSessionToken, verifySessionToken, generateTurnCredentials, isCorsOriginAllowed, validateAlexaWebhookRequest;
+try {
+    ({ timingSafeEqualHex, FixedWindowRateLimiter, issueSessionToken, verifySessionToken, generateTurnCredentials, isCorsOriginAllowed, validateAlexaWebhookRequest } = require('./lib/security'));
+} catch (_) {
+    timingSafeEqualHex = (a, b) => {
+        if (typeof a !== 'string' || typeof b !== 'string') return false;
+        const ca = a.trim().toLowerCase(), cb = b.trim().toLowerCase();
+        if (!ca || ca.length !== cb.length || ca.length % 2 !== 0) return false;
+        try { return crypto.timingSafeEqual(Buffer.from(ca, 'hex'), Buffer.from(cb, 'hex')); } catch (_) { return false; }
+    };
+    FixedWindowRateLimiter = class {
+        constructor({ windowMs = 60000, maxRequests = 10 } = {}) {
+            this.windowMs = windowMs; this.maxRequests = maxRequests; this.buckets = new Map();
+        }
+        check(key, cost = 1) {
+            const k = String(key || 'anon'), now = Date.now();
+            if (this.buckets.size > 5000) this.buckets.clear();
+            let e = this.buckets.get(k);
+            if (!e || now >= e.resetAt) { e = { count: 0, resetAt: now + this.windowMs }; this.buckets.set(k, e); }
+            if (e.count + cost > this.maxRequests) return { allowed: false, remaining: 0, retryAfterSeconds: Math.max(1, Math.ceil((e.resetAt - now) / 1000)) };
+            e.count += cost;
+            return { allowed: true, remaining: this.maxRequests - e.count, retryAfterSeconds: 0 };
+        }
+        reset(key) { this.buckets.delete(String(key || 'anon')); }
+    };
+    issueSessionToken = (payload, secret, ttlMs = 30 * 24 * 3600 * 1000) => {
+        const now = Date.now();
+        const enc = Buffer.from(JSON.stringify({ ...payload, iat: now, exp: now + ttlMs }), 'utf8').toString('base64url');
+        const sig = crypto.createHmac('sha256', secret).update(enc).digest('base64url');
+        return `${enc}.${sig}`;
+    };
+    verifySessionToken = (token, secret) => {
+        if (!token || typeof token !== 'string' || !secret) return null;
+        const parts = token.split('.');
+        if (parts.length !== 2) return null;
+        const expected = crypto.createHmac('sha256', secret).update(parts[0]).digest('base64url');
+        try {
+            if (parts[1].length !== expected.length || !crypto.timingSafeEqual(Buffer.from(parts[1]), Buffer.from(expected))) return null;
+            const parsed = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+            return parsed && typeof parsed.exp === 'number' && Date.now() <= parsed.exp ? parsed : null;
+        } catch (_) { return null; }
+    };
+    generateTurnCredentials = (uid, secret, ttlSeconds = 3600) => {
+        const cleanUid = String(uid || 'guest').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || 'guest';
+        const exp = Math.floor(Date.now() / 1000) + Math.max(60, ttlSeconds);
+        const username = `${exp}:${cleanUid}`;
+        const credential = crypto.createHmac('sha1', String(secret)).update(username).digest('base64');
+        return { urls: ['turn:zingtalk.duckdns.org:3478?transport=udp', 'turn:zingtalk.duckdns.org:3478?transport=tcp'], username, credential, ttlSeconds, expiresAt: exp * 1000, mode: 'hmac-ephemeral' };
+    };
+    isCorsOriginAllowed = (origin) => {
+        if (!origin) return true;
+        if (origin === 'null') return false;
+        const t = String(origin).trim();
+        if (t === 'capacitor://localhost' || t === 'ionic://localhost') return true;
+        try {
+            const u = new URL(t); const h = u.hostname.toLowerCase();
+            if (h === 'localhost' || h === '127.0.0.1') return u.protocol === 'http:' || u.protocol === 'https:';
+            return u.protocol === 'https:' && (h === 'zingtalk.duckdns.org' || h.endsWith('.run.app') || h.endsWith('.ai.studio'));
+        } catch (_) { return false; }
+    };
+    validateAlexaWebhookRequest = (headers = {}, body = {}, { expectedSkillId = '', requireCertUrl = false } = {}) => {
+        if (!body || typeof body !== 'object' || !body.request || typeof body.request !== 'object') return { ok: false, reason: 'Malformed Alexa request.' };
+        if (body.request.timestamp) {
+            const ts = Date.parse(body.request.timestamp);
+            if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > 150000) return { ok: false, reason: 'Invalid or expired Alexa timestamp.' };
+        } else if (requireCertUrl) return { ok: false, reason: 'Missing Alexa timestamp.' };
+        if (expectedSkillId && (body.session?.application?.applicationId || body.context?.System?.application?.applicationId) !== expectedSkillId) return { ok: false, reason: 'Skill ID mismatch.' };
+        const cert = headers['signaturecertchainurl'] || headers['SignatureCertChainUrl'] || '';
+        if (cert) {
+            try {
+                const u = new URL(String(cert));
+                if (u.protocol !== 'https:' || u.hostname.toLowerCase() !== 's3.amazonaws.com' || !u.pathname.startsWith('/echo.api/')) return { ok: false, reason: 'Untrusted Alexa cert URL.' };
+            } catch (_) { return { ok: false, reason: 'Invalid Alexa cert URL.' }; }
+        } else if (requireCertUrl) return { ok: false, reason: 'Missing Alexa cert URL.' };
+        return { ok: true };
+    };
+}
 try {
     ({ normalizeUid, normalizePairCode, SplitMeshRegistry } = require('./lib/split-mesh'));
 } catch (_) {
@@ -104,19 +181,17 @@ try {
             this._purgeExpiredCodes();
             if (!connectorSocketId) return { ok: false, error: 'Connector socket ID required.' };
             const cleanCode = normalizePairCode(code);
-            let resolvedTvUid = normalizeUid(tvUid);
-            let tvName = 'Fire TV';
-            if (cleanCode) {
-                const entry = this.codeToTv.get(cleanCode);
-                if (!entry) return { ok: false, error: 'Invalid or expired 6-digit Pairing Code. Open Phone Cam on your Fire TV for a fresh code.' };
-                resolvedTvUid = entry.tvUid;
-                tvName = entry.tvName || 'Fire TV';
-            } else if (resolvedTvUid) {
-                const mappedCode = this.tvToCode.get(resolvedTvUid);
-                if (mappedCode && this.codeToTv.has(mappedCode)) tvName = this.codeToTv.get(mappedCode).tvName || 'Fire TV';
-            } else {
-                return { ok: false, error: 'Enter a valid 6-digit Pairing Code or 10-digit Fire TV UID.' };
+            const suppliedTvUid = normalizeUid(tvUid);
+            if (!cleanCode) {
+                return { ok: false, error: 'Valid 6-digit Pairing Code shown on your Fire TV is required to pair securely.' };
             }
+            const entry = this.codeToTv.get(cleanCode);
+            if (!entry) return { ok: false, error: 'Invalid or expired 6-digit Pairing Code. Open Phone Cam on your Fire TV for a fresh code.' };
+            const resolvedTvUid = entry.tvUid;
+            if (suppliedTvUid && suppliedTvUid !== resolvedTvUid) {
+                return { ok: false, error: 'Pairing Code does not match the entered 10-digit Fire TV UID.' };
+            }
+            const tvName = entry.tvName || 'Fire TV';
             if (!isTvOnlineFn(resolvedTvUid)) return { ok: false, error: `Fire TV [${resolvedTvUid}] is currently offline. Open ZingTalk TV on your TV first.` };
             const prevTv = this.connectorToTv.get(connectorSocketId);
             if (prevTv && prevTv !== resolvedTvUid) this.unpairByConnector(connectorSocketId);
@@ -229,21 +304,63 @@ try {
 } catch (_) {}
 
 const app = express();
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "*",
+        origin: (origin, callback) => {
+            if (isCorsOriginAllowed(origin)) return callback(null, true);
+            return callback(new Error('Origin not allowed by ZingTalk CORS policy'));
+        },
         methods: ["GET", "POST"]
     },
-    maxHttpBufferSize: 5e7 // 50MB for zero-server media file sharing
+    maxHttpBufferSize: 2e6 // 2MB cap prevents memory exhaustion DoS while keeping signaling payloads fast
 });
 
-// JSON & URL-encoded body parser for Alexa webhook requests
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Standard Security Headers & Scoped API CORS Middleware
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self)');
 
-// Global connected users registry (UID -> socket.id)
+    const origin = req.headers.origin;
+    if (origin && isCorsOriginAllowed(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-token, x-zing-session, Authorization');
+    }
+    if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+    }
+    return next();
+});
+
+// JSON & URL-encoded body parser with strict size limits
+app.use(express.json({ limit: '512kb' }));
+app.use(express.urlencoded({ extended: true, limit: '256kb' }));
+
+// Rate limiters & Server Session / TURN Secret helpers
+const adminVerifyLimiter = new FixedWindowRateLimiter({ windowMs: 15 * 60 * 1000, maxRequests: 5 });
+const resetPasswordLimiter = new FixedWindowRateLimiter({ windowMs: 15 * 60 * 1000, maxRequests: 3 });
+const resetEmailCooldown = new FixedWindowRateLimiter({ windowMs: 60 * 1000, maxRequests: 1 });
+const turnApiLimiter = new FixedWindowRateLimiter({ windowMs: 60 * 1000, maxRequests: 25 });
+const alexaWebhookLimiter = new FixedWindowRateLimiter({ windowMs: 60 * 1000, maxRequests: 60 });
+const socketPairLimiter = new FixedWindowRateLimiter({ windowMs: 5 * 60 * 1000, maxRequests: 10 });
+const socketBurstLimiter = new FixedWindowRateLimiter({ windowMs: 10 * 1000, maxRequests: 80 });
+
+function getClientIp(req) {
+    const fwd = req.headers['x-forwarded-for'];
+    if (typeof fwd === 'string' && fwd.trim()) {
+        return fwd.split(',')[0].trim();
+    }
+    return req.ip || req.socket?.remoteAddress || 'unknown';
+}
+
+// Global connected users registry (UID -> socket.id), active calls, and Split-Mesh registry
 const connectedUsers = new Map();
+const globalActiveCallPeers = new Map(); // uid -> { peerUid, callType, callerName }
 const splitMesh = new SplitMeshRegistry();
 
 // ==========================================================================
@@ -460,9 +577,69 @@ const ADMIN_LEVEL_HASHES = [
 
 const adminSessions = new Map(); // token -> { expires: timestamp }
 
+function getServerSessionSecret() {
+    if (process.env.SESSION_SECRET && process.env.SESSION_SECRET.trim().length >= 16) {
+        return process.env.SESSION_SECRET.trim();
+    }
+    const seed = [
+        process.env.FIREBASE_PRIVATE_KEY || '',
+        process.env.FIREBASE_CLIENT_EMAIL || '',
+        ...ADMIN_LEVEL_HASHES
+    ].join('|');
+    return crypto.createHash('sha256').update(seed).digest('hex');
+}
+
+function buildIceServersPayload(uidLabel = 'guest') {
+    const iceServers = [
+        {
+            urls: [
+                'stun:stun.l.google.com:19302',
+                'stun:stun1.l.google.com:19302',
+                'stun:stun2.l.google.com:19302'
+            ]
+        },
+        { urls: ['stun:zingtalk.duckdns.org:3478'] }
+    ];
+
+    const turnSecret = (process.env.TURN_AUTH_SECRET || '').trim();
+    if (turnSecret) {
+        const dyn = generateTurnCredentials(uidLabel, turnSecret, 3600);
+        iceServers.push({
+            urls: dyn.urls,
+            username: dyn.username,
+            credential: dyn.credential
+        });
+    } else if (process.env.TURN_USER && process.env.TURN_PASS) {
+        iceServers.push({
+            urls: [
+                'turn:zingtalk.duckdns.org:3478?transport=udp',
+                'turn:zingtalk.duckdns.org:3478?transport=tcp'
+            ],
+            username: process.env.TURN_USER,
+            credential: process.env.TURN_PASS
+        });
+    }
+
+    return {
+        iceServers,
+        ttlSeconds: 3600,
+        mode: turnSecret ? 'hmac-ephemeral' : ((process.env.TURN_USER && process.env.TURN_PASS) ? 'server-env-turn' : 'stun-only')
+    };
+}
+
 app.post('/api/admin/verify-gate', (req, res) => {
     try {
-        const { level, key } = req.body;
+        const ip = getClientIp(req);
+        const rateCheck = adminVerifyLimiter.check(`admin:${ip}`, 0);
+        if (!rateCheck.allowed) {
+            res.setHeader('Retry-After', String(rateCheck.retryAfterSeconds));
+            return res.status(429).json({
+                success: false,
+                message: `Too many failed attempts. Try again in ${rateCheck.retryAfterSeconds}s.`
+            });
+        }
+
+        const { level, key } = req.body || {};
         const lvl = parseInt(level, 10);
         if (!lvl || lvl < 1 || lvl > 3 || !key) {
             return res.status(400).json({ success: false, message: 'Invalid verification parameters' });
@@ -471,13 +648,22 @@ app.post('/api/admin/verify-gate', (req, res) => {
         const inputHash = crypto.createHash('sha256').update(String(key).trim()).digest('hex');
         const expectedHash = ADMIN_LEVEL_HASHES[lvl - 1];
 
-        if (inputHash !== expectedHash) {
+        if (!timingSafeEqualHex(inputHash, expectedHash)) {
+            const penalty = adminVerifyLimiter.check(`admin:${ip}`, 1);
+            if (!penalty.allowed) {
+                res.setHeader('Retry-After', String(penalty.retryAfterSeconds));
+                return res.status(429).json({
+                    success: false,
+                    message: `Too many failed attempts. Locked for ${penalty.retryAfterSeconds}s.`
+                });
+            }
             return res.status(401).json({ success: false, message: `Invalid security key for Level ${lvl}` });
         }
 
         if (lvl < 3) {
             return res.json({ success: true, nextLevel: lvl + 1 });
         } else {
+            adminVerifyLimiter.reset(`admin:${ip}`);
             // Level 3 Verified! Generate secure 24-hour admin session token
             const token = crypto.randomBytes(32).toString('hex');
             adminSessions.set(token, { expires: Date.now() + 24 * 60 * 60 * 1000 });
@@ -489,8 +675,11 @@ app.post('/api/admin/verify-gate', (req, res) => {
 });
 
 app.get('/api/admin/analytics', (req, res) => {
-    const token = req.query.token || req.headers['x-admin-token'];
+    const authHeader = req.headers['authorization'];
+    const bearerToken = (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) ? authHeader.slice(7).trim() : '';
+    const token = req.headers['x-admin-token'] || bearerToken || req.query.token;
     if (!token || !adminSessions.has(token) || adminSessions.get(token).expires < Date.now()) {
+        if (token && adminSessions.has(token)) adminSessions.delete(token);
         return res.status(401).json({ success: false, message: 'Unauthorized. Security gate clearance required.' });
     }
     return res.json({
@@ -501,9 +690,24 @@ app.get('/api/admin/analytics', (req, res) => {
 });
 
 app.post('/api/admin/logout', (req, res) => {
-    const token = req.body.token || req.headers['x-admin-token'];
+    const token = req.headers['x-admin-token'] || req.body?.token;
     if (token) adminSessions.delete(token);
     return res.json({ success: true, message: 'Admin session closed' });
+});
+
+app.get('/api/turn-credentials', (req, res) => {
+    const ip = getClientIp(req);
+    const rate = turnApiLimiter.check(`turn:${ip}`, 1);
+    if (!rate.allowed) {
+        res.setHeader('Retry-After', String(rate.retryAfterSeconds));
+        return res.status(429).json({ success: false, message: 'Rate limit exceeded for TURN credentials.' });
+    }
+    const sessionToken = req.headers['x-zing-session'] || (typeof req.headers.authorization === 'string' && req.headers.authorization.startsWith('Bearer ') ? req.headers.authorization.slice(7).trim() : '');
+    const verified = verifySessionToken(sessionToken, getServerSessionSecret());
+    if (!verified || !verified.uid) {
+        return res.status(401).json({ success: false, message: 'Valid ZingTalk session required for TURN credentials.' });
+    }
+    return res.json({ success: true, ...buildIceServersPayload(verified.uid) });
 });
 
 // Health check endpoint for AWS EC2 & load balancer monitoring
@@ -681,12 +885,31 @@ function generateZingTalkResetEmailHtml(data) {
 </html>`;
 }
 
-// Custom Password Reset Endpoint: Dispatches branded email via Brevo SMTP
+// Custom Password Reset Endpoint: Dispatches branded email via Brevo SMTP (Rate-limited)
 app.post('/api/auth/custom-reset-password', async (req, res) => {
     try {
+        const ip = getClientIp(req);
+        const ipRate = resetPasswordLimiter.check(`reset-ip:${ip}`, 1);
+        if (!ipRate.allowed) {
+            res.setHeader('Retry-After', String(ipRate.retryAfterSeconds));
+            return res.status(429).json({
+                success: false,
+                message: `Too many password reset requests. Please wait ${ipRate.retryAfterSeconds}s.`
+            });
+        }
+
         const email = req.body && req.body.email ? String(req.body.email).trim().toLowerCase() : '';
         if (!email || !email.includes('@')) {
             return res.status(400).json({ success: false, message: 'A valid email address is required.' });
+        }
+
+        const emailRate = resetEmailCooldown.check(`reset-email:${email}`, 1);
+        if (!emailRate.allowed) {
+            res.setHeader('Retry-After', String(emailRate.retryAfterSeconds));
+            return res.status(429).json({
+                success: false,
+                message: `Reset link already sent recently. Please wait ${emailRate.retryAfterSeconds}s.`
+            });
         }
 
         // 1. Check if Firebase Admin is available to generate cryptographic reset link
@@ -769,12 +992,20 @@ app.post('/api/auth/custom-reset-password', async (req, res) => {
     }
 });
 
-// Serve static frontend assets for TV, Mobile, and Web (Disable auto-index so root / renders Server Status Panel)
-app.use(express.static(__dirname, { index: false }));
+// Serve ONLY explicit safe public asset & SPA directories (Never expose __dirname secrets/keystores/Firebase_Admin_SDK)
 app.use('/public', express.static(path.join(__dirname, 'public')));
+app.use('/assets', express.static(path.join(__dirname, 'assets')));
+app.use('/screenshots', express.static(path.join(__dirname, 'screenshots')));
 app.use('/tv', express.static(path.join(__dirname, 'packages', 'tv')));
 app.use('/mobile', express.static(path.join(__dirname, 'packages', 'mobile')));
 app.use('/connector', express.static(path.join(__dirname, 'packages', 'connector')));
+['/socket.io.min.js', '/manifest.json', '/capacitor.js', '/service-worker.js', '/qr.js', '/style.css', '/app.js'].forEach((filePath) => {
+    app.get(filePath, (req, res, next) => {
+        const full = path.join(__dirname, filePath.slice(1));
+        if (fs.existsSync(full)) return res.sendFile(full);
+        return next();
+    });
+});
 
 // In-Memory Database Fallback for users and contacts
 const inMemoryUsers = new Map();
@@ -1145,20 +1376,52 @@ io.on('connection', (socket) => {
         }
     };
 
+    const socketClientIp = socket.handshake?.headers?.['x-forwarded-for']?.split(',')[0]?.trim() || socket.handshake?.address || socket.id;
+    socket.use((packet, next) => {
+        const burst = socketBurstLimiter.check(`sock:${socket.id}`, 1);
+        if (!burst.allowed) {
+            return next(new Error('Rate limit exceeded'));
+        }
+        return next();
+    });
+
     socket.on('login_user', async (data) => {
         try {
             if (!data) data = {};
-            let uid;
+            const sessionSecret = getServerSessionSecret();
             let usersRef = db.collection('users');
 
-            // 1. Look up existing user record by email or Firebase authUid in Firestore
+            // 1. Verify Firebase ID Token (when supplied & Firebase Admin active) OR HMAC Session Token
+            let verifiedClaims = null;
+            if (data.idToken && typeof data.idToken === 'string' && admin && admin.apps && admin.apps.length > 0) {
+                try {
+                    verifiedClaims = await admin.auth().verifyIdToken(data.idToken);
+                } catch (tokenErr) {
+                    console.warn('[ZingTalk Auth] Invalid Firebase ID Token rejected:', tokenErr.message);
+                    socket.emit('login_error', { message: 'Authentication token invalid or expired. Please sign in again.' });
+                    return;
+                }
+            }
+
+            const tokenSession = data.sessionToken ? verifySessionToken(data.sessionToken, sessionSecret) : null;
+
+            const isFirebaseGuest = Boolean(verifiedClaims && verifiedClaims.firebase?.sign_in_provider === 'anonymous');
+            const isVerifiedEmailUser = Boolean(verifiedClaims && !isFirebaseGuest && verifiedClaims.email);
+
+            const cleanEmail = isVerifiedEmailUser
+                ? String(verifiedClaims.email).trim().toLowerCase()
+                : (data.email ? String(data.email).trim().toLowerCase() : '');
+            const cleanAuthUid = verifiedClaims
+                ? verifiedClaims.uid
+                : (data.authUid || null);
+
+            // 2. Look up existing user record by verified email or verified authUid
             let snapshot = { empty: true, docs: [] };
-            const cleanEmail = data.email ? String(data.email).trim().toLowerCase() : "";
             try {
-                if (cleanEmail) {
+                if (cleanEmail && !cleanEmail.endsWith('@zingtalk.local')) {
                     snapshot = await usersRef.where('email', '==', cleanEmail).get();
-                } else if (data.authUid && !data.isAnonymous && !data.isGuest) {
-                    snapshot = await usersRef.where('authUid', '==', data.authUid).get();
+                } else if (cleanAuthUid && !data.isAnonymous && !data.isGuest) {
+                    snapshot = await usersRef.where('authUid', '==', cleanAuthUid).get();
                 }
             } catch (fsErr) {
                 console.warn('[ZingTalk] Database query failed, falling back to memory store:', fsErr.message);
@@ -1167,34 +1430,82 @@ io.on('connection', (socket) => {
             }
 
             const existingDoc = !snapshot.empty ? snapshot.docs[0].data() : null;
-            const existingUid = existingDoc ? String(existingDoc.uid || "") : "";
+            const existingUid = existingDoc ? String(existingDoc.uid || '') : '';
 
-            if (existingUid && existingUid.length === 10) {
-                uid = existingUid;
-            } else if (data.uid && String(data.uid).replace(/\D/g, '').length === 10) {
-                uid = String(data.uid).replace(/\D/g, '');
-            } else if (cleanEmail) {
-                uid = computeDeterministic10DigitUid(cleanEmail);
-            } else if (data.authUid && !data.isAnonymous && !data.isGuest) {
-                uid = computeDeterministic10DigitUid(data.authUid);
-            } else {
-                uid = generate10DigitUid();
+            // 3. Anti-Hijack Ownership Guard:
+            //    If someone tries to claim a Firebase-registered account's email/authUid WITHOUT a verified idToken or matching sessionToken, reject!
+            const requiresTokenCheck = Boolean(
+                existingDoc &&
+                existingDoc.authUid &&
+                !existingDoc.isGuest &&
+                !String(existingDoc.email || '').endsWith('@zingtalk.local')
+            );
+            const hasValidTokenForExisting = Boolean(
+                (verifiedClaims && (!existingDoc?.authUid || existingDoc.authUid === verifiedClaims.uid || isVerifiedEmailUser)) ||
+                (tokenSession && tokenSession.uid === existingUid)
+            );
+            if (requiresTokenCheck && !hasValidTokenForExisting && admin && admin.apps && admin.apps.length > 0 && data.idToken !== undefined) {
+                socket.emit('login_error', { message: 'Account verification required. Please sign in with your password.' });
+                return;
             }
 
-            const clientName = (data.name && String(data.name).trim() && data.name !== "TV User" && data.name !== "Guest User")
-                ? String(data.name).trim()
-                : "";
-            const existingName = (existingDoc && existingDoc.name && existingDoc.name !== "TV User" && existingDoc.name !== "Guest User")
+            let uid = '';
+            if (tokenSession && tokenSession.uid && /^\d{10}$/.test(tokenSession.uid)) {
+                uid = tokenSession.uid;
+            } else if (verifiedClaims && existingUid && /^\d{10}$/.test(existingUid)) {
+                uid = existingUid;
+            } else if (verifiedClaims && isVerifiedEmailUser) {
+                uid = computeDeterministic10DigitUid(cleanEmail);
+            } else if (verifiedClaims && cleanAuthUid && !isFirebaseGuest) {
+                uid = computeDeterministic10DigitUid(cleanAuthUid);
+            } else if (existingUid && /^\d{10}$/.test(existingUid) && hasValidTokenForExisting) {
+                uid = existingUid;
+            } else if (data.uid && /^\d{10}$/.test(String(data.uid).replace(/\D/g, ''))) {
+                const candidateUid = String(data.uid).replace(/\D/g, '');
+                // Never let an unverified guest overwrite an online user's socket OR claim a registered non-guest UID
+                const alreadyOnlineElsewhere = connectedUsers.has(candidateUid) && connectedUsers.get(candidateUid) !== socket.id;
+                let existingOwnerDoc = null;
+                try {
+                    const snap = await usersRef.doc(candidateUid).get();
+                    if (snap && (snap.exists || (typeof snap.data === 'function' && snap.data()))) {
+                        existingOwnerDoc = snap.data();
+                    }
+                } catch (_) {}
+                const ownedByProtectedUser = Boolean(
+                    existingOwnerDoc &&
+                    existingOwnerDoc.authUid &&
+                    !existingOwnerDoc.isGuest &&
+                    !String(existingOwnerDoc.email || '').endsWith('@zingtalk.local')
+                );
+                if (!alreadyOnlineElsewhere && !ownedByProtectedUser) {
+                    uid = candidateUid;
+                }
+            } else if (cleanEmail && !data.isGuest && !data.isAnonymous && (!admin || !admin.apps || admin.apps.length === 0)) {
+                uid = computeDeterministic10DigitUid(cleanEmail);
+            }
+
+            if (!uid || !/^\d{10}$/.test(uid)) {
+                do {
+                    uid = generate10DigitUid();
+                } while (connectedUsers.has(uid));
+            }
+
+            const clientName = (data.name && String(data.name).trim() && data.name !== 'TV User' && data.name !== 'Guest User')
+                ? String(data.name).trim().slice(0, 60)
+                : '';
+            const existingName = (existingDoc && existingDoc.name && existingDoc.name !== 'TV User' && existingDoc.name !== 'Guest User')
                 ? existingDoc.name
-                : "";
-            const finalName = clientName || existingName || (cleanEmail ? cleanEmail.split('@')[0] : "Guest");
+                : '';
+            const finalName = clientName || existingName || (cleanEmail ? cleanEmail.split('@')[0] : 'Guest');
+            const isGuestSession = Boolean(data.isGuest || data.isAnonymous || isFirebaseGuest || !cleanEmail);
 
             const userObj = {
                 uid: uid,
-                authUid: data.authUid || (existingDoc ? existingDoc.authUid : null),
-                email: cleanEmail || (existingDoc ? existingDoc.email : (data.isGuest ? `guest_${uid}@zingtalk.local` : `user_${uid}@zingtalk.local`)),
+                authUid: cleanAuthUid || (existingDoc ? existingDoc.authUid : null),
+                email: cleanEmail || (existingDoc ? existingDoc.email : (isGuestSession ? `guest_${uid}@zingtalk.local` : `user_${uid}@zingtalk.local`)),
                 name: finalName,
                 displayName: finalName,
+                isGuest: isGuestSession,
                 updatedAt: Date.now()
             };
             await usersRef.doc(uid).set(userObj);
@@ -1203,6 +1514,19 @@ io.on('connection', (socket) => {
                     await db.collection('user_profiles').doc(userObj.authUid).set(userObj);
                 } catch (_) {}
             }
+
+            // If this socket previously held another UID, clean up the old binding cleanly
+            if (socket.data?.verifiedUid && socket.data.verifiedUid !== uid) {
+                if (connectedUsers.get(socket.data.verifiedUid) === socket.id) {
+                    connectedUsers.delete(socket.data.verifiedUid);
+                }
+                socket.leave(socket.data.verifiedUid);
+            }
+
+            socket.data = socket.data || {};
+            socket.data.verifiedUid = uid;
+            const issuedSessionToken = issueSessionToken({ uid, isGuest: isGuestSession }, sessionSecret);
+            socket.data.sessionToken = issuedSessionToken;
 
             connectedUsers.set(uid, socket.id);
             socket.join(uid);
@@ -1221,8 +1545,8 @@ io.on('connection', (socket) => {
                     socket.join(groupId);
                 }
             }
-            
-            socket.emit('user_data', userObj);
+
+            socket.emit('user_data', { ...userObj, sessionToken: issuedSessionToken });
 
             // Zero-Retention Delivery: Deliver buffered messages and immediately purge from RAM
             if (ephemeralMessageQueue.has(uid)) {
@@ -1238,11 +1562,14 @@ io.on('connection', (socket) => {
     // Sync Contacts (Stored strictly in volatile RAM for Alexa voice intent matching, ZERO Cloud Firestore storage)
     socket.on('sync_contacts', (data) => {
         try {
-            if (!data || !data.uid || !Array.isArray(data.contacts)) return;
-            const cleanUid = String(data.uid).trim().replace(/\D/g, '');
-            if (cleanUid.length !== 10) return;
-            userContactsRegistry.set(cleanUid, data.contacts);
-            console.log(`[ZingTalk] Contacts synced to volatile RAM for UID ${cleanUid} (${data.contacts.length} contacts, ZERO cloud retention)`);
+            const cleanUid = socket.data?.verifiedUid || resolveSocketUid();
+            if (!cleanUid || !data || !Array.isArray(data.contacts)) return;
+            const sanitizedContacts = data.contacts.slice(0, 500).map((c) => ({
+                uid: String(c?.uid || '').replace(/\D/g, '').slice(0, 10),
+                name: String(c?.name || '').trim().slice(0, 60)
+            })).filter((c) => c.uid.length === 10);
+            userContactsRegistry.set(cleanUid, sanitizedContacts);
+            console.log(`[ZingTalk] Contacts synced to volatile RAM for UID ${cleanUid} (${sanitizedContacts.length} contacts, ZERO cloud retention)`);
         } catch (err) {
             console.error('[ZingTalk] Error in sync_contacts:', err);
         }
@@ -1251,15 +1578,15 @@ io.on('connection', (socket) => {
     // Save Contact (Updates volatile in-memory registry for live Alexa matching, ZERO Cloud Firestore storage)
     socket.on('save_contact', (data) => {
         try {
-            if (!data || !data.myUid || !data.targetUid) return;
-            const myUid = String(data.myUid).trim().replace(/\D/g, '');
+            const myUid = socket.data?.verifiedUid || resolveSocketUid();
+            if (!myUid || !data || !data.targetUid) return;
             const targetUid = String(data.targetUid).trim().replace(/\D/g, '');
             if (myUid.length !== 10 || targetUid.length !== 10) return;
             let currentContacts = userContactsRegistry.get(myUid) || [];
             currentContacts = currentContacts.filter(c => c.uid !== targetUid);
             currentContacts.push({
                 uid: targetUid,
-                name: data.customName || `User ${targetUid}`
+                name: String(data.customName || `User ${targetUid}`).trim().slice(0, 60)
             });
             userContactsRegistry.set(myUid, currentContacts);
             socket.emit('contact_saved', currentContacts);
@@ -1271,8 +1598,8 @@ io.on('connection', (socket) => {
     // Delete Contact (Removes contact from volatile in-memory registry)
     socket.on('delete_contact', (data) => {
         try {
-            if (!data || !data.myUid || !data.targetUid) return;
-            const myUid = String(data.myUid).trim().replace(/\D/g, '');
+            const myUid = socket.data?.verifiedUid || resolveSocketUid();
+            if (!myUid || !data || !data.targetUid) return;
             const targetUid = String(data.targetUid).trim().replace(/\D/g, '');
             if (myUid.length !== 10 || targetUid.length !== 10) return;
             let currentContacts = userContactsRegistry.get(myUid) || [];
@@ -1284,19 +1611,23 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Block / Unblock Handlers
+    // Block / Unblock Handlers (Strictly bound to authenticated socket UID)
     socket.on('block_user', (data) => {
-        if (!data.blockerUid || !data.blockedUid) return;
-        if (!inMemoryBlocks.has(data.blockerUid)) {
-            inMemoryBlocks.set(data.blockerUid, new Set());
+        const blockerUid = socket.data?.verifiedUid || resolveSocketUid();
+        const blockedUid = normalizeUid(data?.blockedUid);
+        if (!blockerUid || !blockedUid) return;
+        if (!inMemoryBlocks.has(blockerUid)) {
+            inMemoryBlocks.set(blockerUid, new Set());
         }
-        inMemoryBlocks.get(data.blockerUid).add(data.blockedUid);
+        inMemoryBlocks.get(blockerUid).add(blockedUid);
     });
 
     socket.on('unblock_user', (data) => {
-        if (!data.blockerUid || !data.blockedUid) return;
-        if (inMemoryBlocks.has(data.blockerUid)) {
-            inMemoryBlocks.get(data.blockerUid).delete(data.blockedUid);
+        const blockerUid = socket.data?.verifiedUid || resolveSocketUid();
+        const blockedUid = normalizeUid(data?.blockedUid);
+        if (!blockerUid || !blockedUid) return;
+        if (inMemoryBlocks.has(blockerUid)) {
+            inMemoryBlocks.get(blockerUid).delete(blockedUid);
         }
     });
 
@@ -1359,14 +1690,21 @@ async function checkUserUidExists(targetUid) {
         if (!rawTarget) return;
 
         const targetUid = String(rawTarget).trim().replace(/\D/g, '');
-        const senderUid = data.senderUid ? String(data.senderUid).trim().replace(/\D/g, '') : '';
-
-        // Normalize data object so both receiverUid and targetUid are populated
-        data.receiverUid = targetUid;
-        data.targetUid = targetUid;
-        if (senderUid) {
-            data.senderUid = senderUid;
+        const authedUid = socket.data?.verifiedUid || resolveSocketUid();
+        if (!authedUid) {
+            socket.emit('message_error', { targetUid, message: 'Sign in required before sending messages.' });
+            return;
         }
+        const senderUid = authedUid;
+
+        // Normalize & sanitize payload with strict authenticated sender identity
+        const sanitizedPayload = {
+            ...data,
+            receiverUid: targetUid,
+            targetUid: targetUid,
+            senderUid: senderUid,
+            text: typeof data.text === 'string' ? data.text.slice(0, 4000) : ''
+        };
 
         // 1. Strict 10-digit UID format validation
         if (targetUid.length !== 10) {
@@ -1389,14 +1727,14 @@ async function checkUserUidExists(targetUid) {
         // 3. Block check: If receiver has blocked sender, do not deliver
         const receiverBlockedList = inMemoryBlocks.get(targetUid);
         if (receiverBlockedList && receiverBlockedList.has(senderUid)) {
-            socket.emit('message_status', { msgId: data.id, delivered: false });
+            socket.emit('message_status', { msgId: sanitizedPayload.id, delivered: false });
             return;
         }
 
         const isOnline = isUserOnline(targetUid);
         if (isOnline) {
-            sendSignalingEvent(targetUid, 'receive_message', data);
-            socket.emit('message_status', { msgId: data.id, delivered: true });
+            sendSignalingEvent(targetUid, 'receive_message', sanitizedPayload);
+            socket.emit('message_status', { msgId: sanitizedPayload.id, delivered: true });
         } else {
             // Buffer transiently in volatile RAM until recipient connects (WhatsApp single-tick offline queue)
             if (!ephemeralMessageQueue.has(targetUid)) {
@@ -1404,27 +1742,31 @@ async function checkUserUidExists(targetUid) {
             }
             const q = ephemeralMessageQueue.get(targetUid);
             if (q.length > 50) q.shift();
-            q.push(data);
-            socket.emit('message_status', { msgId: data.id, delivered: false, queued: true });
+            q.push(sanitizedPayload);
+            socket.emit('message_status', { msgId: sanitizedPayload.id, delivered: false, queued: true });
         }
     });
 
-    socket.on('message_seen', (data) => {
-        if (data && data.receiverUid && ephemeralMessageQueue.has(data.receiverUid)) {
-            ephemeralMessageQueue.delete(data.receiverUid);
+    socket.on('message_seen', () => {
+        const authedUid = socket.data?.verifiedUid || resolveSocketUid();
+        if (authedUid && ephemeralMessageQueue.has(authedUid)) {
+            ephemeralMessageQueue.delete(authedUid);
         }
     });
 
-    // Group Management
+    // Group Management (Authenticated + Membership-Verified)
     socket.on('create_group', (data) => {
         try {
+            const authedUid = socket.data?.verifiedUid || resolveSocketUid();
+            if (!authedUid || !data) return;
+            const rawMembers = Array.isArray(data.members) ? data.members.map((m) => normalizeUid(m)).filter(Boolean) : [];
             const groupId = Math.floor(1000000000 + Math.random() * 9000000000).toString();
             const newGroup = {
                 groupId,
-                name: data.name || "ZingTalk Group",
-                icon: data.icon || "👥",
-                creatorUid: data.creatorUid,
-                members: Array.from(new Set([data.creatorUid, ...(data.members || [])])),
+                name: String(data.name || 'ZingTalk Group').trim().slice(0, 60) || 'ZingTalk Group',
+                icon: String(data.icon || '👥').slice(0, 8),
+                creatorUid: authedUid,
+                members: Array.from(new Set([authedUid, ...rawMembers])).slice(0, 50),
                 createdAt: Date.now()
             };
             inMemoryGroups.set(groupId, newGroup);
@@ -1446,52 +1788,100 @@ async function checkUserUidExists(targetUid) {
     });
 
     socket.on('join_group_room', (groupId) => {
-        socket.join(groupId);
+        const authedUid = socket.data?.verifiedUid || resolveSocketUid();
+        const group = inMemoryGroups.get(String(groupId || ''));
+        if (!authedUid || !group || !Array.isArray(group.members) || !group.members.includes(authedUid)) {
+            return;
+        }
+        socket.join(group.groupId);
     });
 
     socket.on('send_group_message', (data) => {
-        io.to(data.groupId).emit('receive_group_message', data);
+        const authedUid = socket.data?.verifiedUid || resolveSocketUid();
+        const groupId = String(data?.groupId || '');
+        const group = inMemoryGroups.get(groupId);
+        if (!authedUid || !group || !Array.isArray(group.members) || !group.members.includes(authedUid)) {
+            return;
+        }
+        io.to(groupId).emit('receive_group_message', {
+            ...data,
+            groupId,
+            senderUid: authedUid,
+            text: typeof data?.text === 'string' ? data.text.slice(0, 4000) : ''
+        });
     });
 
     // Real-Time Typing Indicators
     socket.on('typing', (data) => {
+        const authedUid = socket.data?.verifiedUid || resolveSocketUid();
+        if (!authedUid || !data || !data.targetId) return;
+        const payload = { ...data, senderUid: authedUid };
         if (data.isGroup) {
-            socket.to(data.targetId).emit('user_typing', data);
+            const group = inMemoryGroups.get(String(data.targetId));
+            if (!group || !group.members.includes(authedUid)) return;
+            socket.to(group.groupId).emit('user_typing', payload);
         } else {
-            const targetBlockedList = inMemoryBlocks.get(data.targetId);
-            if (targetBlockedList && targetBlockedList.has(data.senderUid)) {
-                return;
-            }
-            sendSignalingEvent(data.targetId, 'user_typing', data);
+            const targetUid = normalizeUid(data.targetId);
+            if (!targetUid) return;
+            const targetBlockedList = inMemoryBlocks.get(targetUid);
+            if (targetBlockedList && targetBlockedList.has(authedUid)) return;
+            sendSignalingEvent(targetUid, 'user_typing', payload);
         }
     });
 
     socket.on('stop_typing', (data) => {
+        const authedUid = socket.data?.verifiedUid || resolveSocketUid();
+        if (!authedUid || !data || !data.targetId) return;
+        const payload = { ...data, senderUid: authedUid };
         if (data.isGroup) {
-            socket.to(data.targetId).emit('user_stop_typing', data);
+            const group = inMemoryGroups.get(String(data.targetId));
+            if (!group || !group.members.includes(authedUid)) return;
+            socket.to(group.groupId).emit('user_stop_typing', payload);
         } else {
-            sendSignalingEvent(data.targetId, 'user_stop_typing', data);
+            const targetUid = normalizeUid(data.targetId);
+            if (targetUid) sendSignalingEvent(targetUid, 'user_stop_typing', payload);
         }
     });
 
     // Message Reactions
     socket.on('send_reaction', (data) => {
+        const authedUid = socket.data?.verifiedUid || resolveSocketUid();
+        if (!authedUid || !data || !data.targetId) return;
+        const payload = { ...data, senderUid: authedUid };
         if (data.isGroup) {
-            io.to(data.targetId).emit('receive_reaction', data);
+            const group = inMemoryGroups.get(String(data.targetId));
+            if (!group || !group.members.includes(authedUid)) return;
+            io.to(group.groupId).emit('receive_reaction', payload);
         } else {
-            sendSignalingEvent(data.targetId, 'receive_reaction', data);
+            const targetUid = normalizeUid(data.targetId);
+            if (targetUid) sendSignalingEvent(targetUid, 'receive_reaction', payload);
         }
     });
 
     // Content Reporting
-    socket.on('report_content', (data) => {
+    socket.on('report_content', () => {
         socket.emit('report_ack', { status: 'success', message: 'Report submitted.' });
     });
 
-    // ----------------- Option 2: Split-Mesh Phone Camera & TV Remote Orchestration -----------------
-    const activeCallPeers = new Map(); // uid -> { peerUid, callType, tvAsCaller }
+    // Dynamic TURN / ICE Credentials Delivery (Zero static credentials inside APKs)
+    socket.on('request_turn_credentials', (_, ack) => {
+        const authedUid = socket.data?.verifiedUid || resolveSocketUid();
+        const pairedTv = splitMesh.getTvForConnector(socket.id);
+        const identity = authedUid || (pairedTv ? `conn_${pairedTv}` : '');
+        if (!identity) {
+            if (typeof ack === 'function') ack({ ok: false, error: 'Sign in or pair TV first.' });
+            return;
+        }
+        const payload = { ok: true, ...buildIceServersPayload(identity) };
+        socket.emit('turn_credentials', payload);
+        if (typeof ack === 'function') ack(payload);
+    });
 
+    // ----------------- Option 2: Split-Mesh Phone Camera & TV Remote Orchestration -----------------
     function resolveSocketUid() {
+        if (socket.data?.verifiedUid && connectedUsers.get(socket.data.verifiedUid) === socket.id) {
+            return socket.data.verifiedUid;
+        }
         for (const [u, sId] of connectedUsers.entries()) {
             if (sId === socket.id) return u;
         }
@@ -1541,7 +1931,7 @@ async function checkUserUidExists(targetUid) {
     }
 
     socket.on('tv_register_pairing', (data) => {
-        const tvUid = normalizeUid(data?.tvUid || resolveSocketUid());
+        const tvUid = normalizeUid(resolveSocketUid());
         if (!tvUid) {
             socket.emit('tv_pairing_error', { message: 'Sign in on Fire TV first to generate a pairing code.' });
             return;
@@ -1562,6 +1952,14 @@ async function checkUserUidExists(targetUid) {
     });
 
     socket.on('connector_pair', (data) => {
+        const pairRate = socketPairLimiter.check(`pair:${socketClientIp}:${socket.id}`, 1);
+        if (!pairRate.allowed) {
+            socket.emit('connector_pair_error', {
+                message: `Too many pairing attempts. Wait ${pairRate.retryAfterSeconds}s before trying again.`
+            });
+            return;
+        }
+
         const res = splitMesh.pairConnector({
             code: data?.code,
             tvUid: data?.tvUid,
@@ -1576,6 +1974,8 @@ async function checkUserUidExists(targetUid) {
             socket.emit('connector_pair_error', { message: res.error || 'Pairing failed.' });
             return;
         }
+
+        socketPairLimiter.reset(`pair:${socketClientIp}:${socket.id}`);
 
         if (res.replacedSocketId) {
             io.to(res.replacedSocketId).emit('connector_unpaired', {
@@ -1616,8 +2016,8 @@ async function checkUserUidExists(targetUid) {
         }
     });
 
-    socket.on('tv_unpair_connector', (data) => {
-        const tvUid = normalizeUid(data?.tvUid || resolveSocketUid());
+    socket.on('tv_unpair_connector', () => {
+        const tvUid = normalizeUid(resolveSocketUid());
         if (!tvUid) return;
         const removed = splitMesh.unpairByTv(tvUid);
         if (removed) {
@@ -1630,32 +2030,32 @@ async function checkUserUidExists(targetUid) {
     });
 
     socket.on('connector_media_state', (data) => {
-        const tvUid = splitMesh.getTvForConnector(socket.id) || normalizeUid(data?.tvUid);
+        const tvUid = splitMesh.getTvForConnector(socket.id);
         if (!tvUid) return;
         sendSignalingEvent(tvUid, 'tv_connector_media_state', {
             tvUid,
             micMuted: Boolean(data?.micMuted),
             videoOff: Boolean(data?.videoOff),
             facingMode: data?.facingMode === 'environment' ? 'environment' : 'user',
-            resolution: data?.resolution || '720p',
+            resolution: ['480p', '720p', '1080p'].includes(data?.resolution) ? data.resolution : '720p',
             noiseGateEnabled: data?.noiseGateEnabled !== false
         });
     });
 
     socket.on('tv_connector_control', (data) => {
-        const tvUid = normalizeUid(data?.tvUid || resolveSocketUid());
+        const tvUid = normalizeUid(resolveSocketUid());
         if (!tvUid) return;
         const connector = splitMesh.getConnectorForTv(tvUid);
         if (connector) {
             io.to(connector.socketId).emit('connector_remote_control', {
-                action: data?.action,
+                action: String(data?.action || '').slice(0, 32),
                 value: data?.value
             });
         }
     });
 
     socket.on('tv_remote_key', (data) => {
-        const tvUid = splitMesh.getTvForConnector(socket.id) || normalizeUid(data?.tvUid);
+        const tvUid = splitMesh.getTvForConnector(socket.id);
         if (!tvUid || !data?.key) return;
         sendSignalingEvent(tvUid, 'tv_remote_key', {
             key: String(data.key).slice(0, 24),
@@ -1664,7 +2064,7 @@ async function checkUserUidExists(targetUid) {
     });
 
     socket.on('tv_remote_text', (data) => {
-        const tvUid = splitMesh.getTvForConnector(socket.id) || normalizeUid(data?.tvUid);
+        const tvUid = splitMesh.getTvForConnector(socket.id);
         if (!tvUid || typeof data?.text !== 'string') return;
         sendSignalingEvent(tvUid, 'tv_remote_text', {
             text: data.text.slice(0, 500),
@@ -1673,14 +2073,16 @@ async function checkUserUidExists(targetUid) {
         });
     });
 
-    socket.on('connector_end_split_call', (data) => {
-        const tvUid = splitMesh.getTvForConnector(socket.id) || normalizeUid(data?.tvUid);
+    socket.on('connector_end_split_call', () => {
+        const tvUid = splitMesh.getTvForConnector(socket.id);
         if (!tvUid) return;
         const session = splitMesh.getSplitCallSessionByTv(tvUid);
         if (session?.friendUid) {
             sendSignalingEvent(session.friendUid, 'webrtc_call_ended', { fromTvUid: tvUid });
             sendSignalingEvent(session.friendUid, 'call_ended', { fromTvUid: tvUid });
+            globalActiveCallPeers.delete(session.friendUid);
         }
+        globalActiveCallPeers.delete(tvUid);
         sendSignalingEvent(tvUid, 'webrtc_call_ended', { endedByConnector: true });
         sendSignalingEvent(tvUid, 'call_ended', { endedByConnector: true });
         stopSplitMeshForUid(tvUid, 'ended_by_connector');
@@ -1688,9 +2090,11 @@ async function checkUserUidExists(targetUid) {
 
     socket.on('split_webrtc_offer', (data) => {
         if (!data || !data.offer) return;
-        const tvUid = splitMesh.getTvForConnector(socket.id) || normalizeUid(data.tvUid);
+        const tvUid = splitMesh.getTvForConnector(socket.id);
         const friendUid = normalizeUid(data.targetUid || data.friendUid);
         if (!tvUid || !friendUid) return;
+        const session = splitMesh.getSplitCallSessionByTv(tvUid);
+        if (!session || session.friendUid !== friendUid) return;
         sendSignalingEvent(friendUid, 'split_webrtc_offer_received', {
             offer: data.offer,
             tvUid,
@@ -1703,14 +2107,17 @@ async function checkUserUidExists(targetUid) {
 
     socket.on('split_webrtc_answer', (data) => {
         if (!data || !data.answer) return;
+        const authedUid = resolveSocketUid();
         const tvUid = normalizeUid(data.targetTvUid || data.tvUid || data.targetUid);
-        if (!tvUid) return;
+        if (!authedUid || !tvUid) return;
+        const session = splitMesh.getSplitCallSessionByTv(tvUid);
+        if (!session || session.friendUid !== authedUid) return;
         const connector = splitMesh.getConnectorForTv(tvUid);
         if (connector) {
             io.to(connector.socketId).emit('split_webrtc_answer_received', {
                 answer: data.answer,
                 tvUid,
-                friendUid: normalizeUid(data.friendUid || resolveSocketUid())
+                friendUid: authedUid
             });
         }
     });
@@ -1719,18 +2126,22 @@ async function checkUserUidExists(targetUid) {
         if (!data || !data.candidate) return;
         const pairedTv = splitMesh.getTvForConnector(socket.id);
         if (pairedTv) {
-            // Connector -> Friend
+            // Connector -> Friend (strictly verify active session)
             const friendUid = normalizeUid(data.targetUid || data.friendUid);
-            if (!friendUid) return;
+            const session = splitMesh.getSplitCallSessionByTv(pairedTv);
+            if (!friendUid || !session || session.friendUid !== friendUid) return;
             sendSignalingEvent(friendUid, 'split_webrtc_ice_candidate_received', {
                 candidate: data.candidate,
                 tvUid: pairedTv,
                 fromConnector: true
             });
         } else {
-            // Friend -> Connector
+            // Friend -> Connector (strictly verify active session)
+            const authedUid = resolveSocketUid();
             const tvUid = normalizeUid(data.targetTvUid || data.tvUid || data.targetUid);
-            if (!tvUid) return;
+            if (!authedUid || !tvUid) return;
+            const session = splitMesh.getSplitCallSessionByTv(tvUid);
+            if (!session || session.friendUid !== authedUid) return;
             const connector = splitMesh.getConnectorForTv(tvUid);
             if (connector) {
                 io.to(connector.socketId).emit('split_webrtc_ice_candidate_received', {
@@ -1747,9 +2158,17 @@ async function checkUserUidExists(targetUid) {
         const rawTarget = data.targetUid || data.receiverUid;
         if (!rawTarget) return;
         const targetUid = String(rawTarget).trim().replace(/\D/g, '');
-        const callerUid = data.callerUid ? String(data.callerUid).trim().replace(/\D/g, '') : '';
-        data.targetUid = targetUid;
-        data.callerUid = callerUid;
+        const authedUid = resolveSocketUid();
+        if (!authedUid) {
+            socket.emit('call_error', { targetUid, message: 'Sign in required before starting a call.' });
+            return;
+        }
+        const callerUid = authedUid;
+        const callPayload = {
+            ...data,
+            targetUid: targetUid,
+            callerUid: callerUid
+        };
 
         if (targetUid.length !== 10) {
             socket.emit('call_error', {
@@ -1784,50 +2203,56 @@ async function checkUserUidExists(targetUid) {
 
         // Tag Split-Mesh availability if caller is a TV paired with a Connector Phone
         const callerConnector = callerUid ? splitMesh.getConnectorForTv(callerUid) : null;
-        if (callerConnector || data.hasConnector) {
-            data.hasConnector = true;
-            data.connectorSplitMesh = true;
+        if (callerConnector || callPayload.hasConnector) {
+            callPayload.hasConnector = true;
+            callPayload.connectorSplitMesh = true;
         }
         if (callerUid && targetUid) {
-            activeCallPeers.set(callerUid, {
+            globalActiveCallPeers.set(callerUid, {
                 peerUid: targetUid,
-                callType: data.type || 'video',
-                callerName: data.callerName || ''
+                callType: callPayload.type || 'video',
+                callerName: callPayload.callerName || ''
             });
-            activeCallPeers.set(targetUid, {
+            globalActiveCallPeers.set(targetUid, {
                 peerUid: callerUid,
-                callType: data.type || 'video',
-                callerName: data.callerName || ''
+                callType: callPayload.type || 'video',
+                callerName: callPayload.callerName || ''
             });
         }
 
-        sendSignalingEvent(targetUid, 'incoming_call', data);
+        sendSignalingEvent(targetUid, 'incoming_call', callPayload);
     });
 
     socket.on('cancel_call', (data) => {
         if (!data || !data.targetUid) return;
         const senderUid = resolveSocketUid();
-        if (senderUid) stopSplitMeshForUid(senderUid, 'call_cancelled');
-        stopSplitMeshForUid(data.targetUid, 'call_cancelled');
-        sendSignalingEvent(data.targetUid, 'call_cancelled', data);
+        const targetUid = normalizeUid(data.targetUid);
+        if (!senderUid || !targetUid) return;
+        stopSplitMeshForUid(senderUid, 'call_cancelled');
+        stopSplitMeshForUid(targetUid, 'call_cancelled');
+        globalActiveCallPeers.delete(senderUid);
+        globalActiveCallPeers.delete(targetUid);
+        sendSignalingEvent(targetUid, 'call_cancelled', { ...data, callerUid: senderUid, targetUid });
     });
 
     socket.on('call_response', (data) => {
         if (!data || !data.targetUid) return;
-        const responderUid = normalizeUid(data.responderUid || resolveSocketUid());
+        const responderUid = normalizeUid(resolveSocketUid());
         const callerUid = normalizeUid(data.targetUid);
-        const callInfo = activeCallPeers.get(responderUid) || activeCallPeers.get(callerUid) || {};
+        if (!responderUid || !callerUid) return;
+        const callInfo = globalActiveCallPeers.get(responderUid) || globalActiveCallPeers.get(callerUid) || {};
         const callType = data.type || callInfo.callType || 'video';
+        const responsePayload = { ...data, targetUid: callerUid, responderUid };
 
         if (data.status === 'accepted') {
-            const responderConnector = responderUid ? splitMesh.getConnectorForTv(responderUid) : null;
-            const callerConnector = callerUid ? splitMesh.getConnectorForTv(callerUid) : null;
+            const responderConnector = splitMesh.getConnectorForTv(responderUid);
+            const callerConnector = splitMesh.getConnectorForTv(callerUid);
             if (responderConnector) {
-                data.hasConnector = true;
-                data.connectorSplitMesh = true;
+                responsePayload.hasConnector = true;
+                responsePayload.connectorSplitMesh = true;
             }
-            sendSignalingEvent(data.targetUid, 'call_response_received', data);
-            sendSignalingEvent(data.targetUid, 'call_accepted', data);
+            sendSignalingEvent(callerUid, 'call_response_received', responsePayload);
+            sendSignalingEvent(callerUid, 'call_accepted', responsePayload);
 
             // Start Split-Mesh uplinks cleanly for whichever side(s) use a paired Connector Phone
             if (callerConnector) {
@@ -1837,95 +2262,102 @@ async function checkUserUidExists(targetUid) {
                 maybeTriggerSplitMeshUplink(responderUid, callerUid, callType, false, callInfo.callerName || '');
             }
         } else {
-            if (responderUid) stopSplitMeshForUid(responderUid, 'call_declined');
-            if (callerUid) stopSplitMeshForUid(callerUid, 'call_declined');
-            sendSignalingEvent(data.targetUid, 'call_response_received', data);
+            stopSplitMeshForUid(responderUid, 'call_declined');
+            stopSplitMeshForUid(callerUid, 'call_declined');
+            globalActiveCallPeers.delete(responderUid);
+            globalActiveCallPeers.delete(callerUid);
+            sendSignalingEvent(callerUid, 'call_response_received', responsePayload);
         }
     });
 
     socket.on('answer_call', (data) => {
-        const targetUid = data?.callerUid || data?.targetUid;
-        if (!targetUid) return;
+        const targetUid = normalizeUid(data?.callerUid || data?.targetUid);
         const responderUid = normalizeUid(resolveSocketUid());
-        const responderConnector = responderUid ? splitMesh.getConnectorForTv(responderUid) : null;
+        if (!targetUid || !responderUid) return;
+        const responderConnector = splitMesh.getConnectorForTv(responderUid);
         const callerConnector = splitMesh.getConnectorForTv(targetUid);
         const responsePayload = {
             targetUid,
             callerUid: targetUid,
+            responderUid,
             status: 'accepted',
             hasConnector: Boolean(responderConnector),
             connectorSplitMesh: Boolean(responderConnector)
         };
         sendSignalingEvent(targetUid, 'call_response_received', responsePayload);
         sendSignalingEvent(targetUid, 'call_accepted', responsePayload);
-        if (callerConnector && responderUid) {
+        if (callerConnector) {
             maybeTriggerSplitMeshUplink(targetUid, responderUid, data?.type || 'video', true);
         }
-        if (responderConnector && responderUid) {
+        if (responderConnector) {
             maybeTriggerSplitMeshUplink(responderUid, targetUid, data?.type || 'video', false);
         }
     });
 
+    function isAuthorizedCallPeer(senderUid, targetUid) {
+        if (!senderUid || !targetUid) return false;
+        const peerInfo = globalActiveCallPeers.get(senderUid);
+        if (peerInfo && peerInfo.peerUid === targetUid) return true;
+        const targetInfo = globalActiveCallPeers.get(targetUid);
+        return Boolean(targetInfo && targetInfo.peerUid === senderUid);
+    }
+
     socket.on('webrtc_offer', (data) => {
-        if (!data || !data.targetUid) return;
-        sendSignalingEvent(data.targetUid, 'webrtc_offer_received', data);
-        sendSignalingEvent(data.targetUid, 'webrtc_offer', data);
+        const senderUid = resolveSocketUid();
+        const targetUid = normalizeUid(data?.targetUid);
+        if (!senderUid || !targetUid || !isAuthorizedCallPeer(senderUid, targetUid)) return;
+        const payload = { ...data, targetUid, senderUid };
+        sendSignalingEvent(targetUid, 'webrtc_offer_received', payload);
+        sendSignalingEvent(targetUid, 'webrtc_offer', payload);
     });
 
     socket.on('webrtc_answer', (data) => {
-        if (!data || !data.targetUid) return;
-        sendSignalingEvent(data.targetUid, 'webrtc_answer_received', data);
-        sendSignalingEvent(data.targetUid, 'webrtc_answer', data);
+        const senderUid = resolveSocketUid();
+        const targetUid = normalizeUid(data?.targetUid);
+        if (!senderUid || !targetUid || !isAuthorizedCallPeer(senderUid, targetUid)) return;
+        const payload = { ...data, targetUid, senderUid };
+        sendSignalingEvent(targetUid, 'webrtc_answer_received', payload);
+        sendSignalingEvent(targetUid, 'webrtc_answer', payload);
     });
 
     socket.on('webrtc_ice_candidate', (data) => {
-        if (!data || !data.targetUid) return;
-        sendSignalingEvent(data.targetUid, 'webrtc_ice_candidate_received', data);
-        sendSignalingEvent(data.targetUid, 'webrtc_ice_candidate', data);
+        const senderUid = resolveSocketUid();
+        const targetUid = normalizeUid(data?.targetUid);
+        if (!senderUid || !targetUid || !isAuthorizedCallPeer(senderUid, targetUid)) return;
+        const payload = { ...data, targetUid, senderUid };
+        sendSignalingEvent(targetUid, 'webrtc_ice_candidate_received', payload);
+        sendSignalingEvent(targetUid, 'webrtc_ice_candidate', payload);
     });
 
     socket.on('webrtc_end_call', (data) => {
-        if (!data || !data.targetUid) return;
         const senderUid = resolveSocketUid();
-        if (senderUid) {
-            stopSplitMeshForUid(senderUid, 'call_ended');
-            activeCallPeers.delete(senderUid);
-        }
-        stopSplitMeshForUid(data.targetUid, 'call_ended');
-        activeCallPeers.delete(normalizeUid(data.targetUid));
-        sendSignalingEvent(data.targetUid, 'webrtc_call_ended', data);
-        sendSignalingEvent(data.targetUid, 'call_ended', data);
+        const targetUid = normalizeUid(data?.targetUid);
+        if (!senderUid || !targetUid) return;
+        stopSplitMeshForUid(senderUid, 'call_ended');
+        stopSplitMeshForUid(targetUid, 'call_ended');
+        globalActiveCallPeers.delete(senderUid);
+        globalActiveCallPeers.delete(targetUid);
+        sendSignalingEvent(targetUid, 'webrtc_call_ended', { ...data, senderUid, targetUid });
+        sendSignalingEvent(targetUid, 'call_ended', { ...data, senderUid, targetUid });
     });
 
     socket.on('end_call', (data) => {
-        if (!data || !data.targetUid) return;
         const senderUid = resolveSocketUid();
-        if (senderUid) {
-            stopSplitMeshForUid(senderUid, 'call_ended');
-            activeCallPeers.delete(senderUid);
-        }
-        stopSplitMeshForUid(data.targetUid, 'call_ended');
-        activeCallPeers.delete(normalizeUid(data.targetUid));
-        sendSignalingEvent(data.targetUid, 'webrtc_call_ended', data);
-        sendSignalingEvent(data.targetUid, 'call_ended', data);
+        const targetUid = normalizeUid(data?.targetUid);
+        if (!senderUid || !targetUid) return;
+        stopSplitMeshForUid(senderUid, 'call_ended');
+        stopSplitMeshForUid(targetUid, 'call_ended');
+        globalActiveCallPeers.delete(senderUid);
+        globalActiveCallPeers.delete(targetUid);
+        sendSignalingEvent(targetUid, 'webrtc_call_ended', { ...data, senderUid, targetUid });
+        sendSignalingEvent(targetUid, 'call_ended', { ...data, senderUid, targetUid });
     });
 
-    // Fire TV Alexa Voice Command Relay (Scoped strictly to the requesting user's session)
+    // Fire TV Alexa Voice Command Relay (Strictly scoped to the authenticated socket UID)
     socket.on('voice_command_triggered', (data) => {
-        console.log('[ZingTalk Voice] Voice command received from client:', data);
-        let targetRoom = data && data.uid ? String(data.uid).trim().replace(/\D/g, '') : null;
-        if (!targetRoom) {
-            for (const [u, sId] of connectedUsers.entries()) {
-                if (sId === socket.id) {
-                    targetRoom = u;
-                    break;
-                }
-            }
-        }
+        const targetRoom = resolveSocketUid();
         if (targetRoom) {
-            io.to(targetRoom).emit('alexa_command', data);
-        } else {
-            socket.emit('alexa_command', data);
+            io.to(targetRoom).emit('alexa_command', { ...(data || {}), uid: targetRoom });
         }
     });
 
@@ -1935,6 +2367,7 @@ async function checkUserUidExists(targetUid) {
         if (!cleanUid) return;
 
         connectedUsers.delete(cleanUid);
+        globalActiveCallPeers.delete(cleanUid);
         userContactsRegistry.delete(cleanUid);
         ephemeralMessageQueue.delete(cleanUid);
 
@@ -1957,18 +2390,16 @@ async function checkUserUidExists(targetUid) {
         console.log(`[ZingTalk] Complete raw session purge for UID ${cleanUid} (Contacts, Alexa Links, and Sockets cleared from memory, disk, and Firebase)`);
     }
 
-    // User Explicit Logout (Purges session and unlinks Alexa)
-    socket.on('logout_user', (data) => {
-        const uid = data && data.uid ? String(data.uid).trim() : null;
-        if (uid) {
-            purgeUserSessionData(uid);
-            socket.leave(uid);
+    // User Explicit Logout (Strictly logs out ONLY the authenticated socket's own UID)
+    socket.on('logout_user', () => {
+        const authedUid = resolveSocketUid();
+        if (authedUid) {
+            purgeUserSessionData(authedUid);
+            socket.leave(authedUid);
         }
-        for (const [u, sId] of connectedUsers.entries()) {
-            if (sId === socket.id) {
-                purgeUserSessionData(u);
-                socket.leave(u);
-            }
+        if (socket.data) {
+            delete socket.data.verifiedUid;
+            delete socket.data.sessionToken;
         }
     });
 
@@ -1987,6 +2418,7 @@ async function checkUserUidExists(targetUid) {
         for (const [uid, socketId] of connectedUsers.entries()) {
             if (socketId === socket.id) {
                 connectedUsers.delete(uid);
+                globalActiveCallPeers.delete(uid);
                 socket.leave(uid);
                 stopSplitMeshForUid(uid, 'user_disconnected');
                 const pairedConn = splitMesh.getConnectorForTv(uid);
@@ -2145,7 +2577,26 @@ function extractSlotVal(slots, ...names) {
 
 async function handleAlexaWebhookRequest(req, res) {
     try {
+        const ip = getClientIp(req);
+        const rate = alexaWebhookLimiter.check(`alexa:${ip}`, 1);
+        if (!rate.allowed) {
+            res.setHeader('Retry-After', String(rate.retryAfterSeconds));
+            return res.status(429).json({ version: '1.0', response: { outputSpeech: { type: 'PlainText', text: 'Too many requests.' }, shouldEndSession: true } });
+        }
+
         const body = req.body || {};
+        const askCheck = validateAlexaWebhookRequest(req.headers, body, {
+            expectedSkillId: (process.env.ALEXA_SKILL_ID || '').trim(),
+            requireCertUrl: Boolean(process.env.ALEXA_SKILL_ID)
+        });
+        if (!askCheck.ok) {
+            console.warn(`[Alexa Skill Webhook] Rejected invalid/replayed request: ${askCheck.reason}`);
+            return res.status(403).json({
+                version: '1.0',
+                response: { outputSpeech: { type: 'PlainText', text: 'Unauthorized Alexa request.' }, shouldEndSession: true }
+            });
+        }
+
         const request = body.request || {};
         const reqType = request.type || '';
         const incomingSessionAttributes = (body.session && body.session.attributes) || {};
@@ -2157,13 +2608,13 @@ async function handleAlexaWebhookRequest(req, res) {
         let shouldEndSession = false;
         let commandPayload = null;
 
-        const amazonUserId = body.session?.user?.userId || body.context?.System?.user?.userId || body.context?.System?.device?.deviceId || 'default_alexa_device';
-        let activeUserUid = alexaDevicePairings.get(amazonUserId);
+        const amazonUserId = body.session?.user?.userId || body.context?.System?.user?.userId || body.context?.System?.device?.deviceId || '';
+        let activeUserUid = amazonUserId ? alexaDevicePairings.get(amazonUserId) : null;
 
         const activeTvOnline = lastActiveTvUid && isUserOnline(lastActiveTvUid);
 
-        // AUTOMATIC FIRE TV PAIRING (Strict Single-Tenant Safety: Never hijack an already paired Alexa device to another user's UID)
-        if (!activeUserUid && activeTvOnline && connectedUsers.size === 1) {
+        // AUTOMATIC FIRE TV PAIRING (Strict Single-Tenant Safety: requires valid Amazon userId & never overrides existing pairings)
+        if (!activeUserUid && amazonUserId && activeTvOnline && connectedUsers.size === 1) {
             activeUserUid = lastActiveTvUid;
             alexaDevicePairings.set(amazonUserId, activeUserUid);
             saveAlexaPairings();
@@ -3535,7 +3986,9 @@ function renderServerStatus(req, res) {
 
       async function verifySessionToken(token) {
         try {
-          const res = await fetch('/api/admin/analytics?token=' + encodeURIComponent(token));
+          const res = await fetch('/api/admin/analytics', {
+            headers: { 'x-admin-token': token }
+          });
           if (res.ok) {
             showDashboard(token);
           } else {
@@ -3559,7 +4012,9 @@ function renderServerStatus(req, res) {
         }
 
         try {
-          const res = await fetch('/api/admin/analytics?token=' + encodeURIComponent(token));
+          const res = await fetch('/api/admin/analytics', {
+            headers: { 'x-admin-token': token }
+          });
           if (!res.ok) {
             if (res.status === 401) {
               sessionStorage.removeItem('zingtalk_admin_session');

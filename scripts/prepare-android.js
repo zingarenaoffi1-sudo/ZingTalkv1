@@ -71,10 +71,13 @@ public class MainActivity extends BridgeActivity {
             if (webView != null) {
                 webView.setBackgroundColor(android.graphics.Color.parseColor("#090d16"));
                 WebSettings settings = webView.getSettings();
-                settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
                 settings.setDomStorageEnabled(true);
                 settings.setJavaScriptEnabled(true);
                 settings.setAllowFileAccess(true);
+                settings.setAllowFileAccessFromFileURLs(false);
+                settings.setAllowUniversalAccessFromFileURLs(false);
+                settings.setGeolocationEnabled(false);
                 settings.setAllowContentAccess(true);
                 settings.setDatabaseEnabled(true);
                 settings.setMediaPlaybackRequiresUserGesture(false);
@@ -579,10 +582,9 @@ if (!fs.existsSync(resXmlDir)) {
 const netConfigPath = path.join(resXmlDir, 'network_security_config.xml');
 const netConfigContent = `<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
         </trust-anchors>
     </base-config>
     <domain-config cleartextTrafficPermitted="true">
@@ -732,10 +734,10 @@ ${platformFeatures}
 
     <application${applicationBannerAttr}
         android:networkSecurityConfig="@xml/network_security_config"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="false"
         android:largeHeap="true"
         android:hardwareAccelerated="true"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
