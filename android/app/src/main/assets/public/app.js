@@ -20,6 +20,7 @@ import {
     where,
     getDocs
 } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js";
+import { renderQrSvg } from "./qr.js";
 
 // Client Firebase configuration
 const firebaseConfig = {
@@ -186,15 +187,33 @@ export function detectClientPlatform() {
     return "Web Browser";
 }
 
+export function sanitizeServerUrl(rawUrl, fallbackUrl = DUCKDNS_SIGNALING_URL) {
+    if (!rawUrl || typeof rawUrl !== "string") return fallbackUrl;
+    const trimmed = rawUrl.trim();
+    if (!trimmed || /^javascript:/i.test(trimmed) || /^data:/i.test(trimmed)) return fallbackUrl;
+    try {
+        const parsed = new URL(trimmed);
+        const host = parsed.hostname.toLowerCase();
+        const isLocal = host === "localhost" || host === "127.0.0.1";
+        if (parsed.protocol === "https:" && (host === "zingtalk.duckdns.org" || isLocal || host.endsWith(".run.app") || host.endsWith(".ai.studio"))) {
+            return parsed.origin;
+        }
+        if (parsed.protocol === "http:" && isLocal) {
+            return parsed.origin;
+        }
+    } catch (_) {}
+    return fallbackUrl;
+}
+
 export function getEffectiveServerUrl() {
     const saved = localStorage.getItem("zingTalkServerUrl");
-    if (saved && saved.trim()) return saved.trim();
+    if (saved && saved.trim()) return sanitizeServerUrl(saved.trim(), DUCKDNS_SIGNALING_URL);
 
     if (typeof window !== "undefined" && window.location) {
         const h = window.location.host || "";
         const p = window.location.protocol || "";
         if (p.startsWith("http") && (h.includes(":3000") || h.includes("run.app") || h.includes("ai.studio") || h.includes("duckdns"))) {
-            return window.location.origin;
+            return sanitizeServerUrl(window.location.origin, DUCKDNS_SIGNALING_URL);
         }
     }
     return DUCKDNS_SIGNALING_URL;
@@ -226,36 +245,92 @@ export function updateUidDisplays(uid) {
     if (modalUid) modalUid.innerText = my10DigitUid;
 }
 
+// Ephemeral TURN credentials are fetched dynamically from the authenticated server (no static secrets in APK)
 const rtcConfig = {
     iceServers: [
-        { 
+        {
             urls: [
                 "stun:stun.l.google.com:19302",
                 "stun:stun1.l.google.com:19302",
                 "stun:stun2.l.google.com:19302",
                 "stun:stun3.l.google.com:19302",
                 "stun:stun4.l.google.com:19302"
-            ] 
-        },
-        { 
-            urls: [
-                "stun:zingtalk.duckdns.org:3478"
-            ] 
+            ]
         },
         {
-            urls: [
-                "turn:zingtalk.duckdns.org:3478?transport=udp",
-                "turn:zingtalk.duckdns.org:3478?transport=tcp"
-            ],
-            username: "zingtalk",
-            credential: "zingtalkpassword"
+            urls: ["stun:zingtalk.duckdns.org:3478"]
         },
-        { 
-            urls: ["stun:global.stun.twilio.com:3478"] 
+        {
+            urls: ["stun:global.stun.twilio.com:3478"]
         }
     ],
     iceCandidatePoolSize: 10
 };
+
+let lastIceFetchAt = 0;
+async function emitAuthenticatedLogin(targetSocket, userObj) {
+    if (!targetSocket || !targetSocket.connected || !userObj) return;
+    let idToken = null;
+    try {
+        if (auth?.currentUser && typeof auth.currentUser.getIdToken === "function") {
+            idToken = await auth.currentUser.getIdToken();
+        }
+    } catch (_) {}
+    targetSocket.emit("login_user", {
+        email: userObj.email || null,
+        name: userObj.displayName || userObj.name || (userObj.email ? userObj.email.split("@")[0] : "TV User"),
+        authUid: userObj.uid || null,
+        uid: my10DigitUid || userObj.zingUid || null,
+        idToken,
+        sessionToken: userObj.sessionToken || null,
+        isAnonymous: Boolean(userObj.isAnonymous),
+        isGuest: Boolean(userObj.isAnonymous),
+        platform: "Fire TV",
+        contacts: myContacts
+    });
+}
+
+async function refreshIceServers(force = false) {
+    const now = Date.now();
+    if (!force && lastIceFetchAt && (now - lastIceFetchAt) < 15 * 60 * 1000) return;
+    if (socket && socket.connected) {
+        await new Promise((resolve) => {
+            let done = false;
+            const timer = setTimeout(() => { if (!done) { done = true; resolve(); } }, 1200);
+            try {
+                socket.emit("request_turn_credentials", {}, (res) => {
+                    if (!done) {
+                        done = true;
+                        clearTimeout(timer);
+                        if (res && res.ok && Array.isArray(res.iceServers)) {
+                            rtcConfig.iceServers = res.iceServers;
+                            lastIceFetchAt = Date.now();
+                        }
+                        resolve();
+                    }
+                });
+            } catch (_) {
+                if (!done) { done = true; clearTimeout(timer); resolve(); }
+            }
+        });
+        return;
+    }
+    const token = currentUser?.sessionToken;
+    if (!token) return;
+    try {
+        const res = await fetch(`${getEffectiveServerUrl()}/api/turn-credentials`, {
+            headers: { "x-zing-session": token },
+            cache: "no-store"
+        });
+        if (res.ok) {
+            const payload = await res.json();
+            if (payload && Array.isArray(payload.iceServers)) {
+                rtcConfig.iceServers = payload.iceServers;
+                lastIceFetchAt = Date.now();
+            }
+        }
+    } catch (_) {}
+}
 
 // Clean in-memory user states (isolated per user UID)
 let myContacts = [];
@@ -515,6 +590,219 @@ let pendingOffer = null;
 let outgoingCallTimer = null;
 let incomingCallTimer = null;
 
+// Option 2 Split-Mesh Connector State
+let isConnectorPaired = false;
+let connectorDeviceName = "";
+let tvPairingCode = "";
+let tvQrPayload = "";
+let connectorMediaState = { micMuted: false, videoOff: false, resolution: "720p" };
+let connectorPeerConnection = null;
+let connectorIceCandidatesQueue = [];
+let hasSplitMeshRemoteStream = false;
+
+function updatePipPlaceholderText(pairedMode) {
+    const titleEl = document.getElementById("no-camera-pip-title");
+    const subEl = document.getElementById("no-camera-pip-sub");
+    if (!titleEl || !subEl) return;
+    if (pairedMode) {
+        titleEl.textContent = "Phone Cam Active";
+        subEl.textContent = `Direct HD • ${connectorDeviceName || "Zero TV Load"}`;
+    } else {
+        titleEl.textContent = "No Camera Detected";
+        subEl.textContent = "Voice Active • Receiving Video";
+    }
+}
+
+function updateConnectorStatusUI() {
+    const hdrBtn = document.getElementById("header-connector-btn");
+    const hdrLabel = document.getElementById("header-connector-label");
+    if (hdrBtn) hdrBtn.classList.toggle("is-paired", isConnectorPaired);
+    if (hdrLabel) hdrLabel.textContent = isConnectorPaired ? "📱 Phone Paired" : "📱 Phone Cam";
+
+    const codeEl = document.getElementById("connector-pair-code");
+    const uidEl = document.getElementById("connector-tv-uid");
+    const qrBox = document.getElementById("connector-qr-box");
+    const badge = document.getElementById("connector-pair-status-badge");
+    const statusText = document.getElementById("connector-pair-status-text");
+    const unpairBtn = document.getElementById("connector-unpair-btn");
+
+    if (codeEl) codeEl.textContent = tvPairingCode || "------";
+    if (uidEl) uidEl.textContent = `TV UID: ${my10DigitUid || "----------"}`;
+
+    if (qrBox) {
+        const payload = tvQrPayload || (my10DigitUid && tvPairingCode ? `zingtalk://pair?uid=${my10DigitUid}&code=${tvPairingCode}` : "");
+        if (payload) {
+            try {
+                qrBox.innerHTML = renderQrSvg(payload, { size: 152, margin: 2 });
+            } catch (_) {
+                qrBox.textContent = tvPairingCode || "------";
+            }
+        } else {
+            qrBox.innerHTML = `<span style="color:#475569;font-size:12px;font-weight:700;">Connecting...</span>`;
+        }
+    }
+
+    if (badge) badge.classList.toggle("is-paired", isConnectorPaired);
+    if (statusText) {
+        statusText.textContent = isConnectorPaired
+            ? `Paired with ${connectorDeviceName || "Connector Phone"}`
+            : "Waiting for Connector Phone...";
+    }
+    if (unpairBtn) {
+        unpairBtn.classList.toggle("hidden", !isConnectorPaired);
+    }
+}
+
+function requestTvPairingCode(forceNew = false) {
+    if (!socket || !socket.connected || !my10DigitUid) return;
+    socket.emit("tv_register_pairing", {
+        tvUid: my10DigitUid,
+        tvName: (currentUser && (currentUser.displayName || currentUser.name)) || "Living Room Fire TV",
+        forceNew: Boolean(forceNew)
+    });
+}
+
+function openConnectorPairModal() {
+    const modal = document.getElementById("connector-pair-modal");
+    if (!modal) return;
+    modal.classList.remove("hidden");
+    requestTvPairingCode(false);
+    updateConnectorStatusUI();
+    setTimeout(() => {
+        focusElement(document.getElementById("connector-done-btn") || document.getElementById("connector-refresh-code-btn"), false);
+    }, 60);
+}
+
+function closeConnectorPairModal() {
+    document.getElementById("connector-pair-modal")?.classList.add("hidden");
+    setTimeout(() => {
+        const hdrBtn = document.getElementById("header-connector-btn");
+        if (hdrBtn && isElementVisibleAndFocusable(hdrBtn)) {
+            focusElement(hdrBtn, false);
+        } else {
+            autoFocusFirstElement();
+        }
+    }, 60);
+}
+
+function dispatchRemoteText(text, submit = false) {
+    const cleanText = typeof text === "string" ? text : "";
+    const active = document.activeElement;
+    let target = (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA") && isElementVisibleAndFocusable(active))
+        ? active
+        : null;
+
+    if (!target) {
+        const loginScreen = document.getElementById("login-screen");
+        if (loginScreen && !loginScreen.classList.contains("hidden")) {
+            const paneGuest = document.getElementById("pane-guest");
+            if (paneGuest && !paneGuest.classList.contains("hidden")) {
+                target = document.getElementById("guest-name-input");
+            } else {
+                target = document.getElementById("login-email-input");
+            }
+        } else {
+            const activeChat = document.getElementById("tv-active-chat");
+            if (activeChat && !activeChat.classList.contains("hidden")) {
+                target = document.getElementById("message-input");
+            } else {
+                target = document.getElementById("dial-uid-input");
+            }
+        }
+    }
+
+    if (!target) return;
+    focusElement(target, false);
+    if (cleanText.length > 0) {
+        target.value = cleanText;
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
+    if (submit) {
+        if (target.id === "message-input") {
+            sendMessageLogic();
+        } else if (target.id === "dial-uid-input") {
+            const val = target.value.trim().replace(/\D/g, "");
+            if (val.length === 10) document.getElementById("quick-chat-btn")?.click();
+        } else if (target.id === "guest-name-input") {
+            document.getElementById("guest-login-btn")?.click();
+        } else if (target.id === "login-password-input") {
+            document.getElementById("email-login-submit-btn")?.click();
+        } else if (target.id === "contact-name-input") {
+            document.getElementById("save-contact-btn")?.click();
+        }
+    }
+}
+
+function dispatchRemoteKey(rawKey) {
+    const key = String(rawKey || "");
+    if (!key) return;
+    if (key === "ctrl:answer_call") {
+        document.getElementById("accept-call-btn")?.click();
+        return;
+    }
+    if (key === "ctrl:reject_call") {
+        const inc = document.getElementById("incoming-call-overlay");
+        if (inc && !inc.classList.contains("hidden")) {
+            document.getElementById("reject-call-btn")?.click();
+        } else {
+            document.getElementById("cancel-outgoing-btn")?.click();
+        }
+        return;
+    }
+    if (key === "ctrl:end_call") {
+        endCall();
+        return;
+    }
+    if (key === "ArrowUp") return handleDpadNavigation("up");
+    if (key === "ArrowDown") return handleDpadNavigation("down");
+    if (key === "ArrowLeft") return handleDpadNavigation("left");
+    if (key === "ArrowRight") return handleDpadNavigation("right");
+    if (key === "Back") return handleBackKey();
+    if (key === "Home") {
+        handleAlexaIncomingCommand({ action: "navigate_home" });
+        return;
+    }
+    if (key === "Menu") {
+        const guideModal = document.getElementById("guide-modal");
+        if (guideModal) {
+            if (guideModal.classList.contains("hidden")) {
+                guideModal.classList.remove("hidden");
+                const scrollArea = document.getElementById("guide-scroll-area");
+                if (scrollArea) focusElement(scrollArea);
+            } else {
+                guideModal.classList.add("hidden");
+                autoFocusFirstElement();
+            }
+        }
+        return;
+    }
+    if (key === "MediaPlayPause") {
+        if (!document.getElementById("full-call-screen")?.classList.contains("hidden")) {
+            document.getElementById("mute-mic-btn")?.click();
+        }
+        return;
+    }
+    if (key === "Enter") {
+        const active = document.activeElement;
+        const isInput = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+        if (active && !isInput) {
+            const targetBtn = active.classList.contains("tv-focusable") ? active : active.closest(".tv-focusable");
+            if (targetBtn) {
+                targetBtn.click();
+                return;
+            }
+        }
+        if (active && isInput) {
+            if (active.id === "message-input") sendMessageLogic();
+            else if (active.id === "dial-uid-input" && active.value.replace(/\D/g, "").length === 10) document.getElementById("quick-chat-btn")?.click();
+            else if (active.id === "guest-name-input") document.getElementById("guest-login-btn")?.click();
+            else if (active.id === "login-password-input") document.getElementById("email-login-submit-btn")?.click();
+            else if (active.id === "contact-name-input") document.getElementById("save-contact-btn")?.click();
+        }
+    }
+}
+
 // Auto-login from saved session (Dual-layer: LocalStorage + Native Preferences)
 const savedSession = localStorage.getItem("zingTalkTvSession");
 if (savedSession) {
@@ -593,18 +881,10 @@ function loginUserSession(user) {
     }
 
     if (socket && socket.connected) {
-        socket.emit("login_user", {
-            email: user.email,
-            name: displayName,
-            authUid: user.uid,
-            uid: my10DigitUid || user.zingUid,
-            isAnonymous: Boolean(user.isAnonymous),
-            isGuest: Boolean(user.isAnonymous),
-            platform: "Fire TV",
-            contacts: myContacts
-        });
+        emitAuthenticatedLogin(socket, user);
         if (my10DigitUid) {
             socket.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+            requestTvPairingCode(false);
         }
     } else {
         connectSocket();
@@ -682,6 +962,12 @@ function logoutUserSession() {
     updateUidDisplays(null);
 
     // 6. Navigation
+    isConnectorPaired = false;
+    connectorDeviceName = "";
+    tvPairingCode = "";
+    tvQrPayload = "";
+    updateConnectorStatusUI();
+    document.getElementById("connector-pair-modal")?.classList.add("hidden");
     document.getElementById("profile-modal")?.classList.add("hidden");
     document.getElementById("main-screen")?.classList.add("hidden");
     document.getElementById("tv-top-bar")?.classList.add("hidden");
@@ -749,22 +1035,10 @@ export function registerSocketListeners(s) {
 
         // Only emit login_user if an actual user session is active!
         if (currentUser) {
-            const displayName = currentUser.displayName || currentUser.name || "TV User";
-            const email = currentUser.email || null;
-            const authUid = currentUser.uid || null;
-
-            s.emit("login_user", {
-                email: email,
-                name: displayName,
-                authUid: authUid,
-                uid: my10DigitUid || currentUser.zingUid,
-                platform: "Fire TV",
-                isAnonymous: Boolean(currentUser.isAnonymous),
-                isGuest: Boolean(currentUser.isAnonymous),
-                contacts: myContacts
-            });
+            emitAuthenticatedLogin(s, currentUser);
             if (my10DigitUid) {
                 s.emit("sync_contacts", { uid: my10DigitUid, contacts: myContacts });
+                requestTvPairingCode(false);
             }
 
             if (pendingOutgoingMessages.length > 0) {
@@ -784,14 +1058,26 @@ export function registerSocketListeners(s) {
         updateServerStatusBadge(false, "Connecting to AWS...");
     });
 
+    s.on("turn_credentials", (payload) => {
+        if (payload && Array.isArray(payload.iceServers)) {
+            rtcConfig.iceServers = payload.iceServers;
+            lastIceFetchAt = Date.now();
+        }
+    });
+
     s.on("user_data", (data) => {
         if (!currentUser) return;
         if (data && data.uid) {
             updateUidDisplays(data.uid);
             loadUserStorageData(data.uid);
             currentUser.zingUid = String(data.uid);
+            if (data.sessionToken) {
+                currentUser.sessionToken = data.sessionToken;
+            }
             persistSessionBackup("zingTalkTvSession", JSON.stringify(currentUser));
             saveUserUidToFirestore(currentUser, data.uid);
+            requestTvPairingCode(false);
+            refreshIceServers(true);
         }
         renderContacts(myContacts);
         if (my10DigitUid && myContacts.length > 0) {
@@ -1106,9 +1392,134 @@ export function registerSocketListeners(s) {
         const alexaPill = document.querySelector(".alexa-status-pill");
         if (alexaPill) {
             alexaPill.innerHTML = `
-                <span class="server-status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #00d29d; box-shadow: 0 0 6px #00d29d;"></span>
-                <span style="color: #00d29d;">Alexa Auto-Linked</span>
+                <span class="server-status-dot" style="width: 7px; height: 7px; border-radius: 50%; background: #00d29d; box-shadow: 0 0 6px #00d29d;"></span>
+                <span style="color: #00d29d;">Alexa Linked</span>
             `;
+        }
+    });
+
+    // Option 2 Split-Mesh Pairing, Media State & Remote Key/Keyboard Events
+    s.on("tv_pairing_code_assigned", (data) => {
+        if (!data) return;
+        tvPairingCode = data.code || "";
+        tvQrPayload = data.qrPayload || (my10DigitUid && tvPairingCode ? `zingtalk://pair?uid=${my10DigitUid}&code=${tvPairingCode}` : "");
+        isConnectorPaired = Boolean(data.connectorConnected);
+        connectorDeviceName = data.connectorDeviceName || "";
+        updateConnectorStatusUI();
+    });
+
+    s.on("tv_pairing_error", (data) => {
+        if (data?.message) showToast("⚠️ " + data.message);
+    });
+
+    s.on("tv_connector_status", (data) => {
+        isConnectorPaired = Boolean(data?.connected);
+        connectorDeviceName = data?.deviceName || "";
+        updateConnectorStatusUI();
+        if (isConnectorPaired) {
+            showToast(`📱 Phone Cam paired (${connectorDeviceName || "Connector"})`);
+            if (!document.getElementById("connector-pair-modal")?.classList.contains("hidden")) {
+                updatePipPlaceholderText(true);
+            }
+        } else {
+            connectorMediaState = { micMuted: false, videoOff: false, resolution: "720p" };
+            showToast("📱 Connector Phone unpaired");
+        }
+    });
+
+    s.on("tv_connector_media_state", (data) => {
+        if (!data) return;
+        connectorMediaState = {
+            micMuted: Boolean(data.micMuted),
+            videoOff: Boolean(data.videoOff),
+            resolution: data.resolution || "720p"
+        };
+        if (isConnectorPaired) {
+            isMicMuted = connectorMediaState.micMuted;
+            updateCallControlsUI();
+        }
+    });
+
+    s.on("tv_remote_key", (data) => {
+        if (data && data.key) {
+            dispatchRemoteKey(data.key);
+        }
+    });
+
+    s.on("tv_remote_text", (data) => {
+        if (data && typeof data.text === "string") {
+            dispatchRemoteText(data.text, Boolean(data.submit));
+        }
+    });
+
+    // Symmetric Split-Mesh receive if remote caller is also using a Connector Phone
+    s.on("split_webrtc_offer_received", async (data) => {
+        if (!data || !data.offer) return;
+        const tvUid = String(data.tvUid || data.callerUid || activeCallTarget || "").trim();
+        if (!tvUid) return;
+
+        if (connectorPeerConnection) {
+            try { connectorPeerConnection.close(); } catch (_) {}
+            connectorPeerConnection = null;
+        }
+        connectorIceCandidatesQueue = [];
+
+        try {
+            await refreshIceServers();
+            connectorPeerConnection = new RTCPeerConnection(rtcConfig);
+            connectorPeerConnection.ontrack = (event) => {
+                const remote = document.getElementById("remote-video");
+                hasSplitMeshRemoteStream = true;
+                if (remote) {
+                    if (event.streams && event.streams[0]) {
+                        remote.srcObject = event.streams[0];
+                    } else {
+                        if (!remote.srcObject) remote.srcObject = new MediaStream();
+                        remote.srcObject.addTrack(event.track);
+                    }
+                    remote.play().catch(() => {});
+                }
+            };
+            connectorPeerConnection.onicecandidate = (event) => {
+                if (event.candidate && socket) {
+                    socket.emit("split_webrtc_ice_candidate", {
+                        targetTvUid: tvUid,
+                        tvUid,
+                        candidate: event.candidate
+                    });
+                }
+            };
+            await connectorPeerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+            const answer = await connectorPeerConnection.createAnswer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: true
+            });
+            await connectorPeerConnection.setLocalDescription(answer);
+            socket.emit("split_webrtc_answer", {
+                targetTvUid: tvUid,
+                tvUid,
+                friendUid: my10DigitUid,
+                answer
+            });
+            while (connectorIceCandidatesQueue.length > 0) {
+                const cand = connectorIceCandidatesQueue.shift();
+                if (cand) {
+                    try { await connectorPeerConnection.addIceCandidate(new RTCIceCandidate(cand)); } catch (_) {}
+                }
+            }
+        } catch (err) {
+            console.warn("[TV Split-Mesh] Remote connector offer error:", err);
+        }
+    });
+
+    s.on("split_webrtc_ice_candidate_received", async (data) => {
+        if (!data || !data.candidate) return;
+        if (connectorPeerConnection && connectorPeerConnection.remoteDescription) {
+            try {
+                await connectorPeerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+            } catch (_) {}
+        } else {
+            connectorIceCandidatesQueue.push(data.candidate);
         }
     });
 }
@@ -1184,7 +1595,7 @@ function renderContacts(contacts) {
         card.innerHTML = `
             <div class="tv-contact-info-block" style="flex: 1; min-width: 0;">
                 <div class="tv-avatar-circle" style="position: relative;">
-                    ${(contact.name || "U").charAt(0).toUpperCase()}
+                    ${escapeHtml((contact.name || "U").charAt(0).toUpperCase())}
                 </div>
                 <div style="flex: 1; min-width: 0; padding-right: 6px;">
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
@@ -1192,7 +1603,7 @@ function renderContacts(contacts) {
                         ${unread > 0 ? `<span class="tv-unread-pill" style="background: #00d29d; color: #081018; font-size: 11px; font-weight: 800; border-radius: 12px; padding: 2px 7px; min-width: 18px; text-align: center; box-shadow: 0 0 8px rgba(0,210,157,0.5);">${unread}</span>` : ''}
                     </div>
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-top: 2px;">
-                        <span class="tv-contact-uid-txt" style="font-size: 12px; opacity: 0.75;">UID: ${contact.uid}</span>
+                        <span class="tv-contact-uid-txt" style="font-size: 12px; opacity: 0.75;">UID: ${escapeHtml(contact.uid)}</span>
                         ${lastTime ? `<span style="font-size: 10px; color: ${unread > 0 ? '#00d29d' : 'rgba(255,255,255,0.45)'};">${escapeHtml(lastTime)}</span>` : ''}
                     </div>
                     ${lastText ? `<div class="tv-contact-last-msg" style="font-size: 12px; color: ${unread > 0 ? '#00e5aa' : 'rgba(255,255,255,0.6)'}; font-weight: ${unread > 0 ? '600' : '400'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px;">${unread > 0 ? '💬 ' : ''}${escapeHtml(lastText.slice(0, 32))}</div>` : ''}
@@ -1378,7 +1789,7 @@ function appendMessage(data, type) {
     div.className = `tv-msg ${type === 'msg-sent' ? 'tv-msg-sent' : 'tv-msg-received'}`;
     div.innerHTML = `
         <div>${escapeHtml(data.text)}</div>
-        <div class="tv-msg-meta">${data.timestamp || ''}</div>
+        <div class="tv-msg-meta">${escapeHtml(data.timestamp || '')}</div>
     `;
     area.appendChild(div);
     area.scrollTop = area.scrollHeight;
@@ -1469,7 +1880,9 @@ function updateCallControlsUI() {
     if (camBtn) {
         const label = camBtn.querySelector("span");
         const vidTrack = localStream ? localStream.getVideoTracks()[0] : null;
-        const isCamOff = Boolean(vidTrack && !vidTrack.enabled);
+        const isCamOff = (isConnectorPaired && !localStream)
+            ? Boolean(connectorMediaState.videoOff)
+            : Boolean(vidTrack && !vidTrack.enabled);
         if (isCamOff) {
             if (label) label.innerText = "Cam Off";
             camBtn.style.background = "rgba(255, 75, 75, 0.28)";
@@ -1511,6 +1924,35 @@ async function upgradeAudioCallToVideo() {
     if (vUid) vUid.innerText = "UID: " + (activeCallTarget || "----------");
     const vAvatar = document.getElementById("video-peer-avatar");
     if (vAvatar) vAvatar.innerText = peerInitial;
+
+    if (isConnectorPaired && !localStream) {
+        hasLocalCamera = false;
+        if (localVideo) {
+            localVideo.classList.add("hidden");
+            localVideo.srcObject = null;
+        }
+        updatePipPlaceholderText(true);
+        if (noCameraPlaceholder) noCameraPlaceholder.classList.remove("hidden");
+        try { peerConnection.addTransceiver("video", { direction: "recvonly" }); } catch (_) {}
+        if (socket && my10DigitUid) {
+            socket.emit("tv_connector_control", { tvUid: my10DigitUid, action: "camera_on" });
+        }
+        connectorMediaState.videoOff = false;
+        showToast("📱 Phone Cam Active • Upgraded to HD Video");
+        updateCallControlsUI();
+        setTimeout(() => {
+            const endBtn = document.getElementById("end-call-btn");
+            if (endBtn) focusElement(endBtn, false);
+        }, 80);
+        try {
+            const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+            await peerConnection.setLocalDescription(offer);
+            if (socket) socket.emit("webrtc_offer", { targetUid: activeCallTarget, offer, callType: "video" });
+        } catch (err) {
+            console.warn("[WebRTC] Video upgrade renegotiation error:", err);
+        }
+        return;
+    }
 
     if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
         try { window.ZingNativeBridge.requestCallPermissions("video"); } catch (_) {}
@@ -1647,9 +2089,7 @@ async function startWebRTC(isCaller) {
     // Acquire WakeLock so CPU & screen stay active during call
     await acquireScreenWakeLock();
 
-    // Resilient Hardware Media Ladder:
-    // 1. Mono, 48kHz, full software AEC + ANS + AGC (prevents TV howl and robot voice)
-    // 2. 720p 30fps safe bounds (Safe for TV MediaCodec hardware decoders)
+    // Resilient Hardware Media Ladder OR Option 2 Split-Mesh Zero-Encode TV Receive Mode
     const audioConstraints = {
         echoCancellation: { ideal: true },
         noiseSuppression: { ideal: true },
@@ -1658,8 +2098,10 @@ async function startWebRTC(isCaller) {
         sampleRate: { ideal: 48000 }
     };
 
+    const splitMeshRecvOnlyMode = Boolean(isConnectorPaired);
     let streamObtained = localStream;
-    if (!streamObtained) {
+
+    if (!splitMeshRecvOnlyMode && !streamObtained) {
         if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
             try { window.ZingNativeBridge.requestCallPermissions(currentCallType); } catch (_) {}
         }
@@ -1703,6 +2145,7 @@ async function startWebRTC(isCaller) {
 
     hasLocalCamera = Boolean(localStream && localStream.getVideoTracks().length > 0);
     const noCameraPlaceholder = document.getElementById("no-camera-pip-placeholder");
+    updatePipPlaceholderText(splitMeshRecvOnlyMode && !hasLocalCamera);
 
     if (currentCallType === "audio") {
         if (localVideo) localVideo.classList.add("hidden");
@@ -1719,7 +2162,7 @@ async function startWebRTC(isCaller) {
             }
             if (noCameraPlaceholder) noCameraPlaceholder.classList.add("hidden");
         } else {
-            // TV device has no camera connected
+            // TV device uses paired Phone Cam (Split-Mesh) OR has no USB camera
             if (localVideo) {
                 localVideo.classList.add("hidden");
                 localVideo.srcObject = null;
@@ -1730,34 +2173,44 @@ async function startWebRTC(isCaller) {
         }
     }
 
+    await refreshIceServers();
     peerConnection = new RTCPeerConnection(rtcConfig);
     isStartingWebRTC = false;
-    localStream.getTracks().forEach(track => {
-        peerConnection.addTrack(track, localStream);
-        track.onended = () => {
-            if (track.kind === "video") {
-                console.warn("[WebRTC] Local video track ended (hardware disconnect/unplug).");
-                showToast("Camera disconnected.");
-                const localVideo = document.getElementById("local-video");
-                if (localVideo) localVideo.classList.add("hidden");
-                const noCamEl = document.getElementById("no-camera-pip-placeholder");
-                if (noCamEl) noCamEl.classList.remove("hidden");
-            } else if (track.kind === "audio") {
-                console.warn("[WebRTC] Local audio track ended.");
-                showToast("Microphone disconnected.");
-            }
-        };
-    });
 
-    // If this is a video call, but local stream has no video track (e.g. Fire TV without camera),
-    // add a video transceiver with direction 'recvonly' so WebRTC SDP explicitly receives remote video!
-    if (currentCallType === "video" && localStream.getVideoTracks().length === 0) {
+    if (localStream && !splitMeshRecvOnlyMode) {
+        localStream.getTracks().forEach(track => {
+            peerConnection.addTrack(track, localStream);
+            track.onended = () => {
+                if (track.kind === "video") {
+                    console.warn("[WebRTC] Local video track ended (hardware disconnect/unplug).");
+                    showToast("Camera disconnected.");
+                    const localVid = document.getElementById("local-video");
+                    if (localVid) localVid.classList.add("hidden");
+                    const noCamEl = document.getElementById("no-camera-pip-placeholder");
+                    if (noCamEl) noCamEl.classList.remove("hidden");
+                } else if (track.kind === "audio") {
+                    console.warn("[WebRTC] Local audio track ended.");
+                    showToast("Microphone disconnected.");
+                }
+            };
+        });
+    } else {
+        // Option 2 Split-Mesh Zero-Encode TV Stick path: recvonly downlinks from Friend -> TV!
+        try {
+            peerConnection.addTransceiver("audio", { direction: "recvonly" });
+            if (currentCallType === "video") {
+                peerConnection.addTransceiver("video", { direction: "recvonly" });
+            }
+        } catch (tErr) {
+            console.warn("[WebRTC] Split-Mesh recvonly transceiver notice:", tErr);
+        }
+    }
+
+    // If this is a video call without local video track, guarantee recvonly video transceiver
+    if (currentCallType === "video" && localStream && localStream.getVideoTracks().length === 0) {
         try {
             peerConnection.addTransceiver('video', { direction: 'recvonly' });
-            console.log("[WebRTC] Added recvonly video transceiver for camera-less TV video call");
-        } catch (tErr) {
-            console.warn("[WebRTC] Notice adding recvonly transceiver:", tErr);
-        }
+        } catch (_) {}
     }
 
     // Dynamic bandwidth floor and balanced resolution degradation
@@ -1798,6 +2251,7 @@ async function startWebRTC(isCaller) {
     } catch (_) {}
 
     peerConnection.ontrack = (event) => {
+        if (hasSplitMeshRemoteStream) return;
         const remote = document.getElementById("remote-video");
         if (remote) {
             if (event.streams && event.streams[0]) {
@@ -1916,6 +2370,7 @@ function endCallCleanup() {
 
     const noCameraPlaceholder = document.getElementById("no-camera-pip-placeholder");
     if (noCameraPlaceholder) noCameraPlaceholder.classList.add("hidden");
+    updatePipPlaceholderText(false);
 
     if (outgoingCallTimer) {
         clearTimeout(outgoingCallTimer);
@@ -1937,6 +2392,17 @@ function endCallCleanup() {
         } catch (_) {}
         peerConnection = null;
     }
+
+    if (connectorPeerConnection) {
+        try {
+            connectorPeerConnection.ontrack = null;
+            connectorPeerConnection.onicecandidate = null;
+            connectorPeerConnection.close();
+        } catch (_) {}
+        connectorPeerConnection = null;
+    }
+    connectorIceCandidatesQueue = [];
+    hasSplitMeshRemoteStream = false;
 
     if (localStream) {
         localStream.getTracks().forEach(track => {
@@ -2041,38 +2507,44 @@ async function initiateDirectCall(targetUid, type) {
         try { window.ZingNativeBridge.requestCallPermissions(currentCallType); } catch (_) {}
     }
 
-    // Request hardware permissions and retain localStream to avoid Android camera freeze
-    try {
-        const audioConstraints = {
-            echoCancellation: { ideal: true },
-            noiseSuppression: { ideal: true },
-            autoGainControl: { ideal: true }
-        };
-        if (currentCallType === "video") {
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({
-                    audio: audioConstraints,
-                    video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 } }
-                });
-                hasLocalCamera = true;
-            } catch (_) {
+    if (isConnectorPaired) {
+        // Option 2 Split-Mesh: Connector Phone handles Camera + Mic uplink directly to Friend!
+        localStream = null;
+        hasLocalCamera = false;
+    } else {
+        // Request hardware permissions and retain localStream to avoid Android camera freeze
+        try {
+            const audioConstraints = {
+                echoCancellation: { ideal: true },
+                noiseSuppression: { ideal: true },
+                autoGainControl: { ideal: true }
+            };
+            if (currentCallType === "video") {
                 try {
-                    localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: true });
+                    localStream = await navigator.mediaDevices.getUserMedia({
+                        audio: audioConstraints,
+                        video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 } }
+                    });
                     hasLocalCamera = true;
                 } catch (_) {
-                    hasLocalCamera = false;
-                    localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
-                    showToast("No camera detected on this TV. Connecting with TV voice + remote video.");
+                    try {
+                        localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: true });
+                        hasLocalCamera = true;
+                    } catch (_) {
+                        hasLocalCamera = false;
+                        localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+                        showToast("No camera detected on this TV. Connecting with TV voice + remote video.");
+                    }
                 }
+            } else {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+                hasLocalCamera = false;
             }
-        } else {
-            localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
-            hasLocalCamera = false;
+        } catch (permErr) {
+            console.warn("[Media Permission Error]:", permErr);
+            showToast("❌ Microphone permission required for call: " + (permErr.message || "Permission denied"));
+            return;
         }
-    } catch (permErr) {
-        console.warn("[Media Permission Error]:", permErr);
-        showToast("❌ Microphone permission required for call: " + (permErr.message || "Permission denied"));
-        return;
     }
 
     isCallInitiating = true;
@@ -2156,7 +2628,13 @@ function handleAlexaIncomingCommand(cmd) {
         const rejectBtn = document.getElementById("reject-call-btn");
         if (rejectBtn) rejectBtn.click();
     } else if (action === 'mute_mic') {
-        if (localStream) {
+        if (isConnectorPaired && !localStream && socket && my10DigitUid) {
+            isMicMuted = true;
+            connectorMediaState.micMuted = true;
+            socket.emit("tv_connector_control", { tvUid: my10DigitUid, action: "mute_mic" });
+            updateCallControlsUI();
+            showToast("Phone mic muted");
+        } else if (localStream) {
             const track = localStream.getAudioTracks()[0];
             if (track) {
                 isMicMuted = true;
@@ -2166,7 +2644,13 @@ function handleAlexaIncomingCommand(cmd) {
             }
         }
     } else if (action === 'unmute_mic') {
-        if (localStream) {
+        if (isConnectorPaired && !localStream && socket && my10DigitUid) {
+            isMicMuted = false;
+            connectorMediaState.micMuted = false;
+            socket.emit("tv_connector_control", { tvUid: my10DigitUid, action: "unmute_mic" });
+            updateCallControlsUI();
+            showToast("Phone mic active");
+        } else if (localStream) {
             const track = localStream.getAudioTracks()[0];
             if (track) {
                 isMicMuted = false;
@@ -2176,7 +2660,12 @@ function handleAlexaIncomingCommand(cmd) {
             }
         }
     } else if (action === 'camera_off') {
-        if (localStream) {
+        if (isConnectorPaired && !localStream && socket && my10DigitUid) {
+            connectorMediaState.videoOff = true;
+            socket.emit("tv_connector_control", { tvUid: my10DigitUid, action: "camera_off" });
+            updateCallControlsUI();
+            showToast("Phone camera turned off");
+        } else if (localStream) {
             const track = localStream.getVideoTracks()[0];
             if (track) {
                 track.enabled = false;
@@ -2185,7 +2674,12 @@ function handleAlexaIncomingCommand(cmd) {
             }
         }
     } else if (action === 'camera_on') {
-        if (localStream) {
+        if (isConnectorPaired && !localStream && socket && my10DigitUid) {
+            connectorMediaState.videoOff = false;
+            socket.emit("tv_connector_control", { tvUid: my10DigitUid, action: "camera_on" });
+            updateCallControlsUI();
+            showToast("Phone camera active");
+        } else if (localStream) {
             const track = localStream.getVideoTracks()[0];
             if (track) {
                 track.enabled = true;
@@ -2194,7 +2688,12 @@ function handleAlexaIncomingCommand(cmd) {
             }
         }
     } else if (action === 'toggle_camera') {
-        if (localStream) {
+        if (isConnectorPaired && !localStream && socket && my10DigitUid) {
+            connectorMediaState.videoOff = !connectorMediaState.videoOff;
+            socket.emit("tv_connector_control", { tvUid: my10DigitUid, action: "toggle_camera" });
+            updateCallControlsUI();
+            showToast(connectorMediaState.videoOff ? "Phone camera off" : "Phone camera active");
+        } else if (localStream) {
             const track = localStream.getVideoTracks()[0];
             if (track) {
                 track.enabled = !track.enabled;
@@ -2203,7 +2702,13 @@ function handleAlexaIncomingCommand(cmd) {
             }
         }
     } else if (action === 'toggle_mic') {
-        if (localStream) {
+        if (isConnectorPaired && !localStream && socket && my10DigitUid) {
+            isMicMuted = !isMicMuted;
+            connectorMediaState.micMuted = isMicMuted;
+            socket.emit("tv_connector_control", { tvUid: my10DigitUid, action: "toggle_mic" });
+            updateCallControlsUI();
+            showToast(isMicMuted ? "Phone mic muted" : "Phone mic active");
+        } else if (localStream) {
             const track = localStream.getAudioTracks()[0];
             if (track) {
                 isMicMuted = !isMicMuted;
@@ -2274,6 +2779,7 @@ function handleAlexaIncomingCommand(cmd) {
         }
     } else if (action === 'navigate_home') {
         closeChat();
+        document.getElementById("connector-pair-modal")?.classList.add("hidden");
         document.getElementById("guide-modal")?.classList.add("hidden");
         document.getElementById("profile-modal")?.classList.add("hidden");
         document.getElementById("policy-modal")?.classList.add("hidden");
@@ -2308,7 +2814,15 @@ export function focusElement(el, shouldScroll = true) {
         try { el.focus(); } catch (_) {}
     }
     if (shouldScroll) {
-        if (el.closest('.tv-contacts-list') || el.closest('#messages-area') || el.closest('.tv-policy-scroll') || el.closest('#guide-scroll-area')) {
+        if (
+            el.closest('.tv-contacts-list') ||
+            el.closest('#messages-area') ||
+            el.closest('.tv-policy-scroll') ||
+            el.closest('#guide-scroll-area') ||
+            el.closest('.tv-sidebar') ||
+            el.closest('.tv-login-screen') ||
+            el.closest('.tv-dialog-card')
+        ) {
             try {
                 el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
             } catch (_) {}
@@ -2485,17 +2999,13 @@ function getCustomNavigationTarget(current, direction) {
     }
     if (id === "toggle-auth-mode-btn") {
         if (direction === "up") return document.getElementById("email-login-submit-btn");
-        if (direction === "down") return document.getElementById("open-policy-btn");
+        if (direction === "right" || direction === "down") return document.getElementById("open-policy-btn");
+        if (direction === "left") return document.getElementById("toggle-auth-mode-btn");
     }
     if (id === "open-policy-btn") {
-        if (direction === "down") return document.getElementById("open-policy-btn");
-        if (direction === "up") {
-            const guestPane = document.getElementById("pane-guest");
-            if (guestPane && !guestPane.classList.contains("hidden")) {
-                return document.getElementById("guest-login-btn");
-            }
-            return document.getElementById("toggle-auth-mode-btn");
-        }
+        if (direction === "left") return document.getElementById("toggle-auth-mode-btn");
+        if (direction === "down" || direction === "right") return document.getElementById("open-policy-btn");
+        if (direction === "up") return document.getElementById("email-login-submit-btn");
     }
 
     // Guest Form
@@ -2505,12 +3015,21 @@ function getCustomNavigationTarget(current, direction) {
     }
     if (id === "guest-login-btn") {
         if (direction === "up") return document.getElementById("guest-name-input");
-        if (direction === "down") return document.getElementById("open-policy-btn");
+        if (direction === "down") return document.getElementById("open-policy-guest-btn") || document.getElementById("open-policy-btn");
+    }
+    if (id === "open-policy-guest-btn") {
+        if (direction === "up") return document.getElementById("guest-login-btn");
+        if (direction === "down") return document.getElementById("open-policy-guest-btn");
     }
 
     // --- 2. Main Screen Layout Navigation ---
     // Top Bar
+    if (id === "header-connector-btn") {
+        if (direction === "right") return document.getElementById("header-guide-btn");
+        if (direction === "down") return document.getElementById("dial-uid-input");
+    }
     if (id === "header-guide-btn") {
+        if (direction === "left") return document.getElementById("header-connector-btn");
         if (direction === "right") return document.getElementById("my-profile-chip");
         if (direction === "down") return document.getElementById("dial-uid-input");
     }
@@ -2555,7 +3074,7 @@ function getCustomNavigationTarget(current, direction) {
     if (id === "quick-video-call-btn") {
         if (direction === "left") return document.getElementById("quick-audio-call-btn");
         if (direction === "up") return document.getElementById("dial-uid-input");
-        if (direction === "down") return document.getElementById("contact-uid-input");
+        if (direction === "down") return document.getElementById("contact-name-input") || document.getElementById("contact-uid-input");
         if (direction === "right") {
             const activeChat = document.getElementById("tv-active-chat");
             if (activeChat && !activeChat.classList.contains("hidden")) {
@@ -2565,16 +3084,12 @@ function getCustomNavigationTarget(current, direction) {
     }
     if (id === "contact-uid-input") {
         if (direction === "up") return document.getElementById("quick-chat-btn");
-        if (direction === "down") return document.getElementById("contact-name-input");
-        if (direction === "right") {
-            const activeChat = document.getElementById("tv-active-chat");
-            if (activeChat && !activeChat.classList.contains("hidden")) {
-                return document.getElementById("messages-area") || document.getElementById("message-input");
-            }
-        }
+        if (direction === "right") return document.getElementById("contact-name-input");
+        if (direction === "down") return document.getElementById("save-contact-btn");
     }
     if (id === "contact-name-input") {
-        if (direction === "up") return document.getElementById("contact-uid-input");
+        if (direction === "left") return document.getElementById("contact-uid-input");
+        if (direction === "up") return document.getElementById("quick-video-call-btn");
         if (direction === "down") return document.getElementById("save-contact-btn");
         if (direction === "right") {
             const activeChat = document.getElementById("tv-active-chat");
@@ -2584,7 +3099,7 @@ function getCustomNavigationTarget(current, direction) {
         }
     }
     if (id === "save-contact-btn") {
-        if (direction === "up") return document.getElementById("contact-name-input");
+        if (direction === "up") return document.getElementById("contact-uid-input");
         if (direction === "down") {
             const firstContact = document.querySelector("#contacts-list .tv-contact-card");
             return firstContact || document.getElementById("sidebar-policy-btn");
@@ -2793,7 +3308,7 @@ function getCustomNavigationTarget(current, direction) {
         if (direction === "up") return document.getElementById("policy-scroll-area");
     }
 
-    // --- 9. Alexa Voice & Remote Guide Modal ---
+    // --- 9. How to Use Guide Modal ---
     if (id === "close-guide-modal-btn") {
         if (direction === "down") return document.getElementById("guide-scroll-area");
     }
@@ -2803,6 +3318,32 @@ function getCustomNavigationTarget(current, direction) {
     }
     if (id === "guide-ok-btn") {
         if (direction === "up") return document.getElementById("guide-scroll-area");
+    }
+
+    // --- 10. Connector Pairing Modal ---
+    if (id === "close-connector-modal-btn") {
+        if (direction === "down") return document.getElementById("connector-done-btn") || document.getElementById("connector-refresh-code-btn");
+    }
+    if (id === "connector-refresh-code-btn") {
+        if (direction === "up") return document.getElementById("close-connector-modal-btn");
+        if (direction === "right") {
+            const unpair = document.getElementById("connector-unpair-btn");
+            if (unpair && isElementVisibleAndFocusable(unpair)) return unpair;
+            return document.getElementById("connector-done-btn");
+        }
+    }
+    if (id === "connector-unpair-btn") {
+        if (direction === "up") return document.getElementById("close-connector-modal-btn");
+        if (direction === "left") return document.getElementById("connector-refresh-code-btn");
+        if (direction === "right") return document.getElementById("connector-done-btn");
+    }
+    if (id === "connector-done-btn") {
+        if (direction === "up") return document.getElementById("close-connector-modal-btn");
+        if (direction === "left") {
+            const unpair = document.getElementById("connector-unpair-btn");
+            if (unpair && isElementVisibleAndFocusable(unpair)) return unpair;
+            return document.getElementById("connector-refresh-code-btn");
+        }
     }
 
     return null;
@@ -3633,6 +4174,17 @@ document.addEventListener("click", async (e) => {
 
     // Call Screen Controls (Unified for both Video and Audio Pages)
     if (e.target.id === "mute-mic-btn" || e.target.closest("#mute-mic-btn") || e.target.id === "audio-mute-mic-btn" || e.target.closest("#audio-mute-mic-btn")) {
+        if (isConnectorPaired && !localStream && socket && my10DigitUid) {
+            isMicMuted = !isMicMuted;
+            connectorMediaState.micMuted = isMicMuted;
+            socket.emit("tv_connector_control", {
+                tvUid: my10DigitUid,
+                action: isMicMuted ? "mute_mic" : "unmute_mic"
+            });
+            updateCallControlsUI();
+            showToast(isMicMuted ? "Phone mic muted" : "Phone mic active");
+            return;
+        }
         if (localStream) {
             const track = localStream.getAudioTracks()[0];
             if (track) {
@@ -3649,6 +4201,16 @@ document.addEventListener("click", async (e) => {
         if (currentCallType === "audio") {
             // Seamlessly upgrade ongoing audio call to HD video call over active peerConnection
             upgradeAudioCallToVideo().catch(() => {});
+            return;
+        }
+        if (isConnectorPaired && !localStream && socket && my10DigitUid) {
+            connectorMediaState.videoOff = !connectorMediaState.videoOff;
+            socket.emit("tv_connector_control", {
+                tvUid: my10DigitUid,
+                action: connectorMediaState.videoOff ? "camera_off" : "camera_on"
+            });
+            updateCallControlsUI();
+            showToast(connectorMediaState.videoOff ? "Phone camera off" : "Phone camera active");
             return;
         }
         if (localStream) {
@@ -3762,6 +4324,34 @@ document.addEventListener("click", async (e) => {
         return;
     }
 
+    // Connector Phone Cam Pairing Modal
+    if (e.target.id === "header-connector-btn" || e.target.closest("#header-connector-btn")) {
+        openConnectorPairModal();
+        return;
+    }
+
+    if (e.target.id === "close-connector-modal-btn" || e.target.closest("#close-connector-modal-btn") || e.target.id === "connector-done-btn" || e.target.closest("#connector-done-btn")) {
+        closeConnectorPairModal();
+        return;
+    }
+
+    if (e.target.id === "connector-refresh-code-btn" || e.target.closest("#connector-refresh-code-btn")) {
+        requestTvPairingCode(true);
+        showToast("Generating new 6-digit pairing code...");
+        return;
+    }
+
+    if (e.target.id === "connector-unpair-btn" || e.target.closest("#connector-unpair-btn")) {
+        if (socket && socket.connected && my10DigitUid) {
+            socket.emit("tv_unpair_connector", { tvUid: my10DigitUid });
+        }
+        isConnectorPaired = false;
+        connectorDeviceName = "";
+        updateConnectorStatusUI();
+        showToast("Connector Phone unpaired");
+        return;
+    }
+
     // How to Use Guide Modal
     if (e.target.id === "header-guide-btn" || e.target.closest("#header-guide-btn")) {
         document.getElementById("guide-modal")?.classList.remove("hidden");
@@ -3805,8 +4395,35 @@ document.getElementById("contact-uid-input")?.addEventListener("input", (e) => {
 document.getElementById("tab-btn-email")?.addEventListener("focus", () => switchToLoginTab("email"));
 document.getElementById("tab-btn-guest")?.addEventListener("focus", () => switchToLoginTab("guest"));
 
-// Initial Fire TV Leanback D-Pad Auto-Focus
+// YouTube TV-style Dark Animated Startup Splash Screen Controller
+function dismissTvStartupSplash(immediate = false) {
+    const splash = document.getElementById("tv-startup-splash");
+    if (!splash || splash.classList.contains("hidden")) {
+        autoFocusFirstElement();
+        return;
+    }
+    if (immediate) {
+        splash.classList.add("hidden");
+        autoFocusFirstElement();
+        return;
+    }
+    splash.classList.add("splash-fade-out");
+    setTimeout(() => {
+        splash.classList.add("hidden");
+        autoFocusFirstElement();
+    }, 400);
+}
+
+// Initial Fire TV Leanback Startup Splash & D-Pad Auto-Focus
+if (window.location.search.includes("autostart=1")) {
+    dismissTvStartupSplash(true);
+} else {
+    setTimeout(() => {
+        dismissTvStartupSplash(false);
+    }, 1250);
+}
 window.addEventListener("load", () => {
     setTimeout(autoFocusFirstElement, 150);
 });
 setTimeout(autoFocusFirstElement, 300);
+

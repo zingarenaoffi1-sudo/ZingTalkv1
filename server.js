@@ -99,7 +99,7 @@ try {
         try {
             const u = new URL(t); const h = u.hostname.toLowerCase();
             if (h === 'localhost' || h === '127.0.0.1') return u.protocol === 'http:' || u.protocol === 'https:';
-            return u.protocol === 'https:' && (h === 'zingtalk.duckdns.org' || h.endsWith('.run.app') || h.endsWith('.ai.studio'));
+            return u.protocol === 'https:' && (h === 'zingtalk.duckdns.org' || h === 'zingarenaoffi1-sudo.github.io' || h.endsWith('.run.app') || h.endsWith('.ai.studio'));
         } catch (_) { return false; }
     };
     validateAlexaWebhookRequest = (headers = {}, body = {}, { expectedSkillId = '', requireCertUrl = false } = {}) => {

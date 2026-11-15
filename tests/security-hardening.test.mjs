@@ -83,6 +83,7 @@ test('sanitizeServerUrl & isCorsOriginAllowed enforce trusted origins only', () 
   assert.equal(isCorsOriginAllowed(undefined), true); // Native HTTP client
   assert.equal(isCorsOriginAllowed('capacitor://localhost'), true);
   assert.equal(isCorsOriginAllowed('https://zingtalk.duckdns.org'), true);
+  assert.equal(isCorsOriginAllowed('https://zingarenaoffi1-sudo.github.io'), true);
   assert.equal(isCorsOriginAllowed('http://localhost:3000'), true);
   assert.equal(isCorsOriginAllowed('https://evil.example.com'), false);
   assert.equal(isCorsOriginAllowed('null'), false);
@@ -171,9 +172,17 @@ test('Zero hardcoded TURN passwords & full server/Android security protections v
 
   const prepAndroid = fs.readFileSync(path.resolve('scripts/prepare-android.js'), 'utf8');
   assert.ok(prepAndroid.includes('android:usesCleartextTraffic="false"'));
+  assert.ok(prepAndroid.includes('xmlns:tools="http://schemas.android.com/tools"'));
+  assert.ok(prepAndroid.includes('tools:replace="android:usesCleartextTraffic"'));
   assert.ok(prepAndroid.includes('android:allowBackup="false"'));
   assert.ok(prepAndroid.includes('setAllowUniversalAccessFromFileURLs(false)'));
   assert.ok(prepAndroid.includes('setAllowFileAccessFromFileURLs(false)'));
   assert.ok(prepAndroid.includes('setGeolocationEnabled(false)'));
   assert.ok(prepAndroid.includes('MIXED_CONTENT_NEVER_ALLOW'));
+
+  const rootIndex = fs.readFileSync(path.resolve('index.html'), 'utf8');
+  const tvIndex = fs.readFileSync(path.resolve('packages/tv/index.html'), 'utf8');
+  assert.equal(rootIndex, tvIndex, 'Root index.html for GitHub Pages must be synced with packages/tv/index.html');
+  assert.ok(rootIndex.includes('header-connector-btn'), 'Root index.html must include Phone Cam header button');
+  assert.ok(rootIndex.includes('connector-pair-modal'), 'Root index.html must include Phone Cam pairing modal');
 });

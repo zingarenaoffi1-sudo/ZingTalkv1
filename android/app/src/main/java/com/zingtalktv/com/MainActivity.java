@@ -37,6 +37,7 @@ public class MainActivity extends BridgeActivity {
     private NotificationManager notificationManager;
 
     @Override
+    @SuppressWarnings("deprecation")
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         try {
@@ -51,10 +52,13 @@ public class MainActivity extends BridgeActivity {
             if (webView != null) {
                 webView.setBackgroundColor(android.graphics.Color.parseColor("#090d16"));
                 WebSettings settings = webView.getSettings();
-                settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
                 settings.setDomStorageEnabled(true);
                 settings.setJavaScriptEnabled(true);
                 settings.setAllowFileAccess(true);
+                settings.setAllowFileAccessFromFileURLs(false);
+                settings.setAllowUniversalAccessFromFileURLs(false);
+                settings.setGeolocationEnabled(false);
                 settings.setAllowContentAccess(true);
                 settings.setDatabaseEnabled(true);
                 settings.setMediaPlaybackRequiresUserGesture(false);
@@ -85,6 +89,24 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception ignored) {}
 
         handleIntentAction(getIntent());
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQ_CODE) {
+            try {
+                final WebView webView = this.getBridge().getWebView();
+                if (webView != null) {
+                    webView.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('zing-permissions-result')); window.onNativePermissionsResult && window.onNativePermissionsResult();", null);
+                        }
+                    });
+                }
+            } catch (Exception ignored) {}
+        }
     }
 
     @Override
@@ -374,6 +396,31 @@ public class MainActivity extends BridgeActivity {
             } catch (Exception e) {
                 return true;
             }
+        }
+
+        @JavascriptInterface
+        public boolean hasCameraPermission() {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+            try {
+                return ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public boolean hasMicPermission() {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+            try {
+                return ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public boolean hasAllPermissions() {
+            return hasCameraPermission() && hasMicPermission();
         }
     }
 }

@@ -57,6 +57,7 @@ public class MainActivity extends BridgeActivity {
     private NotificationManager notificationManager;
 
     @Override
+    @SuppressWarnings("deprecation")
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         try {
@@ -690,7 +691,8 @@ if (fs.existsSync(manifestPath)) {
     const leanbackCategory = isTv ? '\n                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />' : '';
 
     const cleanManifest = `<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Support All Screen Sizes & Densities (7", 8", 8.9", 10.1", 11" Fire Tablets, Phones & TVs) -->
     <supports-screens
@@ -735,6 +737,7 @@ ${platformFeatures}
     <application${applicationBannerAttr}
         android:networkSecurityConfig="@xml/network_security_config"
         android:usesCleartextTraffic="false"
+        tools:replace="android:usesCleartextTraffic"
         android:largeHeap="true"
         android:hardwareAccelerated="true"
         android:allowBackup="false"
@@ -781,6 +784,17 @@ ${platformFeatures}
 
     fs.writeFileSync(manifestPath, cleanManifest, 'utf8');
     console.log(`[prepare-android] ✅ Written clean platform-specific AndroidManifest.xml for [${targetPlatform.toUpperCase()}]`);
+}
+
+// Align Capacitor/Cordova plugins manifest cleartext setting to avoid Manifest Merger conflicts
+const cordovaManifestPath = path.join('android', 'capacitor-cordova-android-plugins', 'src', 'main', 'AndroidManifest.xml');
+if (fs.existsSync(cordovaManifestPath)) {
+    let cordovaManifest = fs.readFileSync(cordovaManifestPath, 'utf8');
+    if (cordovaManifest.includes('android:usesCleartextTraffic="true"')) {
+        cordovaManifest = cordovaManifest.replace(/android:usesCleartextTraffic="true"/g, 'android:usesCleartextTraffic="false"');
+        fs.writeFileSync(cordovaManifestPath, cordovaManifest, 'utf8');
+        console.log('[prepare-android] ✅ Aligned capacitor-cordova-android-plugins AndroidManifest.xml usesCleartextTraffic="false"');
+    }
 }
 
 // 6. ProGuard Rules
