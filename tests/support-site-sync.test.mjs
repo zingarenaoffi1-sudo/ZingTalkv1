@@ -53,6 +53,7 @@ test('sync-support-site.yml securely syncs the 4 HTML files to Support-Zing/Zing
   assert.ok(wf.includes('git add index.html infodeveloper.html privacy.html terms.html'));
   assert.equal(/cp[^\n]*ads\.txt|git add[^\n]*ads\.txt|rm[^\n]*ads\.txt/i.test(wf), false, 'Workflow must never copy, stage, or remove ads.txt');
   assert.ok(wf.includes('user.name "Support-Zing"'));
-  assert.ok(wf.includes('user.email "support.zing.app@gmail.com"'));
+  assert.ok(wf.includes('users.noreply.github.com'));
+  assert.equal(wf.includes('support.zing.app@gmail.com'), false, 'Workflow git config must use GitHub noreply email to avoid GH007 privacy rejection');
   assert.equal(/zingarenaoffi1-sudo|ZingTalkv1/i.test(wf), false, 'Workflow must not embed private account/repo strings');
 });

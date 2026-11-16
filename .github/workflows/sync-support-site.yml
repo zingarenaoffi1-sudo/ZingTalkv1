@@ -52,7 +52,14 @@ jobs:
             exit 0
           fi
 
+          GH_ID=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.SYNC_TOKEN }}" "https://api.github.com/users/Support-Zing" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); if(d && d.id) console.log(d.id);" 2>/dev/null || true)
+          if [ -n "$GH_ID" ]; then
+            COMMIT_EMAIL="${GH_ID}+Support-Zing@users.noreply.github.com"
+          else
+            COMMIT_EMAIL="Support-Zing@users.noreply.github.com"
+          fi
+
           git config user.name "Support-Zing"
-          git config user.email "support.zing.app@gmail.com"
+          git config user.email "$COMMIT_EMAIL"
           git commit -m "chore: update ZingTalk ecosystem portal and legal compliance pages"
           git push origin HEAD:main
