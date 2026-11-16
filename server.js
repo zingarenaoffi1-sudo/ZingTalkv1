@@ -999,6 +999,7 @@ app.use('/screenshots', express.static(path.join(__dirname, 'screenshots')));
 app.use('/tv', express.static(path.join(__dirname, 'packages', 'tv')));
 app.use('/mobile', express.static(path.join(__dirname, 'packages', 'mobile')));
 app.use('/connector', express.static(path.join(__dirname, 'packages', 'connector')));
+app.use('/support-site', express.static(path.join(__dirname, 'support-site')));
 ['/socket.io.min.js', '/manifest.json', '/capacitor.js', '/service-worker.js', '/qr.js', '/style.css', '/app.js'].forEach((filePath) => {
     app.get(filePath, (req, res, next) => {
         const full = path.join(__dirname, filePath.slice(1));

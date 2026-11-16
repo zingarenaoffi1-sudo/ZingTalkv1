@@ -1,0 +1,58 @@
+name: Sync Public Support Portal to Support-Zing
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'support-site/**'
+      - '.github/workflows/sync-support-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-portal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source portal files
+        uses: actions/checkout@v4
+
+      - name: Verify support-site HTML deliverables exist
+        run: |
+          for file in index.html infodeveloper.html privacy.html terms.html; do
+            if [ ! -f "support-site/$file" ]; then
+              echo "Missing required support-site/$file"
+              exit 1
+            fi
+          done
+
+      - name: Checkout public Support-Zing/ZingTalk repository
+        uses: actions/checkout@v4
+        with:
+          repository: Support-Zing/ZingTalk
+          ref: main
+          token: ${{ secrets.SYNC_TOKEN }}
+          path: target-portal
+
+      - name: Copy only the 4 portal HTML files (preserve ads.txt untouched)
+        run: |
+          cp support-site/index.html target-portal/index.html
+          cp support-site/infodeveloper.html target-portal/infodeveloper.html
+          cp support-site/privacy.html target-portal/privacy.html
+          cp support-site/terms.html target-portal/terms.html
+
+          # Stage ONLY the 4 HTML files — never touch or overwrite ads.txt
+          cd target-portal
+          git add index.html infodeveloper.html privacy.html terms.html
+
+          if git diff --cached --quiet; then
+            echo "Support portal is already up to date. No push needed."
+            exit 0
+          fi
+
+          git config user.name "Support-Zing"
+          git config user.email "support.zing.app@gmail.com"
+          git commit -m "chore: update ZingTalk ecosystem portal and legal compliance pages"
+          git push origin HEAD:main
