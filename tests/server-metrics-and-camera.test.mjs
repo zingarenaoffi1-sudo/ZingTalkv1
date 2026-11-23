@@ -5,7 +5,9 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { detectPlatformFromClient, computeServerLoadReport } = require('../lib/server-metrics.js');
+const { detectPlatformFromClient, parseProcMemInfo, computeServerLoadReport } = require('../lib/server-metrics.js');
+const { FixedWindowRateLimiter, timingSafeEqualString } = require('../lib/security.js');
+const { computeLoadWavePlan } = require('../scripts/load-test.js');
 
 test('detectPlatformFromClient prevents Desktop/Mobile browser tests from counting as Fire TV', () => {
   const desktopChromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -118,8 +120,79 @@ test('Mobile and TV clients await native camera permissions, support fallbacks, 
 
   const loadScript = fs.readFileSync(path.resolve('scripts/load-test.js'), 'utf8');
   assert.ok(loadScript.includes('ephemeralLoadTest: true'), 'Load test script must use ephemeralLoadTest flag');
-  assert.ok(loadScript.includes('99'), 'Load test script must default to 99 starting users');
+  assert.ok(loadScript.includes('40000'), 'Load test script must allow up to 40,000 requests');
+  assert.ok(loadScript.includes('X-Load-Test-Secret'), 'Load test script must attach X-Load-Test-Secret when configured');
   const loadWorkflow = fs.readFileSync(path.resolve('.github/workflows/load-test.yml'), 'utf8');
   assert.ok(loadWorkflow.includes('workflow_dispatch'), 'Load test workflow must be manual-only');
-  assert.ok(loadWorkflow.includes("default: '99'"), 'Load test workflow must default to 99 users');
+  assert.ok(loadWorkflow.includes("default: '1000'"), 'Load test workflow must default to 1000 starting load/rate');
+  assert.ok(loadWorkflow.includes('LOAD_TEST_TOKEN'), 'Load test workflow must wire secrets.LOAD_TEST_TOKEN');
+
+  assert.ok(serverSrc.includes('/api/admin/cleanup-memory'), 'server.js must expose POST /api/admin/cleanup-memory');
+  assert.ok(serverSrc.includes('btn-cleanup-ram'), 'Admin panel must render Clean RAM button');
+  assert.ok(serverSrc.includes('isValidLoadTestRequest'), 'server.js must support X-Load-Test-Secret verification');
+});
+
+test('parseProcMemInfo & computeServerLoadReport distinguish reclaimable Linux cache from real RAM pressure', () => {
+  const sampleMemInfo = [
+    'MemTotal:         930816 kB',
+    'MemFree:          288768 kB',
+    'MemAvailable:     612352 kB',
+    'Buffers:           40960 kB',
+    'Cached:           245760 kB',
+    'SReclaimable:      36864 kB'
+  ].join('\n');
+
+  const parsed = parseProcMemInfo(sampleMemInfo);
+  assert.ok(parsed);
+  assert.equal(Math.round(parsed.memTotalBytes / (1024 * 1024)), 909);
+  assert.equal(Math.round(parsed.memAvailableBytes / (1024 * 1024)), 598);
+
+  const report = computeServerLoadReport({
+    cpuUsedPct: 5,
+    totalMemBytes: parsed.memTotalBytes,
+    freeMemBytes: parsed.memFreeBytes,
+    memAvailableBytes: parsed.memAvailableBytes,
+    reclaimableCacheBytes: parsed.reclaimableCacheBytes
+  });
+
+  // 598 MB genuinely available out of 909 MB => ~34% used instead of false 69%
+  assert.equal(report.memory.totalMb, 909);
+  assert.equal(report.memory.freeMb, 598);
+  assert.equal(report.memory.osFreeMb, 282);
+  assert.equal(report.memory.reclaimableCacheMb, 316);
+  assert.ok(report.memory.usedPct < 40, `Expected <40% real RAM used, got ${report.memory.usedPct}%`);
+});
+
+test('FixedWindowRateLimiter.pruneExpired clears expired buckets and timingSafeEqualString validates secrets safely', () => {
+  let fakeNow = 1000;
+  const limiter = new FixedWindowRateLimiter({ windowMs: 5000, maxRequests: 10, nowFn: () => fakeNow });
+  limiter.check('sock:a');
+  limiter.check('sock:b');
+  assert.equal(limiter.buckets.size, 2);
+
+  fakeNow += 6000;
+  const removed = limiter.pruneExpired(fakeNow);
+  assert.equal(removed, 2);
+  assert.equal(limiter.buckets.size, 0);
+
+  assert.equal(timingSafeEqualString('secret-123', 'secret-123'), true);
+  assert.equal(timingSafeEqualString('secret-123', 'secret-124'), false);
+  assert.equal(timingSafeEqualString('short', 'much-longer-token'), false);
+  assert.equal(timingSafeEqualString('', ''), false);
+});
+
+test('computeLoadWavePlan defaults to 1,000 req/s and scales up to 40,000 requests across safe waves', () => {
+  const def = computeLoadWavePlan();
+  assert.equal(def.totalRequests, 1000);
+  assert.equal(def.ratePerSec, 1000);
+  assert.equal(def.waveCount, 1);
+
+  const maxRun = computeLoadWavePlan({ totalRequests: 40000, ratePerSec: 1000, batchSize: 1000 });
+  assert.equal(maxRun.totalRequests, 40000);
+  assert.equal(maxRun.waveCount, 40);
+  assert.equal(maxRun.waves[0].count, 1000);
+  assert.equal(maxRun.waves[39].startIndex, 39000);
+
+  const clamped = computeLoadWavePlan({ totalRequests: 999999, ratePerSec: 1000, batchSize: 1000 });
+  assert.equal(clamped.totalRequests, 40000);
 });

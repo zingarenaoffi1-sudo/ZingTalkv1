@@ -43,9 +43,9 @@ loadEnvFile();
 const { Server } = require('socket.io');
 const admin = require('firebase-admin');
 let normalizeUid, normalizePairCode, SplitMeshRegistry;
-let timingSafeEqualHex, FixedWindowRateLimiter, issueSessionToken, verifySessionToken, generateTurnCredentials, isCorsOriginAllowed, validateAlexaWebhookRequest;
+let timingSafeEqualHex, timingSafeEqualString, FixedWindowRateLimiter, issueSessionToken, verifySessionToken, generateTurnCredentials, isCorsOriginAllowed, validateAlexaWebhookRequest;
 try {
-    ({ timingSafeEqualHex, FixedWindowRateLimiter, issueSessionToken, verifySessionToken, generateTurnCredentials, isCorsOriginAllowed, validateAlexaWebhookRequest } = require('./lib/security'));
+    ({ timingSafeEqualHex, timingSafeEqualString, FixedWindowRateLimiter, issueSessionToken, verifySessionToken, generateTurnCredentials, isCorsOriginAllowed, validateAlexaWebhookRequest } = require('./lib/security'));
 } catch (_) {
     timingSafeEqualHex = (a, b) => {
         if (typeof a !== 'string' || typeof b !== 'string') return false;
@@ -53,12 +53,26 @@ try {
         if (!ca || ca.length !== cb.length || ca.length % 2 !== 0) return false;
         try { return crypto.timingSafeEqual(Buffer.from(ca, 'hex'), Buffer.from(cb, 'hex')); } catch (_) { return false; }
     };
+    timingSafeEqualString = (a, b) => {
+        if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
+        const da = crypto.createHash('sha256').update(a, 'utf8').digest();
+        const dbDigest = crypto.createHash('sha256').update(b, 'utf8').digest();
+        return crypto.timingSafeEqual(da, dbDigest);
+    };
     FixedWindowRateLimiter = class {
         constructor({ windowMs = 60000, maxRequests = 10 } = {}) {
             this.windowMs = windowMs; this.maxRequests = maxRequests; this.buckets = new Map();
         }
+        pruneExpired(now = Date.now()) {
+            let removed = 0;
+            for (const [k, e] of this.buckets.entries()) {
+                if (!e || now >= e.resetAt) { this.buckets.delete(k); removed++; }
+            }
+            return removed;
+        }
         check(key, cost = 1) {
             const k = String(key || 'anon'), now = Date.now();
+            if (this.buckets.size > 5000) this.pruneExpired(now);
             if (this.buckets.size > 5000) this.buckets.clear();
             let e = this.buckets.get(k);
             if (!e || now >= e.resetAt) { e = { count: 0, resetAt: now + this.windowMs }; this.buckets.set(k, e); }
@@ -299,9 +313,9 @@ try {
         }
     };
 }
-let detectPlatformFromClient, computeServerLoadReport;
+let detectPlatformFromClient, parseProcMemInfo, computeServerLoadReport;
 try {
-    ({ detectPlatformFromClient, computeServerLoadReport } = require('./lib/server-metrics'));
+    ({ detectPlatformFromClient, parseProcMemInfo, computeServerLoadReport } = require('./lib/server-metrics'));
 } catch (_) {
     detectPlatformFromClient = ({ data = {}, userAgent = '' } = {}) => {
         const ua = String(userAgent || '');
@@ -321,10 +335,26 @@ try {
         if (/Android/i.test(ua) && !/Mobile/i.test(ua)) return 'Fire TV';
         return 'Web Browser';
     };
-    computeServerLoadReport = ({ cpuUsedPct = 0, totalMemBytes = 1, freeMemBytes = 0, processRssBytes = 0, heapUsedBytes = 0, heapTotalBytes = 0, cpuCores = 1, loadAvg1m = 0, loadAvg5m = 0, loadAvg15m = 0, eventLoopLagMs = 0, liveSockets = 0, activePairings = 0, activeSplitCalls = 0, uptimeSeconds = 0 } = {}) => {
+    parseProcMemInfo = (rawText) => {
+        if (!rawText || typeof rawText !== 'string') return null;
+        const kb = {};
+        for (const line of rawText.split('\n')) {
+            const m = /^([A-Za-z0-9_]+):\s+(\d+)\s*kB/i.exec(line.trim());
+            if (m) kb[m[1]] = Number(m[2]) * 1024;
+        }
+        if (!kb.MemTotal) return null;
+        const cache = (kb.Buffers || 0) + (kb.Cached || 0) + (kb.SReclaimable || 0);
+        const memFree = kb.MemFree || 0;
+        const memAvailableBytes = Number.isFinite(kb.MemAvailable) ? Math.min(kb.MemTotal, Math.max(memFree, kb.MemAvailable)) : Math.min(kb.MemTotal, memFree + cache);
+        return { memTotalBytes: kb.MemTotal, memFreeBytes: memFree, memAvailableBytes, reclaimableCacheBytes: cache };
+    };
+    computeServerLoadReport = ({ cpuUsedPct = 0, totalMemBytes = 1, freeMemBytes = 0, memAvailableBytes = null, reclaimableCacheBytes = null, processRssBytes = 0, heapUsedBytes = 0, heapTotalBytes = 0, cpuCores = 1, loadAvg1m = 0, loadAvg5m = 0, loadAvg15m = 0, eventLoopLagMs = 0, liveSockets = 0, activePairings = 0, activeSplitCalls = 0, uptimeSeconds = 0 } = {}) => {
         const clamp = (v) => Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
         const safeTotal = Math.max(1, Number(totalMemBytes) || 1);
-        const safeFree = Math.max(0, Math.min(safeTotal, Number(freeMemBytes) || 0));
+        const safeOsFree = Math.max(0, Math.min(safeTotal, Number(freeMemBytes) || 0));
+        const hasAvail = memAvailableBytes !== null && memAvailableBytes !== undefined && Number(memAvailableBytes) > 0;
+        const safeFree = hasAvail ? Math.max(safeOsFree, Math.min(safeTotal, Number(memAvailableBytes))) : safeOsFree;
+        const cacheBytes = reclaimableCacheBytes !== null && reclaimableCacheBytes !== undefined ? Math.max(0, Number(reclaimableCacheBytes) || 0) : Math.max(0, safeFree - safeOsFree);
         const usedBytes = Math.max(0, safeTotal - safeFree);
         const cpuUsed = clamp(cpuUsedPct);
         const ramUsed = clamp((usedBytes / safeTotal) * 100);
@@ -338,7 +368,7 @@ try {
             statusLabel: overallLoadPct >= 85 ? 'Heavy Load' : (overallLoadPct >= 60 ? 'Moderate Load' : 'Healthy'),
             statusLevel: overallLoadPct >= 85 ? 'heavy' : (overallLoadPct >= 60 ? 'moderate' : 'healthy'),
             cpu: { usedPct: cpuUsed, remainingPct: 100 - cpuUsed, cores: Math.max(1, Number(cpuCores) || 1), loadAvg1m: Math.round((Number(loadAvg1m) || 0) * 100) / 100, loadAvg5m: Math.round((Number(loadAvg5m) || 0) * 100) / 100, loadAvg15m: Math.round((Number(loadAvg15m) || 0) * 100) / 100 },
-            memory: { usedPct: ramUsed, remainingPct: 100 - ramUsed, usedMb: toMb(usedBytes), freeMb: toMb(safeFree), totalMb: toMb(safeTotal), processRssMb: toMb(processRssBytes), heapUsedMb: toMb(heapUsedBytes), heapTotalMb: toMb(heapTotalBytes) },
+            memory: { usedPct: ramUsed, remainingPct: 100 - ramUsed, usedMb: toMb(usedBytes), freeMb: toMb(safeFree), osFreeMb: toMb(safeOsFree), reclaimableCacheMb: toMb(cacheBytes), totalMb: toMb(safeTotal), processRssMb: toMb(processRssBytes), heapUsedMb: toMb(heapUsedBytes), heapTotalMb: toMb(heapTotalBytes) },
             runtime: { eventLoopLagMs: lagMs, loopLoadPct, liveSockets: Math.max(0, Number(liveSockets) || 0), activePairings: Math.max(0, Number(activePairings) || 0), activeSplitCalls: Math.max(0, Number(activeSplitCalls) || 0), uptimeSeconds: Math.max(0, Math.floor(Number(uptimeSeconds) || 0)) }
         };
     };
@@ -375,7 +405,7 @@ app.use((req, res, next) => {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-token, x-zing-session, Authorization');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-token, x-zing-session, X-Load-Test-Secret, Authorization');
     }
     if (req.method === 'OPTIONS') {
         return res.status(204).end();
@@ -402,6 +432,14 @@ function getClientIp(req) {
         return fwd.split(',')[0].trim();
     }
     return req.ip || req.socket?.remoteAddress || 'unknown';
+}
+
+function isValidLoadTestRequest(headers = {}) {
+    const configuredSecret = String(process.env.LOAD_TEST_TOKEN || '').trim();
+    if (!configuredSecret) return false;
+    const provided = headers['x-load-test-secret'] || headers['X-Load-Test-Secret'] || '';
+    if (typeof provided !== 'string' || !provided.trim()) return false;
+    return timingSafeEqualString(provided.trim(), configuredSecret);
 }
 
 // Global connected users registry (UID -> socket.id), active calls, and Split-Mesh registry
@@ -498,10 +536,19 @@ function getServerLoadSnapshot() {
         const loadBasedCpuPct = Math.min(100, Math.round(((loadAvgs[0] || 0) / cores) * 100));
         const effectiveCpuPct = sampledCpuUsedPct > 0 ? sampledCpuUsedPct : loadBasedCpuPct;
 
+        let procMem = null;
+        try {
+            if (process.platform === 'linux' && fs.existsSync('/proc/meminfo')) {
+                procMem = parseProcMemInfo(fs.readFileSync('/proc/meminfo', 'utf-8'));
+            }
+        } catch (_) {}
+
         return computeServerLoadReport({
             cpuUsedPct: effectiveCpuPct,
-            totalMemBytes: os.totalmem(),
-            freeMemBytes: os.freemem(),
+            totalMemBytes: procMem ? procMem.memTotalBytes : os.totalmem(),
+            freeMemBytes: procMem ? procMem.memFreeBytes : os.freemem(),
+            memAvailableBytes: procMem ? procMem.memAvailableBytes : null,
+            reclaimableCacheBytes: procMem ? procMem.reclaimableCacheBytes : null,
             processRssBytes: mem.rss,
             heapUsedBytes: mem.heapUsed,
             heapTotalBytes: mem.heapTotal,
@@ -778,13 +825,115 @@ app.post('/api/admin/verify-gate', (req, res) => {
     }
 });
 
+function verifyAdminToken(req) {
+    const authHeader = req.headers['authorization'];
+    const bearerToken = (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) ? authHeader.slice(7).trim() : '';
+    const token = req.headers['x-admin-token'] || bearerToken || req.query.token;
+    if (!token || !adminSessions.has(token) || adminSessions.get(token).expires < Date.now()) {
+        if (token && adminSessions.has(token)) adminSessions.delete(token);
+        return null;
+    }
+    return token;
+}
+
+function performServerMemoryCleanup() {
+    const beforeSnapshot = getServerLoadSnapshot();
+    const now = Date.now();
+    let prunedBuckets = 0;
+    let prunedStaleMaps = 0;
+
+    // 1. Prune all expired FixedWindowRateLimiter buckets across limiters
+    const limiters = [
+        adminVerifyLimiter,
+        resetPasswordLimiter,
+        resetEmailCooldown,
+        turnApiLimiter,
+        alexaWebhookLimiter,
+        socketPairLimiter,
+        socketBurstLimiter
+    ];
+    for (const limiter of limiters) {
+        if (limiter && typeof limiter.pruneExpired === 'function') {
+            prunedBuckets += limiter.pruneExpired(now);
+        }
+    }
+
+    // Also drop any leftover sock:* buckets for disconnected sockets immediately
+    if (socketBurstLimiter && socketBurstLimiter.buckets) {
+        for (const key of socketBurstLimiter.buckets.keys()) {
+            if (typeof key === 'string' && key.startsWith('sock:')) {
+                const sockId = key.slice(5);
+                if (!io.sockets.sockets.has(sockId)) {
+                    socketBurstLimiter.buckets.delete(key);
+                    prunedBuckets++;
+                }
+            }
+        }
+    }
+
+    // 2. Purge dead sockets & offline ephemeral caches from volatile registries
+    const liveBefore = connectedUsers.size;
+    getLiveConnectedCount();
+    if (connectedUsers.size < liveBefore) {
+        prunedStaleMaps += (liveBefore - connectedUsers.size);
+    }
+
+    for (const uid of globalActiveCallPeers.keys()) {
+        if (!isUserOnline(uid)) {
+            globalActiveCallPeers.delete(uid);
+            prunedStaleMaps++;
+        }
+    }
+    for (const uid of userContactsRegistry.keys()) {
+        if (!isUserOnline(uid) && (!analyticsStore.allUsers[uid] || (userContactsRegistry.get(uid) || []).length === 0)) {
+            userContactsRegistry.delete(uid);
+            prunedStaleMaps++;
+        }
+    }
+    for (const uid of ephemeralMessageQueue.keys()) {
+        const q = ephemeralMessageQueue.get(uid);
+        if (!Array.isArray(q) || q.length === 0 || !analyticsStore.allUsers[uid]) {
+            ephemeralMessageQueue.delete(uid);
+            prunedStaleMaps++;
+        }
+    }
+
+    // 3. Purge expired Admin Sessions & stale Split-Mesh codes
+    for (const [tok, sess] of adminSessions.entries()) {
+        if (!sess || sess.expires < now) {
+            adminSessions.delete(tok);
+            prunedStaleMaps++;
+        }
+    }
+    if (splitMesh && typeof splitMesh.cleanupStaleSessions === 'function') {
+        prunedStaleMaps += splitMesh.cleanupStaleSessions((uid) => isUserOnline(uid));
+    }
+
+    // 4. Invoke V8 GC if Node was started with --expose-gc
+    let gcInvoked = false;
+    if (typeof global.gc === 'function') {
+        try {
+            global.gc();
+            gcInvoked = true;
+        } catch (_) {}
+    }
+
+    const afterSnapshot = getServerLoadSnapshot();
+    return {
+        prunedBuckets,
+        prunedStaleMaps,
+        totalEntriesCleared: prunedBuckets + prunedStaleMaps,
+        gcInvoked,
+        before: beforeSnapshot.memory,
+        after: afterSnapshot.memory,
+        summary: getAnalyticsSummary(),
+        recentUsers: getRecentUsersList()
+    };
+}
+
 app.get('/api/admin/analytics', (req, res) => {
     try {
-        const authHeader = req.headers['authorization'];
-        const bearerToken = (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) ? authHeader.slice(7).trim() : '';
-        const token = req.headers['x-admin-token'] || bearerToken || req.query.token;
-        if (!token || !adminSessions.has(token) || adminSessions.get(token).expires < Date.now()) {
-            if (token && adminSessions.has(token)) adminSessions.delete(token);
+        if (!verifyAdminToken(req)) {
             return res.status(401).json({ success: false, message: 'Unauthorized. Security gate clearance required.' });
         }
         return res.json({
@@ -795,6 +944,22 @@ app.get('/api/admin/analytics', (req, res) => {
     } catch (err) {
         console.error('[ZingTalk Admin Analytics Error]:', err);
         return res.status(500).json({ success: false, message: 'Failed to compute analytics snapshot.' });
+    }
+});
+
+app.post('/api/admin/cleanup-memory', (req, res) => {
+    try {
+        if (!verifyAdminToken(req)) {
+            return res.status(401).json({ success: false, message: 'Unauthorized. Security gate clearance required.' });
+        }
+        const result = performServerMemoryCleanup();
+        return res.json({
+            success: true,
+            ...result
+        });
+    } catch (err) {
+        console.error('[ZingTalk Admin Cleanup Error]:', err);
+        return res.status(500).json({ success: false, message: 'Failed to run RAM cleanup.' });
     }
 });
 
@@ -1487,7 +1652,15 @@ io.on('connection', (socket) => {
     };
 
     const socketClientIp = socket.handshake?.headers?.['x-forwarded-for']?.split(',')[0]?.trim() || socket.handshake?.address || socket.id;
+    const isAuthorizedLoadTest = isValidLoadTestRequest(socket.handshake?.headers);
+    if (isAuthorizedLoadTest) {
+        socket.data = socket.data || {};
+        socket.data.loadTestBypass = true;
+    }
     socket.use((packet, next) => {
+        if (socket.data?.loadTestBypass) {
+            return next();
+        }
         const burst = socketBurstLimiter.check(`sock:${socket.id}`, 1);
         if (!burst.allowed) {
             return next(new Error('Rate limit exceeded'));
@@ -2521,6 +2694,9 @@ async function checkUserUidExists(targetUid) {
 
     // Transient Socket Disconnect (Preserves persistent Alexa pairings & contact cache for seamless reconnect)
     socket.on('disconnect', () => {
+        socketBurstLimiter.reset(`sock:${socket.id}`);
+        socketPairLimiter.reset(`pair:${socketClientIp}:${socket.id}`);
+
         const removedConnector = splitMesh.unpairByConnector(socket.id);
         if (removedConnector) {
             sendSignalingEvent(removedConnector.tvUid, 'tv_connector_status', {
@@ -2531,10 +2707,21 @@ async function checkUserUidExists(targetUid) {
             console.log(`[Split-Mesh] Connector[${removedConnector.connectorId}] disconnected from TV[${removedConnector.tvUid}]`);
         }
 
+        const isEphemeral = Boolean(socket.data?.isEphemeralLoadTest);
+        const authedUid = socket.data?.verifiedUid;
+        if (isEphemeral && authedUid) {
+            userContactsRegistry.delete(authedUid);
+            ephemeralMessageQueue.delete(authedUid);
+        }
+
         for (const [uid, socketId] of connectedUsers.entries()) {
             if (socketId === socket.id) {
                 connectedUsers.delete(uid);
                 globalActiveCallPeers.delete(uid);
+                if (isEphemeral) {
+                    userContactsRegistry.delete(uid);
+                    ephemeralMessageQueue.delete(uid);
+                }
                 socket.leave(uid);
                 stopSplitMeshForUid(uid, 'user_disconnected');
                 const pairedConn = splitMesh.getConnectorForTv(uid);
@@ -2548,7 +2735,9 @@ async function checkUserUidExists(targetUid) {
                 if (lastActiveTvUid === uid) {
                     lastActiveTvUid = null;
                 }
-                console.log(`[ZingTalk] Socket disconnected for user: ${uid} (Alexa pairing preserved)`);
+                if (!isEphemeral) {
+                    console.log(`[ZingTalk] Socket disconnected for user: ${uid} (Alexa pairing preserved)`);
+                }
                 break;
             }
         }
@@ -3752,6 +3941,41 @@ function renderServerStatus(req, res) {
     .capacity-pill.healthy { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
     .capacity-pill.moderate { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
     .capacity-pill.heavy { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
+    .capacity-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .btn-cleanup {
+      background: rgba(0, 210, 255, 0.12);
+      border: 1px solid rgba(0, 210, 255, 0.35);
+      color: #00d2ff;
+      padding: 6px 12px;
+      border-radius: 10px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-cleanup:hover:not(:disabled) {
+      background: rgba(0, 210, 255, 0.22);
+      color: #ffffff;
+    }
+    .btn-cleanup:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .capacity-cleanup-note {
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #34d399;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
     .capacity-summary-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -3987,7 +4211,10 @@ function renderServerStatus(req, res) {
     <div class="capacity-panel" id="server-capacity-panel">
       <div class="capacity-header">
         <div class="panel-title" style="margin-bottom: 0;">⚡ Live Server Load &amp; Remaining Capacity</div>
-        <div id="cap-status-pill" class="capacity-pill healthy">● Healthy • --% Free</div>
+        <div class="capacity-header-actions">
+          <button type="button" id="btn-cleanup-ram" class="btn-cleanup" aria-label="Clean RAM and Stale Cache">🧹 Clean RAM</button>
+          <div id="cap-status-pill" class="capacity-pill healthy">● Healthy • --% Free</div>
+        </div>
       </div>
 
       <div class="capacity-summary-grid">
@@ -4047,6 +4274,7 @@ function renderServerStatus(req, res) {
           </div>
         </div>
       </div>
+      <div id="cap-cleanup-status" class="capacity-cleanup-note hidden" role="status" aria-live="polite"></div>
     </div>
 
     <!-- MIDDLE ROW: PLATFORMS & SYSTEM INFO -->
@@ -4355,9 +4583,10 @@ function renderServerStatus(req, res) {
           barCpu.style.width = cpu.usedPct + '%';
           barCpu.className = pickBarClass(cpu.usedPct);
 
-          const mem = sl.memory || { usedPct: 0, remainingPct: 100, usedMb: 0, freeMb: 0, totalMb: 0, heapUsedMb: 0 };
+          const mem = sl.memory || { usedPct: 0, remainingPct: 100, usedMb: 0, freeMb: 0, totalMb: 0, reclaimableCacheMb: 0, heapUsedMb: 0 };
           document.getElementById('cap-ram-used').textContent = mem.usedPct + '%';
-          document.getElementById('cap-ram-meta').textContent = mem.usedMb + ' / ' + mem.totalMb + ' MB';
+          const cacheSuffix = (mem.reclaimableCacheMb && mem.reclaimableCacheMb > 0) ? (' • Cache ' + mem.reclaimableCacheMb + ' MB') : '';
+          document.getElementById('cap-ram-meta').textContent = mem.usedMb + ' / ' + mem.totalMb + ' MB' + cacheSuffix;
           document.getElementById('cap-ram-free').textContent = mem.freeMb + ' MB Free (' + mem.remainingPct + '%)';
           const barRam = document.getElementById('bar-cap-ram');
           barRam.style.width = mem.usedPct + '%';
@@ -4434,6 +4663,41 @@ function renderServerStatus(req, res) {
       btnRefresh.addEventListener('click', function() {
         loadAnalyticsData();
       });
+
+      const btnCleanupRam = document.getElementById('btn-cleanup-ram');
+      const capCleanupStatus = document.getElementById('cap-cleanup-status');
+      if (btnCleanupRam) {
+        btnCleanupRam.addEventListener('click', async function() {
+          const token = sessionStorage.getItem('zingtalk_admin_session');
+          if (!token) return;
+          btnCleanupRam.disabled = true;
+          btnCleanupRam.textContent = 'Cleaning...';
+          try {
+            const res = await fetch('/api/admin/cleanup-memory', {
+              method: 'POST',
+              headers: { 'x-admin-token': token, 'Content-Type': 'application/json' }
+            });
+            const data = await res.json();
+            if (res.ok && data && data.success) {
+              if (data.summary) renderAnalyticsUI(data);
+              if (capCleanupStatus) {
+                const afterFree = data.after?.freeMb ?? '--';
+                const cleared = data.totalEntriesCleared ?? 0;
+                capCleanupStatus.textContent = 'Cleaned ' + cleared + ' stale cache/rate-limit entries • Available RAM: ' + afterFree + ' MB';
+                capCleanupStatus.classList.remove('hidden');
+              }
+            }
+          } catch (err) {
+            if (capCleanupStatus) {
+              capCleanupStatus.textContent = 'Cleanup failed: ' + err.message;
+              capCleanupStatus.classList.remove('hidden');
+            }
+          } finally {
+            btnCleanupRam.disabled = false;
+            btnCleanupRam.textContent = '🧹 Clean RAM';
+          }
+        });
+      }
 
       btnLock.addEventListener('click', async function() {
         const token = sessionStorage.getItem('zingtalk_admin_session');

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * ZingTalk Safe Cloud Load-Test Runner (GitHub Actions / CLI)
+ * ZingTalk Cloud Load-Test Runner (GitHub Actions / CLI)
  *
- * Designed specifically to protect:
- * 1. User's laptop (runs in GitHub Actions cloud or ultra-lightweight CLI without Chrome).
- * 2. AWS Shield / DDoS limits (uses gentle ramp-up rate & hard safety caps).
- * 3. Firebase Free Plan & Admin Panel (uses ephemeralLoadTest guest signaling so 0 Firestore
- *    writes and 0 fake lifetime users are persisted while EC2 Live Online Sockets + CPU/RAM load
- *    are measured accurately in real time).
+ * Upgraded capabilities:
+ * - Default start: 1,000 requests at 1,000 req/s (1k in 1 second)
+ * - Configurable max: up to 40,000 (40k) total requests across rolling safe waves
+ * - Supports custom secret header `X-Load-Test-Secret` (from LOAD_TEST_SECRET / LOAD_TEST_TOKEN)
+ *   for AWS WAF bypass + app-level burst bypass
+ * - Zero Firestore writes & zero fake lifetime users via `ephemeralLoadTest: true`
  */
 
 const { io } = require('socket.io-client');
@@ -28,35 +28,43 @@ function percentile(sortedNums, p) {
     return Math.round(sortedNums[idx]);
 }
 
-async function main() {
-    const targetUrl = String(process.env.TARGET_URL || 'https://zingtalk.duckdns.org').trim().replace(/\/+$/, '');
-    // Default starts at 99 users (respecting user's starting point & Firebase/AWS safety)
-    const totalUsers = parsePositiveInt(process.env.LOAD_USERS, 99, 2, 500);
-    const rampRatePerSec = parsePositiveInt(process.env.RAMP_RATE, 6, 1, 20);
-    const holdSeconds = parsePositiveInt(process.env.HOLD_SECONDS, 25, 5, 120);
-    const testCalls = String(process.env.TEST_CALLS ?? 'true').toLowerCase() !== 'false';
+function computeLoadWavePlan({ totalRequests = 1000, ratePerSec = 1000, batchSize = 1000 } = {}) {
+    const safeTotal = parsePositiveInt(totalRequests, 1000, 2, 40000);
+    const safeRate = parsePositiveInt(ratePerSec, 1000, 1, 5000);
+    const safeBatch = parsePositiveInt(batchSize, 1000, 10, 2000);
 
-    console.log('==============================================================');
-    console.log('  ZingTalk Safe Cloud Load Test');
-    console.log('==============================================================');
-    console.log(`  Target Server   : ${targetUrl}`);
-    console.log(`  Virtual Users   : ${totalUsers} (Ephemeral Guest Signaling)`);
-    console.log(`  Ramp-Up Speed   : ${rampRatePerSec} users/sec (AWS DDoS-Safe)`);
-    console.log(`  Hold Duration   : ${holdSeconds}s (Watch Admin Panel Live!)`);
-    console.log(`  Call + Chat Sim : ${testCalls ? 'Enabled' : 'Guest Login Only'}`);
-    console.log('==============================================================\n');
+    const waves = [];
+    let remaining = safeTotal;
+    let indexOffset = 0;
+    while (remaining > 0) {
+        const count = Math.min(remaining, safeBatch);
+        waves.push({
+            waveNumber: waves.length + 1,
+            count,
+            startIndex: indexOffset
+        });
+        remaining -= count;
+        indexOffset += count;
+    }
 
-    const clients = [];
-    const loginLatenciesMs = [];
-    let connectFailures = 0;
-    let loginSuccessCount = 0;
-    let callsCompleted = 0;
-    let chatsDelivered = 0;
+    return {
+        totalRequests: safeTotal,
+        ratePerSec: safeRate,
+        batchSize: safeBatch,
+        waveCount: waves.length,
+        waves
+    };
+}
 
-    const delayBetweenUsersMs = Math.max(50, Math.round(1000 / rampRatePerSec));
-
-    // Phase 1: Gentle Ramp-Up Guest Login
-    console.log(`[Phase 1] Gently connecting ${totalUsers} virtual guests (~${Math.ceil(totalUsers / rampRatePerSec)}s)...`);
+async function runWave({
+    wave,
+    ratePerSec,
+    holdSeconds,
+    testCalls,
+    targetUrl,
+    extraHeaders,
+    globalCounters
+}) {
     const spawnClient = (index) => new Promise((resolve) => {
         const startedAt = Date.now();
         let settled = false;
@@ -69,19 +77,17 @@ async function main() {
         const sock = io(targetUrl, {
             transports: ['websocket'],
             reconnection: false,
-            timeout: 12000,
-            extraHeaders: {
-                'User-Agent': 'ZingTalk-LoadTest/1.0 (Web Browser)'
-            }
+            timeout: 15000,
+            extraHeaders
         });
 
         const record = { index, socket: sock, uid: null, ok: false };
 
         const failTimer = setTimeout(() => {
-            connectFailures++;
+            globalCounters.connectFailures++;
             try { sock.disconnect(); } catch (_) {}
             finish(record);
-        }, 15000);
+        }, 16000);
 
         sock.on('connect', () => {
             sock.emit('login_user', {
@@ -100,20 +106,20 @@ async function main() {
                 clearTimeout(failTimer);
                 record.uid = String(payload.uid);
                 record.ok = true;
-                loginSuccessCount++;
-                loginLatenciesMs.push(Date.now() - startedAt);
+                globalCounters.loginSuccessCount++;
+                globalCounters.loginLatenciesMs.push(Date.now() - startedAt);
                 finish(record);
             }
         });
 
         sock.on('connect_error', () => {
             clearTimeout(failTimer);
-            connectFailures++;
+            globalCounters.connectFailures++;
             finish(record);
         });
 
         sock.on('receive_message', () => {
-            chatsDelivered++;
+            globalCounters.chatsDelivered++;
         });
 
         sock.on('incoming_call', (callData) => {
@@ -133,29 +139,35 @@ async function main() {
         });
 
         sock.on('webrtc_answer_received', () => {
-            callsCompleted++;
+            globalCounters.callsCompleted++;
         });
     });
 
+    // Tick every 50ms to faithfully deliver ratePerSec (e.g., 1000/sec = 50 clients every 50ms)
+    const tickMs = 50;
+    const perTick = Math.max(1, Math.ceil((ratePerSec * tickMs) / 1000));
     const pending = [];
-    for (let i = 0; i < totalUsers; i++) {
-        pending.push(spawnClient(i));
-        if ((i + 1) % 25 === 0 || i === totalUsers - 1) {
-            console.log(`  -> Launched ${i + 1}/${totalUsers} sockets...`);
+
+    console.log(`[Wave ${wave.waveNumber}] Dispatching ${wave.count} sockets at ~${ratePerSec} req/s...`);
+    const dispatchStart = Date.now();
+    for (let i = 0; i < wave.count; i += perTick) {
+        const chunkEnd = Math.min(wave.count, i + perTick);
+        for (let j = i; j < chunkEnd; j++) {
+            pending.push(spawnClient(wave.startIndex + j));
         }
-        await sleep(delayBetweenUsersMs);
+        if (chunkEnd < wave.count) {
+            await sleep(tickMs);
+        }
     }
+    const dispatchElapsed = Date.now() - dispatchStart;
+    console.log(`[Wave ${wave.waveNumber}] Dispatched ${wave.count} requests in ${dispatchElapsed}ms. Waiting for acknowledgements...`);
 
     const settledClients = await Promise.all(pending);
     const activeClients = settledClients.filter((c) => c.ok && c.uid);
-    clients.push(...settledClients);
 
-    console.log(`[Phase 1 Complete] Logged in: ${loginSuccessCount}/${totalUsers} (Failed: ${connectFailures})\n`);
-
-    // Phase 2: Simulated Paired Calls & Ephemeral Chat Signaling
     if (testCalls && activeClients.length >= 2) {
         const pairCount = Math.floor(activeClients.length / 2);
-        console.log(`[Phase 2] Simulating ${pairCount} simultaneous call handshakes + chat messages...`);
+        globalCounters.totalPairsAttempted += pairCount;
         for (let p = 0; p < pairCount; p++) {
             const caller = activeClients[p * 2];
             const callee = activeClients[p * 2 + 1];
@@ -187,18 +199,16 @@ async function main() {
                 type: 'video'
             });
 
-            await sleep(80);
+            if ((p + 1) % 50 === 0) await sleep(20);
         }
-        console.log('[Phase 2 Dispatched] Waiting for call handshakes & holding load...\n');
     }
 
-    // Phase 3: Hold Connections so User can inspect Admin Panel live CPU / RAM / Remaining Headroom
-    console.log(`[Phase 3] Holding ${activeClients.length} live connections for ${holdSeconds}s — check your ZingTalk Admin Panel now!`);
-    await sleep(holdSeconds * 1000);
+    if (holdSeconds > 0 && activeClients.length > 0) {
+        console.log(`[Wave ${wave.waveNumber}] Holding ${activeClients.length} live connections for ${holdSeconds}s...`);
+        await sleep(holdSeconds * 1000);
+    }
 
-    // Phase 4: Clean Disconnect
-    console.log('\n[Phase 4] Gracefully disconnecting all load-test sockets...');
-    for (const c of clients) {
+    for (const c of settledClients) {
         try {
             if (c.socket && c.socket.connected && c.uid) {
                 c.socket.emit('webrtc_end_call', { targetUid: c.uid });
@@ -206,26 +216,80 @@ async function main() {
             if (c.socket) c.socket.disconnect();
         } catch (_) {}
     }
-    await sleep(500);
+    await sleep(300);
+}
 
-    loginLatenciesMs.sort((a, b) => a - b);
-    const avgLatency = loginLatenciesMs.length
-        ? Math.round(loginLatenciesMs.reduce((a, b) => a + b, 0) / loginLatenciesMs.length)
+async function main() {
+    const targetUrl = String(process.env.TARGET_URL || 'https://zingtalk.duckdns.org').trim().replace(/\/+$/, '');
+    const loadTestSecret = String(process.env.LOAD_TEST_SECRET || process.env.LOAD_TEST_TOKEN || '').trim();
+
+    const plan = computeLoadWavePlan({
+        totalRequests: process.env.LOAD_USERS ?? 1000,
+        ratePerSec: process.env.RAMP_RATE ?? 1000,
+        batchSize: process.env.BATCH_SIZE ?? 1000
+    });
+    const holdSeconds = parsePositiveInt(process.env.HOLD_SECONDS, 15, 1, 120);
+    const testCalls = String(process.env.TEST_CALLS ?? 'true').toLowerCase() !== 'false';
+
+    const extraHeaders = {
+        'User-Agent': 'ZingTalk-LoadTest/2.0 (Web Browser)'
+    };
+    if (loadTestSecret) {
+        extraHeaders['X-Load-Test-Secret'] = loadTestSecret;
+    }
+
+    console.log('==============================================================');
+    console.log('  ZingTalk High-Throughput Cloud Load Test (1k - 40k)');
+    console.log('==============================================================');
+    console.log(`  Target Server      : ${targetUrl}`);
+    console.log(`  Total Requests     : ${plan.totalRequests} (Max allowed: 40,000)`);
+    console.log(`  Dispatch Speed     : ${plan.ratePerSec} req/sec`);
+    console.log(`  Wave Concurrency   : ${plan.batchSize} concurrent sockets/wave (${plan.waveCount} wave${plan.waveCount === 1 ? '' : 's'})`);
+    console.log(`  Hold Per Wave      : ${holdSeconds}s`);
+    console.log(`  X-Load-Test-Secret : ${loadTestSecret ? 'Configured (Header attached)' : 'Not set (optional)'}`);
+    console.log(`  Call + Chat Sim    : ${testCalls ? 'Enabled' : 'Guest Login Only'}`);
+    console.log('==============================================================\n');
+
+    const globalCounters = {
+        loginLatenciesMs: [],
+        connectFailures: 0,
+        loginSuccessCount: 0,
+        callsCompleted: 0,
+        chatsDelivered: 0,
+        totalPairsAttempted: 0
+    };
+
+    const perWaveHold = plan.waveCount > 1 ? Math.min(holdSeconds, 3) : holdSeconds;
+    for (const wave of plan.waves) {
+        await runWave({
+            wave,
+            ratePerSec: plan.ratePerSec,
+            holdSeconds: perWaveHold,
+            testCalls,
+            targetUrl,
+            extraHeaders,
+            globalCounters
+        });
+    }
+
+    globalCounters.loginLatenciesMs.sort((a, b) => a - b);
+    const avgLatency = globalCounters.loginLatenciesMs.length
+        ? Math.round(globalCounters.loginLatenciesMs.reduce((a, b) => a + b, 0) / globalCounters.loginLatenciesMs.length)
         : 0;
-    const p95Latency = percentile(loginLatenciesMs, 95);
-    const successRatePct = Math.round((loginSuccessCount / totalUsers) * 100);
+    const p95Latency = percentile(globalCounters.loginLatenciesMs, 95);
+    const successRatePct = Math.round((globalCounters.loginSuccessCount / plan.totalRequests) * 100);
 
     console.log('\n==============================================================');
     console.log('  ZingTalk Load Test Report');
     console.log('==============================================================');
-    console.log(`  Target Users        : ${totalUsers}`);
-    console.log(`  Guest Logins OK     : ${loginSuccessCount} (${successRatePct}%)`);
-    console.log(`  Failures / Timeouts : ${connectFailures}`);
+    console.log(`  Total Dispatched    : ${plan.totalRequests}`);
+    console.log(`  Guest Logins OK     : ${globalCounters.loginSuccessCount} (${successRatePct}%)`);
+    console.log(`  Failures / Timeouts : ${globalCounters.connectFailures}`);
     console.log(`  Avg Login Latency   : ${avgLatency} ms`);
     console.log(`  P95 Login Latency   : ${p95Latency} ms`);
     if (testCalls) {
-        console.log(`  Chats Delivered     : ${chatsDelivered}`);
-        console.log(`  Call Handshakes OK  : ${callsCompleted} / ${Math.floor(activeClients.length / 2)} pairs`);
+        console.log(`  Chats Delivered     : ${globalCounters.chatsDelivered}`);
+        console.log(`  Call Handshakes OK  : ${globalCounters.callsCompleted} / ${globalCounters.totalPairsAttempted} pairs`);
     }
     console.log(`  Verdict             : ${successRatePct >= 95 ? 'PASS - Server handled load cleanly!' : 'DEGRADED - Server approaching capacity limit'}`);
     console.log('==============================================================');
@@ -235,7 +299,14 @@ async function main() {
     }
 }
 
-main().catch((err) => {
-    console.error('[LoadTest Error]:', err);
-    process.exit(1);
-});
+if (require.main === module) {
+    main().catch((err) => {
+        console.error('[LoadTest Error]:', err);
+        process.exit(1);
+    });
+}
+
+module.exports = {
+    parsePositiveInt,
+    computeLoadWavePlan
+};

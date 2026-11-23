@@ -4,17 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       users:
-        description: 'Number of simultaneous Guest users to simulate (starts at 99, max 500)'
+        description: 'Total requests / virtual users to run (starts at 1000, max 40000)'
         required: true
-        default: '99'
+        default: '1000'
       ramp_rate:
-        description: 'Gentle connect speed (users per second, 4-10 recommended for AWS safety)'
+        description: 'Dispatch speed in requests per second (1000 = 1k req/s)'
         required: true
-        default: '6'
+        default: '1000'
+      batch_size:
+        description: 'Simultaneous sockets per wave (1000 keeps 909 MB EC2 RAM safe during 40k runs)'
+        required: true
+        default: '1000'
       hold_seconds:
-        description: 'Seconds to hold connections live so you can watch Admin Panel load meter'
+        description: 'Seconds to hold connections live (for single-wave inspection)'
         required: true
-        default: '25'
+        default: '15'
       test_calls:
         description: 'Also simulate paired video call signaling + ephemeral chat?'
         required: true
@@ -30,9 +34,9 @@ on:
 
 jobs:
   load-test:
-    name: Simulate Simultaneous ZingTalk Guests & Calls
+    name: Simulate ZingTalk Guests & Calls (1k - 40k)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout Code
@@ -46,11 +50,13 @@ jobs:
       - name: Install Socket.IO Client
         run: npm install --no-audit --no-fund socket.io-client
 
-      - name: Run Controlled Cloud Load Test
+      - name: Run Cloud Load Test
         env:
           TARGET_URL: ${{ github.event.inputs.target_url }}
           LOAD_USERS: ${{ github.event.inputs.users }}
           RAMP_RATE: ${{ github.event.inputs.ramp_rate }}
+          BATCH_SIZE: ${{ github.event.inputs.batch_size }}
           HOLD_SECONDS: ${{ github.event.inputs.hold_seconds }}
           TEST_CALLS: ${{ github.event.inputs.test_calls }}
+          LOAD_TEST_SECRET: ${{ secrets.LOAD_TEST_TOKEN }}
         run: node scripts/load-test.js
