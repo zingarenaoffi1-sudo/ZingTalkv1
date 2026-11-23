@@ -111,6 +111,15 @@ test('Mobile and TV clients await native camera permissions, support fallbacks, 
 
   const serverSrc = fs.readFileSync(path.resolve('server.js'), 'utf8');
   assert.ok(serverSrc.includes('getServerLoadSnapshot'), 'server.js must expose real-time server load snapshot');
+  assert.equal(serverSrc.includes('splitMeshRegistry'), false, 'server.js must reference splitMesh, never undefined splitMeshRegistry');
+  assert.ok(serverSrc.includes('ephemeralLoadTest'), 'server.js must support zero-pollution ephemeral load-test guest sessions');
   assert.ok(serverSrc.includes('server-capacity-panel'), 'Admin panel must render Live Server Load & Remaining Capacity panel');
   assert.ok(serverSrc.includes('cap-overall-free'), 'Admin panel must show remaining server capacity headroom');
+
+  const loadScript = fs.readFileSync(path.resolve('scripts/load-test.js'), 'utf8');
+  assert.ok(loadScript.includes('ephemeralLoadTest: true'), 'Load test script must use ephemeralLoadTest flag');
+  assert.ok(loadScript.includes('99'), 'Load test script must default to 99 starting users');
+  const loadWorkflow = fs.readFileSync(path.resolve('.github/workflows/load-test.yml'), 'utf8');
+  assert.ok(loadWorkflow.includes('workflow_dispatch'), 'Load test workflow must be manual-only');
+  assert.ok(loadWorkflow.includes("default: '99'"), 'Load test workflow must default to 99 users');
 });

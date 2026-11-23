@@ -489,31 +489,36 @@ if (typeof serverLoadMonitorInterval.unref === 'function') {
 }
 
 function getServerLoadSnapshot() {
-    sampleCpuUsageNow();
-    const cpus = os.cpus() || [];
-    const cores = Math.max(1, cpus.length);
-    const loadAvgs = os.loadavg ? os.loadavg() : [0, 0, 0];
-    const mem = process.memoryUsage();
-    const loadBasedCpuPct = Math.min(100, Math.round(((loadAvgs[0] || 0) / cores) * 100));
-    const effectiveCpuPct = sampledCpuUsedPct > 0 ? sampledCpuUsedPct : loadBasedCpuPct;
+    try {
+        sampleCpuUsageNow();
+        const cpus = os.cpus() || [];
+        const cores = Math.max(1, cpus.length);
+        const loadAvgs = os.loadavg ? os.loadavg() : [0, 0, 0];
+        const mem = process.memoryUsage();
+        const loadBasedCpuPct = Math.min(100, Math.round(((loadAvgs[0] || 0) / cores) * 100));
+        const effectiveCpuPct = sampledCpuUsedPct > 0 ? sampledCpuUsedPct : loadBasedCpuPct;
 
-    return computeServerLoadReport({
-        cpuUsedPct: effectiveCpuPct,
-        totalMemBytes: os.totalmem(),
-        freeMemBytes: os.freemem(),
-        processRssBytes: mem.rss,
-        heapUsedBytes: mem.heapUsed,
-        heapTotalBytes: mem.heapTotal,
-        cpuCores: cores,
-        loadAvg1m: loadAvgs[0] || 0,
-        loadAvg5m: loadAvgs[1] || 0,
-        loadAvg15m: loadAvgs[2] || 0,
-        eventLoopLagMs: sampledEventLoopLagMs,
-        liveSockets: getLiveConnectedCount(),
-        activePairings: splitMeshRegistry ? splitMeshRegistry.tvToConnector.size : 0,
-        activeSplitCalls: splitMeshRegistry ? splitMeshRegistry.activeSplitCalls.size : 0,
-        uptimeSeconds: process.uptime()
-    });
+        return computeServerLoadReport({
+            cpuUsedPct: effectiveCpuPct,
+            totalMemBytes: os.totalmem(),
+            freeMemBytes: os.freemem(),
+            processRssBytes: mem.rss,
+            heapUsedBytes: mem.heapUsed,
+            heapTotalBytes: mem.heapTotal,
+            cpuCores: cores,
+            loadAvg1m: loadAvgs[0] || 0,
+            loadAvg5m: loadAvgs[1] || 0,
+            loadAvg15m: loadAvgs[2] || 0,
+            eventLoopLagMs: sampledEventLoopLagMs,
+            liveSockets: getLiveConnectedCount(),
+            activePairings: (typeof splitMesh !== 'undefined' && splitMesh && splitMesh.tvToConnector) ? splitMesh.tvToConnector.size : 0,
+            activeSplitCalls: (typeof splitMesh !== 'undefined' && splitMesh && splitMesh.activeSplitCalls) ? splitMesh.activeSplitCalls.size : 0,
+            uptimeSeconds: process.uptime()
+        });
+    } catch (err) {
+        console.warn('[ZingTalk ServerLoad] Snapshot fallback triggered:', err.message);
+        return computeServerLoadReport({ uptimeSeconds: process.uptime() });
+    }
 }
 
 function detectPlatformFromSocket(socket, data) {
@@ -774,18 +779,23 @@ app.post('/api/admin/verify-gate', (req, res) => {
 });
 
 app.get('/api/admin/analytics', (req, res) => {
-    const authHeader = req.headers['authorization'];
-    const bearerToken = (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) ? authHeader.slice(7).trim() : '';
-    const token = req.headers['x-admin-token'] || bearerToken || req.query.token;
-    if (!token || !adminSessions.has(token) || adminSessions.get(token).expires < Date.now()) {
-        if (token && adminSessions.has(token)) adminSessions.delete(token);
-        return res.status(401).json({ success: false, message: 'Unauthorized. Security gate clearance required.' });
+    try {
+        const authHeader = req.headers['authorization'];
+        const bearerToken = (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) ? authHeader.slice(7).trim() : '';
+        const token = req.headers['x-admin-token'] || bearerToken || req.query.token;
+        if (!token || !adminSessions.has(token) || adminSessions.get(token).expires < Date.now()) {
+            if (token && adminSessions.has(token)) adminSessions.delete(token);
+            return res.status(401).json({ success: false, message: 'Unauthorized. Security gate clearance required.' });
+        }
+        return res.json({
+            success: true,
+            summary: getAnalyticsSummary(),
+            recentUsers: getRecentUsersList()
+        });
+    } catch (err) {
+        console.error('[ZingTalk Admin Analytics Error]:', err);
+        return res.status(500).json({ success: false, message: 'Failed to compute analytics snapshot.' });
     }
-    return res.json({
-        success: true,
-        summary: getAnalyticsSummary(),
-        recentUsers: getRecentUsersList()
-    });
 });
 
 app.post('/api/admin/logout', (req, res) => {
@@ -1599,6 +1609,8 @@ io.on('connection', (socket) => {
             const finalName = clientName || existingName || (cleanEmail ? cleanEmail.split('@')[0] : 'Guest');
             const isGuestSession = Boolean(data.isGuest || data.isAnonymous || isFirebaseGuest || !cleanEmail);
 
+            const isEphemeralLoadTest = Boolean(isGuestSession && data.ephemeralLoadTest === true);
+
             const userObj = {
                 uid: uid,
                 authUid: cleanAuthUid || (existingDoc ? existingDoc.authUid : null),
@@ -1608,11 +1620,13 @@ io.on('connection', (socket) => {
                 isGuest: isGuestSession,
                 updatedAt: Date.now()
             };
-            await usersRef.doc(uid).set(userObj);
-            if (userObj.authUid) {
-                try {
-                    await db.collection('user_profiles').doc(userObj.authUid).set(userObj);
-                } catch (_) {}
+            if (!isEphemeralLoadTest) {
+                await usersRef.doc(uid).set(userObj);
+                if (userObj.authUid) {
+                    try {
+                        await db.collection('user_profiles').doc(userObj.authUid).set(userObj);
+                    } catch (_) {}
+                }
             }
 
             // If this socket previously held another UID, clean up the old binding cleanly
@@ -1625,6 +1639,7 @@ io.on('connection', (socket) => {
 
             socket.data = socket.data || {};
             socket.data.verifiedUid = uid;
+            socket.data.isEphemeralLoadTest = isEphemeralLoadTest;
             const issuedSessionToken = issueSessionToken({ uid, isGuest: isGuestSession }, sessionSecret);
             socket.data.sessionToken = issuedSessionToken;
 
@@ -1632,12 +1647,13 @@ io.on('connection', (socket) => {
             socket.join(uid);
 
             const platformDetected = detectPlatformFromSocket(socket, data);
-            if (platformDetected === 'Fire TV') {
+            if (platformDetected === 'Fire TV' && !isEphemeralLoadTest) {
                 lastActiveTvUid = uid;
             }
-            recordUserConnection(uid, userObj.name, platformDetected);
-
-            console.log(`[ZingTalk] Server authenticated UID: ${uid} for user: ${userObj.name} (${userObj.email}) [Platform: ${platformDetected}]`);
+            if (!isEphemeralLoadTest) {
+                recordUserConnection(uid, userObj.name, platformDetected);
+                console.log(`[ZingTalk] Server authenticated UID: ${uid} for user: ${userObj.name} (${userObj.email}) [Platform: ${platformDetected}]`);
+            }
 
             // Auto-join existing in-memory group rooms
             for (const [groupId, group] of inMemoryGroups.entries()) {

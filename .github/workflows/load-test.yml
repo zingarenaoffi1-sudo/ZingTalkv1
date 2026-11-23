@@ -1,0 +1,56 @@
+name: Run Server Load Test (Cloud)
+
+on:
+  workflow_dispatch:
+    inputs:
+      users:
+        description: 'Number of simultaneous Guest users to simulate (starts at 99, max 500)'
+        required: true
+        default: '99'
+      ramp_rate:
+        description: 'Gentle connect speed (users per second, 4-10 recommended for AWS safety)'
+        required: true
+        default: '6'
+      hold_seconds:
+        description: 'Seconds to hold connections live so you can watch Admin Panel load meter'
+        required: true
+        default: '25'
+      test_calls:
+        description: 'Also simulate paired video call signaling + ephemeral chat?'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      target_url:
+        description: 'ZingTalk Server URL'
+        required: true
+        default: 'https://zingtalk.duckdns.org'
+
+jobs:
+  load-test:
+    name: Simulate Simultaneous ZingTalk Guests & Calls
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Socket.IO Client
+        run: npm install --no-audit --no-fund socket.io-client
+
+      - name: Run Controlled Cloud Load Test
+        env:
+          TARGET_URL: ${{ github.event.inputs.target_url }}
+          LOAD_USERS: ${{ github.event.inputs.users }}
+          RAMP_RATE: ${{ github.event.inputs.ramp_rate }}
+          HOLD_SECONDS: ${{ github.event.inputs.hold_seconds }}
+          TEST_CALLS: ${{ github.event.inputs.test_calls }}
+        run: node scripts/load-test.js
