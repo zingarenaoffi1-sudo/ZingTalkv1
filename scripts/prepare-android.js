@@ -259,8 +259,24 @@ public class MainActivity extends BridgeActivity {
 
             if (!needed.isEmpty()) {
                 ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), PERMISSION_REQ_CODE);
+            } else {
+                notifyPermissionsResultToWebView();
             }
         }
+    }
+
+    private void notifyPermissionsResultToWebView() {
+        try {
+            final WebView webView = this.getBridge() != null ? this.getBridge().getWebView() : null;
+            if (webView != null) {
+                webView.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('zing-permissions-result')); window.onNativePermissionsResult && window.onNativePermissionsResult();", null);
+                    }
+                });
+            }
+        } catch (Exception ignored) {}
     }
 
     public void requestPermissionsForCall(String callType) {
@@ -289,7 +305,11 @@ public class MainActivity extends BridgeActivity {
             }
             if (!needed.isEmpty()) {
                 ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), PERMISSION_REQ_CODE);
+            } else {
+                notifyPermissionsResultToWebView();
             }
+        } else {
+            notifyPermissionsResultToWebView();
         }
     }
 

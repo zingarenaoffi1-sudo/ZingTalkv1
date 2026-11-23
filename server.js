@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
 
 // Native .env file loader (Zero external dependencies)
@@ -298,6 +299,51 @@ try {
         }
     };
 }
+let detectPlatformFromClient, computeServerLoadReport;
+try {
+    ({ detectPlatformFromClient, computeServerLoadReport } = require('./lib/server-metrics'));
+} catch (_) {
+    detectPlatformFromClient = ({ data = {}, userAgent = '' } = {}) => {
+        const ua = String(userAgent || '');
+        const raw = (data && typeof data.platform === 'string') ? data.platform.trim().toLowerCase() : '';
+        const isNativeApp = Boolean(data && data.isNativeApp === true);
+        const isFireTvUA = /AFT|FireTV|Silk|Leanback|GoogleTV|BRAVIA|MIBOX/i.test(ua);
+        const isMobileUA = /Android.*Mobile|iPhone|iPad|iPod/i.test(ua);
+        const isDesktopBrowserUA = /Windows NT|Macintosh|CrOS|X11|Win64|WOW64/i.test(ua) && !/Android/i.test(ua) && !isFireTvUA;
+        if (raw.includes('web') || raw.includes('browser') || raw.includes('desktop')) return 'Web Browser';
+        if (raw.includes('mob') || raw.includes('ios') || raw.includes('phone')) return 'Mobile';
+        if (raw.includes('fire') || raw.includes('tv') || raw.includes('leanback')) {
+            if (isNativeApp || isFireTvUA || (!isDesktopBrowserUA && !isMobileUA)) return 'Fire TV';
+            return isMobileUA ? 'Mobile' : 'Web Browser';
+        }
+        if (isFireTvUA) return 'Fire TV';
+        if (isMobileUA) return 'Mobile';
+        if (/Android/i.test(ua) && !/Mobile/i.test(ua)) return 'Fire TV';
+        return 'Web Browser';
+    };
+    computeServerLoadReport = ({ cpuUsedPct = 0, totalMemBytes = 1, freeMemBytes = 0, processRssBytes = 0, heapUsedBytes = 0, heapTotalBytes = 0, cpuCores = 1, loadAvg1m = 0, loadAvg5m = 0, loadAvg15m = 0, eventLoopLagMs = 0, liveSockets = 0, activePairings = 0, activeSplitCalls = 0, uptimeSeconds = 0 } = {}) => {
+        const clamp = (v) => Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+        const safeTotal = Math.max(1, Number(totalMemBytes) || 1);
+        const safeFree = Math.max(0, Math.min(safeTotal, Number(freeMemBytes) || 0));
+        const usedBytes = Math.max(0, safeTotal - safeFree);
+        const cpuUsed = clamp(cpuUsedPct);
+        const ramUsed = clamp((usedBytes / safeTotal) * 100);
+        const lagMs = Math.max(0, Math.round((Number(eventLoopLagMs) || 0) * 10) / 10);
+        const loopLoadPct = clamp((lagMs / 200) * 100);
+        const overallLoadPct = clamp(cpuUsed * 0.5 + ramUsed * 0.35 + loopLoadPct * 0.15);
+        const toMb = (b) => Math.max(0, Math.round((Number(b) || 0) / (1024 * 1024)));
+        return {
+            overallLoadPct,
+            remainingCapacityPct: 100 - overallLoadPct,
+            statusLabel: overallLoadPct >= 85 ? 'Heavy Load' : (overallLoadPct >= 60 ? 'Moderate Load' : 'Healthy'),
+            statusLevel: overallLoadPct >= 85 ? 'heavy' : (overallLoadPct >= 60 ? 'moderate' : 'healthy'),
+            cpu: { usedPct: cpuUsed, remainingPct: 100 - cpuUsed, cores: Math.max(1, Number(cpuCores) || 1), loadAvg1m: Math.round((Number(loadAvg1m) || 0) * 100) / 100, loadAvg5m: Math.round((Number(loadAvg5m) || 0) * 100) / 100, loadAvg15m: Math.round((Number(loadAvg15m) || 0) * 100) / 100 },
+            memory: { usedPct: ramUsed, remainingPct: 100 - ramUsed, usedMb: toMb(usedBytes), freeMb: toMb(safeFree), totalMb: toMb(safeTotal), processRssMb: toMb(processRssBytes), heapUsedMb: toMb(heapUsedBytes), heapTotalMb: toMb(heapTotalBytes) },
+            runtime: { eventLoopLagMs: lagMs, loopLoadPct, liveSockets: Math.max(0, Number(liveSockets) || 0), activePairings: Math.max(0, Number(activePairings) || 0), activeSplitCalls: Math.max(0, Number(activeSplitCalls) || 0), uptimeSeconds: Math.max(0, Math.floor(Number(uptimeSeconds) || 0)) }
+        };
+    };
+}
+
 let nodemailer = null;
 try {
     nodemailer = require('nodemailer');
@@ -404,23 +450,75 @@ function getTodayDateStr() {
     return now.toISOString().split('T')[0];
 }
 
+// Real-time Server CPU & Event Loop Lag Sampler (Lightweight, non-blocking)
+let prevCpuSnapshot = os.cpus();
+let sampledCpuUsedPct = 0;
+let sampledEventLoopLagMs = 0;
+let lastLoopTickHr = process.hrtime.bigint();
+
+function sampleCpuUsageNow() {
+    try {
+        const current = os.cpus();
+        if (!Array.isArray(current) || current.length === 0) return;
+        let idleDelta = 0;
+        let totalDelta = 0;
+        for (let i = 0; i < current.length; i++) {
+            const prev = prevCpuSnapshot[i] || current[i];
+            const cur = current[i];
+            const prevTotal = prev.times.user + prev.times.nice + prev.times.sys + prev.times.idle + prev.times.irq;
+            const curTotal = cur.times.user + cur.times.nice + cur.times.sys + cur.times.idle + cur.times.irq;
+            totalDelta += Math.max(0, curTotal - prevTotal);
+            idleDelta += Math.max(0, cur.times.idle - prev.times.idle);
+        }
+        prevCpuSnapshot = current;
+        if (totalDelta > 0) {
+            sampledCpuUsedPct = Math.max(0, Math.min(100, Math.round(((totalDelta - idleDelta) / totalDelta) * 100)));
+        }
+    } catch (_) {}
+}
+
+const serverLoadMonitorInterval = setInterval(() => {
+    const nowHr = process.hrtime.bigint();
+    const elapsedMs = Number(nowHr - lastLoopTickHr) / 1e6;
+    lastLoopTickHr = nowHr;
+    sampledEventLoopLagMs = Math.max(0, Math.round((elapsedMs - 2000) * 10) / 10);
+    sampleCpuUsageNow();
+}, 2000);
+if (typeof serverLoadMonitorInterval.unref === 'function') {
+    serverLoadMonitorInterval.unref();
+}
+
+function getServerLoadSnapshot() {
+    sampleCpuUsageNow();
+    const cpus = os.cpus() || [];
+    const cores = Math.max(1, cpus.length);
+    const loadAvgs = os.loadavg ? os.loadavg() : [0, 0, 0];
+    const mem = process.memoryUsage();
+    const loadBasedCpuPct = Math.min(100, Math.round(((loadAvgs[0] || 0) / cores) * 100));
+    const effectiveCpuPct = sampledCpuUsedPct > 0 ? sampledCpuUsedPct : loadBasedCpuPct;
+
+    return computeServerLoadReport({
+        cpuUsedPct: effectiveCpuPct,
+        totalMemBytes: os.totalmem(),
+        freeMemBytes: os.freemem(),
+        processRssBytes: mem.rss,
+        heapUsedBytes: mem.heapUsed,
+        heapTotalBytes: mem.heapTotal,
+        cpuCores: cores,
+        loadAvg1m: loadAvgs[0] || 0,
+        loadAvg5m: loadAvgs[1] || 0,
+        loadAvg15m: loadAvgs[2] || 0,
+        eventLoopLagMs: sampledEventLoopLagMs,
+        liveSockets: getLiveConnectedCount(),
+        activePairings: splitMeshRegistry ? splitMeshRegistry.tvToConnector.size : 0,
+        activeSplitCalls: splitMeshRegistry ? splitMeshRegistry.activeSplitCalls.size : 0,
+        uptimeSeconds: process.uptime()
+    });
+}
+
 function detectPlatformFromSocket(socket, data) {
-    if (data && data.platform && typeof data.platform === 'string' && data.platform.trim()) {
-        const p = data.platform.trim().toLowerCase();
-        if (p.includes('fire') || p.includes('tv') || p.includes('leanback')) return 'Fire TV';
-        if (p.includes('mob') || p.includes('android') || p.includes('ios') || p.includes('phone')) return 'Mobile';
-        return 'Web Browser';
-    }
-    if (data && data.isTv) return 'Fire TV';
-    if (data && data.isMobile) return 'Mobile';
-
     const ua = (socket && socket.handshake && socket.handshake.headers && socket.handshake.headers['user-agent']) || '';
-    if (/AFT|FireTV|Silk/i.test(ua)) return 'Fire TV';
-    if (/Android.*Mobile|iPhone|iPad|iPod/i.test(ua)) return 'Mobile';
-    if (/Android/i.test(ua) && !/Mobile/i.test(ua)) return 'Fire TV';
-    if (/Windows|Macintosh|Linux|Chrome|Firefox|Safari/i.test(ua)) return 'Web Browser';
-
-    return 'Web Browser';
+    return detectPlatformFromClient({ data, userAgent: ua });
 }
 
 function getLiveConnectedCount() {
@@ -516,6 +614,7 @@ function getAnalyticsSummary() {
             mobile: mobileCount,
             other: otherCount
         },
+        serverLoad: getServerLoadSnapshot(),
         system: {
             uptimeSeconds: Math.floor(process.uptime()),
             memoryUsageMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
@@ -3605,6 +3704,81 @@ function renderServerStatus(req, res) {
     .fill-tv { background: linear-gradient(90deg, #ff9900, #ffb84d); }
     .fill-mobile { background: linear-gradient(90deg, #00d2ff, #0099ff); }
     .fill-web { background: linear-gradient(90deg, #10b981, #34d399); }
+    .fill-load-healthy { background: linear-gradient(90deg, #10b981, #34d399); }
+    .fill-load-moderate { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .fill-load-heavy { background: linear-gradient(90deg, #ef4444, #f87171); }
+
+    /* SERVER CAPACITY & LOAD PANEL */
+    .capacity-panel {
+      background: #0d1322;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+    .capacity-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .capacity-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 9999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+    .capacity-pill.healthy { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
+    .capacity-pill.moderate { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
+    .capacity-pill.heavy { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
+    .capacity-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .capacity-box {
+      background: #131b2e;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .capacity-box-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 8px;
+      gap: 8px;
+    }
+    .capacity-box-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #94a3b8;
+    }
+    .capacity-box-value {
+      font-family: monospace;
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #ffffff;
+    }
+    .capacity-box-sub {
+      font-size: 0.74rem;
+      color: #64748b;
+      margin-top: 8px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .capacity-box-sub strong {
+      color: #cbd5e1;
+      font-family: monospace;
+    }
 
     /* TABLE SECTION */
     .table-container {
@@ -3790,6 +3964,72 @@ function renderServerStatus(req, res) {
         </div>
         <div id="stat-total-users" class="stat-num">0</div>
         <div class="stat-desc">Unique 10-digit UIDs across all sessions</div>
+      </div>
+    </div>
+
+    <!-- SERVER LOAD & REMAINING CAPACITY PANEL -->
+    <div class="capacity-panel" id="server-capacity-panel">
+      <div class="capacity-header">
+        <div class="panel-title" style="margin-bottom: 0;">⚡ Live Server Load &amp; Remaining Capacity</div>
+        <div id="cap-status-pill" class="capacity-pill healthy">● Healthy • --% Free</div>
+      </div>
+
+      <div class="capacity-summary-grid">
+        <div class="capacity-box">
+          <div class="capacity-box-top">
+            <span class="capacity-box-label">Overall Load Used</span>
+            <span id="cap-overall-used" class="capacity-box-value">0%</span>
+          </div>
+          <div class="progress-track">
+            <div id="bar-cap-overall" class="progress-fill fill-load-healthy" style="width: 0%;"></div>
+          </div>
+          <div class="capacity-box-sub">
+            <span>Remaining Headroom:</span>
+            <strong id="cap-overall-free">100% Free</strong>
+          </div>
+        </div>
+
+        <div class="capacity-box">
+          <div class="capacity-box-top">
+            <span class="capacity-box-label">CPU Usage</span>
+            <span id="cap-cpu-used" class="capacity-box-value">0%</span>
+          </div>
+          <div class="progress-track">
+            <div id="bar-cap-cpu" class="progress-fill fill-load-healthy" style="width: 0%;"></div>
+          </div>
+          <div class="capacity-box-sub">
+            <span id="cap-cpu-meta">Cores: -- • Avg: --</span>
+            <strong id="cap-cpu-free">100% Free</strong>
+          </div>
+        </div>
+
+        <div class="capacity-box">
+          <div class="capacity-box-top">
+            <span class="capacity-box-label">RAM / Memory Usage</span>
+            <span id="cap-ram-used" class="capacity-box-value">0%</span>
+          </div>
+          <div class="progress-track">
+            <div id="bar-cap-ram" class="progress-fill fill-load-healthy" style="width: 0%;"></div>
+          </div>
+          <div class="capacity-box-sub">
+            <span id="cap-ram-meta">-- / -- MB</span>
+            <strong id="cap-ram-free">-- MB Free</strong>
+          </div>
+        </div>
+
+        <div class="capacity-box">
+          <div class="capacity-box-top">
+            <span class="capacity-box-label">Event Loop &amp; Traffic</span>
+            <span id="cap-loop-lag" class="capacity-box-value">0 ms</span>
+          </div>
+          <div class="progress-track">
+            <div id="bar-cap-loop" class="progress-fill fill-load-healthy" style="width: 0%;"></div>
+          </div>
+          <div class="capacity-box-sub">
+            <span id="cap-runtime-meta">Sockets: 0 • Pairs: 0</span>
+            <strong id="cap-heap-meta">Heap: -- MB</strong>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -4071,6 +4311,50 @@ function renderServerStatus(req, res) {
 
         document.getElementById('label-web-count').textContent = pb.other + ' users (' + webPct + '%)';
         document.getElementById('bar-web').style.width = webPct + '%';
+
+        if (s.serverLoad) {
+          const sl = s.serverLoad;
+          const levelClass = sl.statusLevel === 'heavy' ? 'heavy' : (sl.statusLevel === 'moderate' ? 'moderate' : 'healthy');
+          const pickBarClass = (pct) => 'progress-fill ' + (pct >= 85 ? 'fill-load-heavy' : (pct >= 60 ? 'fill-load-moderate' : 'fill-load-healthy'));
+
+          const pill = document.getElementById('cap-status-pill');
+          if (pill) {
+            pill.className = 'capacity-pill ' + levelClass;
+            pill.textContent = '● ' + (sl.statusLabel || 'Healthy') + ' • ' + (sl.remainingCapacityPct ?? 100) + '% Free';
+          }
+
+          const overallUsed = sl.overallLoadPct ?? 0;
+          const overallFree = sl.remainingCapacityPct ?? (100 - overallUsed);
+          document.getElementById('cap-overall-used').textContent = overallUsed + '%';
+          document.getElementById('cap-overall-free').textContent = overallFree + '% Free';
+          const barOverall = document.getElementById('bar-cap-overall');
+          barOverall.style.width = overallUsed + '%';
+          barOverall.className = pickBarClass(overallUsed);
+
+          const cpu = sl.cpu || { usedPct: 0, remainingPct: 100, cores: 1, loadAvg1m: 0 };
+          document.getElementById('cap-cpu-used').textContent = cpu.usedPct + '%';
+          document.getElementById('cap-cpu-free').textContent = cpu.remainingPct + '% Free';
+          document.getElementById('cap-cpu-meta').textContent = cpu.cores + ' Core' + (cpu.cores === 1 ? '' : 's') + ' • Load ' + (cpu.loadAvg1m ?? 0);
+          const barCpu = document.getElementById('bar-cap-cpu');
+          barCpu.style.width = cpu.usedPct + '%';
+          barCpu.className = pickBarClass(cpu.usedPct);
+
+          const mem = sl.memory || { usedPct: 0, remainingPct: 100, usedMb: 0, freeMb: 0, totalMb: 0, heapUsedMb: 0 };
+          document.getElementById('cap-ram-used').textContent = mem.usedPct + '%';
+          document.getElementById('cap-ram-meta').textContent = mem.usedMb + ' / ' + mem.totalMb + ' MB';
+          document.getElementById('cap-ram-free').textContent = mem.freeMb + ' MB Free (' + mem.remainingPct + '%)';
+          const barRam = document.getElementById('bar-cap-ram');
+          barRam.style.width = mem.usedPct + '%';
+          barRam.className = pickBarClass(mem.usedPct);
+
+          const rt = sl.runtime || { eventLoopLagMs: 0, loopLoadPct: 0, liveSockets: 0, activePairings: 0, activeSplitCalls: 0 };
+          document.getElementById('cap-loop-lag').textContent = (rt.eventLoopLagMs ?? 0) + ' ms';
+          document.getElementById('cap-runtime-meta').textContent = 'Sockets: ' + (rt.liveSockets || 0) + ' • Pairs: ' + (rt.activePairings || 0);
+          document.getElementById('cap-heap-meta').textContent = 'Heap: ' + (mem.heapUsedMb || 0) + ' MB';
+          const barLoop = document.getElementById('bar-cap-loop');
+          barLoop.style.width = (rt.loopLoadPct || 0) + '%';
+          barLoop.className = pickBarClass(rt.loopLoadPct || 0);
+        }
 
         if (s.system) {
           document.getElementById('diag-uptime').textContent = formatUptime(s.system.uptimeSeconds || 0);

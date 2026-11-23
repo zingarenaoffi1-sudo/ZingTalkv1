@@ -60,7 +60,7 @@ export async function saveUserUidToFirestore(user, uid) {
             email: email,
             displayName: displayName,
             isGuest: Boolean(user?.isAnonymous || auth?.currentUser?.isAnonymous),
-            platform: "Fire TV / Android",
+            platform: detectClientPlatform(),
             updatedAt: new Date().toISOString()
         };
 
@@ -178,13 +178,62 @@ const PRIMARY_STUN = "stun:stun.l.google.com:19302";
 const SECONDARY_STUN = "stun:zingtalk.duckdns.org:3478";
 let isStunFailoverActive = false;
 
+export function isNativeTvApp() {
+    if (typeof window === "undefined") return false;
+    try {
+        if (window.ZingNativeBridge) return true;
+        if (window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform()) {
+            return true;
+        }
+    } catch (_) {}
+    return false;
+}
+
 export function detectClientPlatform() {
+    if (isNativeTvApp()) return "Fire TV";
     if (typeof navigator === "undefined") return "Web Browser";
     const ua = navigator.userAgent || "";
-    if (/AFT|FireTV|Silk/i.test(ua)) return "Fire TV";
+    if (/AFT|FireTV|Silk|Leanback|GoogleTV|BRAVIA|MIBOX/i.test(ua)) return "Fire TV";
     if (/Android.*Mobile|iPhone|iPad|iPod/i.test(ua)) return "Mobile";
     if (/Android/i.test(ua) && !/Mobile/i.test(ua)) return "Fire TV";
     return "Web Browser";
+}
+
+async function ensureTvNativeCallPermissions(callType = "video") {
+    const bridge = (typeof window !== "undefined") ? window.ZingNativeBridge : null;
+    if (!bridge || typeof bridge.requestCallPermissions !== "function") return true;
+    const needVideo = callType === "video";
+
+    try {
+        const hasMic = typeof bridge.hasMicPermission === "function" ? Boolean(bridge.hasMicPermission()) : false;
+        const hasCam = typeof bridge.hasCameraPermission === "function" ? Boolean(bridge.hasCameraPermission()) : false;
+        if (hasMic && (!needVideo || hasCam)) {
+            return true;
+        }
+    } catch (_) {}
+
+    const waitForResult = new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            window.removeEventListener("zing-permissions-result", onRes);
+            clearTimeout(timer);
+            resolve();
+        };
+        const onRes = () => setTimeout(finish, 220);
+        window.addEventListener("zing-permissions-result", onRes);
+        const timer = setTimeout(finish, 15000);
+    });
+
+    try {
+        bridge.requestCallPermissions(needVideo ? "video" : "audio");
+    } catch (_) {
+        return true;
+    }
+
+    await waitForResult;
+    return true;
 }
 
 export function sanitizeServerUrl(rawUrl, fallbackUrl = DUCKDNS_SIGNALING_URL) {
@@ -276,6 +325,7 @@ async function emitAuthenticatedLogin(targetSocket, userObj) {
             idToken = await auth.currentUser.getIdToken();
         }
     } catch (_) {}
+    const nativeApp = isNativeTvApp();
     targetSocket.emit("login_user", {
         email: userObj.email || null,
         name: userObj.displayName || userObj.name || (userObj.email ? userObj.email.split("@")[0] : "TV User"),
@@ -285,7 +335,8 @@ async function emitAuthenticatedLogin(targetSocket, userObj) {
         sessionToken: userObj.sessionToken || null,
         isAnonymous: Boolean(userObj.isAnonymous),
         isGuest: Boolean(userObj.isAnonymous),
-        platform: "Fire TV",
+        isNativeApp: nativeApp,
+        platform: detectClientPlatform(),
         contacts: myContacts
     });
 }
@@ -892,7 +943,7 @@ function loginUserSession(user) {
                 uid: my10DigitUid,
                 displayName: user.displayName || "TV User",
                 email: user.email || "Local TV",
-                platform: "Fire TV",
+                platform: detectClientPlatform(),
                 lastActiveAt: Date.now()
             }, { merge: true }).catch(() => {});
         } catch (_) {}
@@ -1938,9 +1989,7 @@ async function upgradeAudioCallToVideo() {
         return;
     }
 
-    if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
-        try { window.ZingNativeBridge.requestCallPermissions("video"); } catch (_) {}
-    }
+    await ensureTvNativeCallPermissions("video");
 
     let videoTrack = localStream ? localStream.getVideoTracks()[0] : null;
     if (!videoTrack) {
@@ -2086,9 +2135,7 @@ async function startWebRTC(isCaller) {
     let streamObtained = localStream;
 
     if (!splitMeshRecvOnlyMode && !streamObtained) {
-        if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
-            try { window.ZingNativeBridge.requestCallPermissions(currentCallType); } catch (_) {}
-        }
+        await ensureTvNativeCallPermissions(currentCallType);
         if (currentCallType === "video") {
             try {
                 streamObtained = await navigator.mediaDevices.getUserMedia({
@@ -2487,9 +2534,7 @@ async function initiateDirectCall(targetUid, type) {
 
     currentCallType = type || "video";
 
-    if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
-        try { window.ZingNativeBridge.requestCallPermissions(currentCallType); } catch (_) {}
-    }
+    await ensureTvNativeCallPermissions(currentCallType);
 
     if (isConnectorPaired) {
         // Option 2 Split-Mesh: Connector Phone handles Camera + Mic uplink directly to Friend!
@@ -4350,9 +4395,7 @@ document.addEventListener("click", async (e) => {
             incomingCallTimer = null;
         }
         document.getElementById("incoming-call-overlay")?.classList.add("hidden");
-        if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
-            try { window.ZingNativeBridge.requestCallPermissions(currentCallType); } catch (_) {}
-        }
+        await ensureTvNativeCallPermissions(currentCallType);
         try {
             await startWebRTC(false);
             if (socket) socket.emit("call_response", { targetUid: activeCallTarget, status: "accepted" });

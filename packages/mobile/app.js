@@ -131,6 +131,26 @@ const rtcConfig = {
     iceCandidatePoolSize: 10
 };
 
+export function isNativeMobileApp() {
+    if (typeof window === "undefined") return false;
+    try {
+        if (window.ZingNativeBridge) return true;
+        if (window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform()) {
+            return true;
+        }
+    } catch (_) {}
+    return false;
+}
+
+export function detectClientPlatform() {
+    if (isNativeMobileApp()) return "Mobile";
+    if (typeof navigator === "undefined") return "Web Browser";
+    const ua = navigator.userAgent || "";
+    if (/AFT|FireTV|Silk|Leanback/i.test(ua)) return "Fire TV";
+    if (/Android.*Mobile|iPhone|iPad|iPod/i.test(ua)) return "Mobile";
+    return "Web Browser";
+}
+
 let lastIceFetchAt = 0;
 async function emitAuthenticatedMobileLogin(targetSocket, userObj) {
     if (!targetSocket || !targetSocket.connected || !userObj) return;
@@ -140,6 +160,7 @@ async function emitAuthenticatedMobileLogin(targetSocket, userObj) {
             idToken = await auth.currentUser.getIdToken();
         }
     } catch (_) {}
+    const nativeApp = isNativeMobileApp();
     targetSocket.emit("login_user", {
         email: userObj.email || null,
         name: userObj.displayName || "Mobile User",
@@ -148,7 +169,8 @@ async function emitAuthenticatedMobileLogin(targetSocket, userObj) {
         idToken,
         sessionToken: userObj.sessionToken || null,
         isGuest: !userObj.email,
-        platform: "Mobile",
+        isNativeApp: nativeApp,
+        platform: detectClientPlatform(),
         contacts: myContacts
     });
 }
@@ -757,8 +779,26 @@ export async function updatePermissionsStatusUI() {
         }
     }
 
-    // Camera and Microphone status
-    if (navigator.permissions && navigator.permissions.query) {
+    // Camera and Microphone status (prefer native Android bridge when available)
+    const bridge = window.ZingNativeBridge;
+    let nativeHandled = false;
+    if (bridge && typeof bridge.hasMicPermission === "function" && typeof bridge.hasCameraPermission === "function") {
+        try {
+            const hasMic = Boolean(bridge.hasMicPermission());
+            const hasCam = Boolean(bridge.hasCameraPermission());
+            if (micBadge) {
+                micBadge.className = hasMic ? "perm-status granted" : "perm-status needed";
+                micBadge.innerText = hasMic ? "Granted" : "Tap to Enable";
+            }
+            if (camBadge) {
+                camBadge.className = hasCam ? "perm-status granted" : "perm-status needed";
+                camBadge.innerText = hasCam ? "Granted" : "Tap to Enable";
+            }
+            nativeHandled = true;
+        } catch (_) {}
+    }
+
+    if (!nativeHandled && navigator.permissions && navigator.permissions.query) {
         try {
             const micP = await navigator.permissions.query({ name: "microphone" });
             if (micBadge) {
@@ -1158,17 +1198,101 @@ function connectSocket() {
     });
 }
 
+async function ensureNativeCallPermissions(callType = "video") {
+    const bridge = (typeof window !== "undefined") ? window.ZingNativeBridge : null;
+    if (!bridge) return true;
+    const needVideo = callType === "video";
+
+    try {
+        const hasMic = typeof bridge.hasMicPermission === "function" ? Boolean(bridge.hasMicPermission()) : false;
+        const hasCam = typeof bridge.hasCameraPermission === "function" ? Boolean(bridge.hasCameraPermission()) : false;
+        if (hasMic && (!needVideo || hasCam)) {
+            return true;
+        }
+    } catch (_) {}
+
+    const requestFn = (typeof bridge.requestCallPermissions === "function")
+        ? () => bridge.requestCallPermissions(needVideo ? "video" : "audio")
+        : ((typeof bridge.requestAllPermissions === "function") ? () => bridge.requestAllPermissions() : null);
+
+    if (!requestFn) return true;
+
+    const waitForNativeResult = new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            window.removeEventListener("zing-permissions-result", onRes);
+            clearTimeout(timer);
+            resolve();
+        };
+        const onRes = () => setTimeout(finish, 220);
+        window.addEventListener("zing-permissions-result", onRes);
+        const timer = setTimeout(finish, 15000);
+    });
+
+    try {
+        requestFn();
+    } catch (_) {
+        return true;
+    }
+
+    await waitForNativeResult;
+    try { await updatePermissionsStatusUI(); } catch (_) {}
+    return true;
+}
+
+async function acquireMobileVideoStream(includeAudio = true) {
+    const attempts = [
+        {
+            audio: includeAudio,
+            video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+        },
+        {
+            audio: includeAudio,
+            video: { facingMode: currentFacingMode }
+        },
+        {
+            audio: includeAudio,
+            video: true
+        }
+    ];
+    let lastErr = null;
+    for (const constraints of attempts) {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            if (stream && stream.getVideoTracks().length > 0) {
+                return stream;
+            }
+            if (stream) {
+                stream.getTracks().forEach((t) => { try { t.stop(); } catch (_) {} });
+            }
+        } catch (err) {
+            lastErr = err;
+        }
+    }
+    throw lastErr || new Error("Camera unavailable");
+}
+
 async function setupLocalMedia(videoWanted = true) {
     if (localStream) {
-        localStream.getTracks().forEach(t => t.stop());
+        localStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+        localStream = null;
     }
-    const constraints = {
-        audio: true,
-        video: videoWanted ? { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } } : false
-    };
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch (_) {
+    if (videoWanted) {
+        await ensureNativeCallPermissions("video");
+        try {
+            localStream = await acquireMobileVideoStream(true);
+        } catch (vidErr) {
+            console.warn("[Mobile Media] Video acquisition failed, falling back to audio-only:", vidErr);
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            } catch (audErr) {
+                console.warn("[Mobile Media] Audio acquisition error:", audErr);
+            }
+        }
+    } else {
+        await ensureNativeCallPermissions("audio");
         try {
             localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         } catch (audErr) {
@@ -1182,6 +1306,7 @@ async function setupLocalMedia(videoWanted = true) {
         if (localVideo) {
             localVideo.style.display = "block";
             localVideo.srcObject = localStream;
+            localVideo.play().catch(() => {});
         }
         if (noCamPlaceholder) noCamPlaceholder.classList.add("hidden");
     } else {
@@ -1195,6 +1320,48 @@ async function setupLocalMedia(videoWanted = true) {
             noCamPlaceholder.classList.add("hidden");
         }
     }
+}
+
+async function retryAttachMobileCameraIfMissing() {
+    if (incomingCallType !== "video" || !peerConnection || !currentTargetUid) return;
+    if (localStream && localStream.getVideoTracks().length > 0) return;
+    try {
+        const camOnly = await acquireMobileVideoStream(false);
+        const vTrack = camOnly.getVideoTracks()[0];
+        if (!vTrack) return;
+        if (localStream) {
+            localStream.addTrack(vTrack);
+        } else {
+            localStream = camOnly;
+        }
+        const existingSender = peerConnection.getSenders().find((s) => s.track && s.track.kind === "video");
+        if (existingSender) {
+            await existingSender.replaceTrack(vTrack);
+        } else {
+            peerConnection.addTrack(vTrack, localStream);
+            if (peerConnection.signalingState === "stable") {
+                const offer = await peerConnection.createOffer({
+                    offerToReceiveAudio: true,
+                    offerToReceiveVideo: true
+                });
+                await peerConnection.setLocalDescription(offer);
+                if (socket) {
+                    socket.emit("webrtc_offer", { targetUid: currentTargetUid, offer, callType: "video" });
+                }
+            }
+        }
+        const localVideo = document.getElementById("local-video");
+        const noCamPlaceholder = document.getElementById("no-camera-pip-placeholder");
+        if (localVideo) {
+            localVideo.style.display = "block";
+            localVideo.srcObject = localStream;
+            localVideo.play().catch(() => {});
+        }
+        if (noCamPlaceholder) noCamPlaceholder.classList.add("hidden");
+        isVideoDisabled = false;
+        updateMobileCallControlsUI();
+        showToast("📷 Camera connected!");
+    } catch (_) {}
 }
 
 async function switchCamera() {
@@ -1260,10 +1427,9 @@ function updateMobileCallControlsUI() {
 
 async function upgradeMobileAudioToVideo() {
     if (!peerConnection || !currentTargetUid) return;
+    await ensureNativeCallPermissions("video");
     try {
-        const vStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
-        });
+        const vStream = await acquireMobileVideoStream(false);
         const vTrack = vStream.getVideoTracks()[0];
         if (!vTrack) {
             showToast("No camera detected");
@@ -1276,12 +1442,20 @@ async function upgradeMobileAudioToVideo() {
         } else {
             localStream = vStream;
         }
-        peerConnection.addTrack(vTrack, localStream);
+        const existingSender = peerConnection.getSenders().find((s) => s.track && s.track.kind === "video");
+        if (existingSender) {
+            await existingSender.replaceTrack(vTrack);
+        } else {
+            peerConnection.addTrack(vTrack, localStream);
+        }
         const localVideo = document.getElementById("local-video");
+        const noCamPlaceholder = document.getElementById("no-camera-pip-placeholder");
         if (localVideo) {
             localVideo.style.display = "block";
             localVideo.srcObject = localStream;
+            localVideo.play().catch(() => {});
         }
+        if (noCamPlaceholder) noCamPlaceholder.classList.add("hidden");
         const pipContainer = document.querySelector(".local-pip-container");
         if (pipContainer) pipContainer.style.display = "block";
         const audioCallView = document.getElementById("mobile-audio-call-view");
@@ -1407,9 +1581,7 @@ async function initiateCall(targetUid, type = "video") {
     currentTargetUid = cleanTarget;
     incomingCallType = type;
 
-    if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
-        try { window.ZingNativeBridge.requestCallPermissions(type); } catch (_) {}
-    }
+    await ensureNativeCallPermissions(type);
 
     const known = myContacts.find(c => c.uid === cleanTarget);
     const nameToShow = known ? known.name : `UID: ${cleanTarget}`;
@@ -1463,15 +1635,14 @@ async function answerCall(targetUid, type = "video") {
     incomingCallerUid = null;
     incomingCallType = type;
 
-    if (window.ZingNativeBridge && window.ZingNativeBridge.requestCallPermissions) {
-        try { window.ZingNativeBridge.requestCallPermissions(type); } catch (_) {}
-    }
-    
     const inOverlay = document.getElementById("mobile-incoming-call-overlay");
     if (inOverlay) {
         inOverlay.classList.add("hidden");
         inOverlay.style.display = "none";
     }
+
+    // Await Android runtime Camera + Mic permission popup BEFORE getUserMedia starts
+    await ensureNativeCallPermissions(type);
 
     await startMobileWebRTC(false);
     if (socket) {
@@ -1985,15 +2156,13 @@ function initMobileApp() {
     document.getElementById("close-permissions-modal-btn")?.addEventListener("click", closePerms);
 
     document.getElementById("grant-recheck-permissions-btn")?.addEventListener("click", async () => {
-        if (window.ZingNativeBridge && window.ZingNativeBridge.requestAllPermissions) {
-            try { window.ZingNativeBridge.requestAllPermissions(); } catch (_) {}
-        }
+        await ensureNativeCallPermissions("video");
         try {
             await CallNotificationService.requestPermission();
         } catch (_) {}
         try {
-            const testStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-            testStream.getTracks().forEach(t => t.stop());
+            const testStream = await acquireMobileVideoStream(true);
+            testStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
         } catch (_) {}
         await updatePermissionsStatusUI();
         showToast("✅ Permissions verified!");
@@ -2387,6 +2556,14 @@ function initMobileApp() {
             if (parsed) loginUser(parsed);
         } catch (_) {}
     }
+
+    // Listen for Android native permission callback so active video calls immediately attach camera after user taps Allow
+    const handleNativePermsReady = () => {
+        updatePermissionsStatusUI();
+        retryAttachMobileCameraIfMissing();
+    };
+    window.addEventListener("zing-permissions-result", handleNativePermsReady);
+    window.onNativePermissionsResult = handleNativePermsReady;
 
     // Check permission status UI only (permissions are requested on-demand when call starts)
     updatePermissionsStatusUI();
