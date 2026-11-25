@@ -1,0 +1,50 @@
+name: Clean EC2 RAM & Restart Server (No AWS Console)
+
+on:
+  workflow_dispatch:
+    inputs:
+      restart_all_pm2:
+        description: 'Restart PM2 processes (zingtalk + ssl_proxy) to release 100% of Node/TLS RAM?'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  clean-ram:
+    name: Flush EC2 OS Page Cache & Release Process RAM
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Clean EC2 RAM via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.PORT || 22 }}
+          script_stop: false
+          script: |
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            export PATH="$PATH:$HOME/.npm-global/bin:$HOME/.nvm/versions/node/$(node -v 2>/dev/null)/bin:/usr/local/bin:/usr/bin:/home/ubuntu/.nvm/versions/node/$(node -v 2>/dev/null)/bin"
+
+            echo "=== RAM BEFORE CLEANUP ==="
+            free -m
+
+            if [ "${{ github.event.inputs.restart_all_pm2 }}" = "true" ] && command -v pm2 &> /dev/null; then
+              echo "=== Restarting PM2 processes to release V8/TLS RSS buffers ==="
+              pm2 flush || true
+              pm2 restart all --update-env || true
+              sleep 2
+              pm2 status || true
+            fi
+
+            echo "=== Dropping Linux Page Cache, Dentries & Inodes ==="
+            sudo -n sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || echo "Note: sudo NOPASSWD not enabled for drop_caches; PM2 process RAM was still freed."
+
+            echo "=== RAM AFTER CLEANUP ==="
+            free -m

@@ -8,6 +8,7 @@ on:
       - 'server.js'
       - 'lib/**'
       - 'package.json'
+      - 'ecosystem.config.js'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
@@ -59,15 +60,21 @@ jobs:
             [ -f "ssl_proxy.js" ] && cp -p "ssl_proxy.js" "/tmp/ssl_proxy.js.bak" 2>/dev/null || true
 
             mkdir -p lib
+            UPDATED_OK=0
             if [ -d ".git" ]; then
-              git fetch origin main || true
-              git checkout origin/main -- server.js package.json package-lock.json lib 2>/dev/null || git pull origin main || true
-            else
-              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/server.js" -o server.js.tmp && mv server.js.tmp server.js || true
-              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/package.json" -o package.json.tmp && mv package.json.tmp package.json || true
-              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/lib/split-mesh.js" -o lib/split-mesh.js.tmp && mv lib/split-mesh.js.tmp lib/split-mesh.js || true
-              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/lib/security.js" -o lib/security.js.tmp && mv lib/security.js.tmp lib/security.js || true
-              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/lib/server-metrics.js" -o lib/server-metrics.js.tmp && mv lib/server-metrics.js.tmp lib/server-metrics.js || true
+              if git fetch origin main; then
+                git checkout -f origin/main -- server.js package.json ecosystem.config.js lib/split-mesh.js lib/security.js lib/server-metrics.js && UPDATED_OK=1 || true
+              fi
+            fi
+
+            if [ "$UPDATED_OK" -ne 1 ]; then
+              echo "Falling back to direct GitHub raw download..."
+              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/server.js" -o server.js.tmp && mv server.js.tmp server.js
+              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/package.json" -o package.json.tmp && mv package.json.tmp package.json
+              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/ecosystem.config.js" -o ecosystem.config.js.tmp && mv ecosystem.config.js.tmp ecosystem.config.js || true
+              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/lib/split-mesh.js" -o lib/split-mesh.js.tmp && mv lib/split-mesh.js.tmp lib/split-mesh.js
+              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/lib/security.js" -o lib/security.js.tmp && mv lib/security.js.tmp lib/security.js
+              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/lib/server-metrics.js" -o lib/server-metrics.js.tmp && mv lib/server-metrics.js.tmp lib/server-metrics.js
             fi
 
             [ -f "/tmp/Firebase_Admin_SDK.bak" ] && cp -p "/tmp/Firebase_Admin_SDK.bak" "Firebase_Admin_SDK" 2>/dev/null || true
@@ -79,21 +86,23 @@ jobs:
             echo "=== [3/4] Installing Production Dependencies ==="
             npm install --production --no-audit --no-fund || true
 
-            echo "=== [4/4] Starting / Reloading PM2 Service ==="
+            echo "=== [4/4] Starting / Restarting PM2 Service with --expose-gc ==="
             if command -v pm2 &> /dev/null; then
               if pm2 describe zingtalk > /dev/null 2>&1; then
-                pm2 reload zingtalk --update-env || pm2 restart zingtalk --update-env
+                pm2 restart zingtalk --node-args="--expose-gc --max-old-space-size=384" --max-memory-restart 350M --update-env
               elif pm2 describe server > /dev/null 2>&1; then
-                pm2 reload server --update-env || pm2 restart server --update-env
+                pm2 restart server --node-args="--expose-gc --max-old-space-size=384" --max-memory-restart 350M --update-env
               elif pm2 describe server.js > /dev/null 2>&1; then
-                pm2 reload server.js --update-env || pm2 restart server.js --update-env
+                pm2 restart server.js --node-args="--expose-gc --max-old-space-size=384" --max-memory-restart 350M --update-env
               else
-                pm2 start server.js --name "zingtalk"
+                pm2 start server.js --name "zingtalk" --node-args="--expose-gc --max-old-space-size=384" --max-memory-restart 350M
               fi
               pm2 save || true
               pm2 status
             else
-              npx pm2 reload zingtalk --update-env || npx pm2 start server.js --name "zingtalk" || true
+              npx pm2 restart zingtalk --node-args="--expose-gc --max-old-space-size=384" --update-env || npx pm2 start server.js --name "zingtalk" --node-args="--expose-gc --max-old-space-size=384" || true
             fi
 
+            sudo -n sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
+            free -m || true
             echo "ZingTalk Server update completed successfully!"

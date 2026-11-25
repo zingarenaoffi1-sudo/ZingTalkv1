@@ -909,21 +909,27 @@ function performServerMemoryCleanup() {
         prunedStaleMaps += splitMesh.cleanupStaleSessions((uid) => isUserOnline(uid));
     }
 
-    // 4. Invoke V8 GC if Node was started with --expose-gc
+    // 4. Invoke multi-pass V8 GC if Node was started with --expose-gc
     let gcInvoked = false;
     if (typeof global.gc === 'function') {
         try {
+            global.gc();
             global.gc();
             gcInvoked = true;
         } catch (_) {}
     }
 
     const afterSnapshot = getServerLoadSnapshot();
+    const rssFreedMb = Math.max(0, (beforeSnapshot.memory.processRssMb || 0) - (afterSnapshot.memory.processRssMb || 0));
+    const heapFreedMb = Math.max(0, (beforeSnapshot.memory.heapUsedMb || 0) - (afterSnapshot.memory.heapUsedMb || 0));
     return {
         prunedBuckets,
         prunedStaleMaps,
         totalEntriesCleared: prunedBuckets + prunedStaleMaps,
         gcInvoked,
+        rssFreedMb,
+        heapFreedMb,
+        pm2Managed: process.env.pm_id !== undefined,
         before: beforeSnapshot.memory,
         after: afterSnapshot.memory,
         summary: getAnalyticsSummary(),
@@ -936,6 +942,7 @@ app.get('/api/admin/analytics', (req, res) => {
         if (!verifyAdminToken(req)) {
             return res.status(401).json({ success: false, message: 'Unauthorized. Security gate clearance required.' });
         }
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
         return res.json({
             success: true,
             summary: getAnalyticsSummary(),
@@ -960,6 +967,38 @@ app.post('/api/admin/cleanup-memory', (req, res) => {
     } catch (err) {
         console.error('[ZingTalk Admin Cleanup Error]:', err);
         return res.status(500).json({ success: false, message: 'Failed to run RAM cleanup.' });
+    }
+});
+
+app.post('/api/admin/restart-server', (req, res) => {
+    try {
+        if (!verifyAdminToken(req)) {
+            return res.status(401).json({ success: false, message: 'Unauthorized. Security gate clearance required.' });
+        }
+        const result = performServerMemoryCleanup();
+        try {
+            fs.writeFileSync(ANALYTICS_FILE_PATH, JSON.stringify(analyticsStore, null, 2), 'utf-8');
+        } catch (_) {}
+
+        const underPm2 = process.env.pm_id !== undefined;
+        res.json({
+            success: true,
+            restarting: underPm2,
+            message: underPm2
+                ? 'Deep RAM Reset triggered! PM2 is respawning a fresh Node process (~1-2s)...'
+                : 'Deep cleanup completed (local non-PM2 mode; process kept alive).',
+            ...result
+        });
+
+        if (underPm2) {
+            setTimeout(() => {
+                console.log('[ZingTalk Admin] Graceful PM2 deep RAM reset triggered via Admin Panel.');
+                process.exit(0);
+            }, 350);
+        }
+    } catch (err) {
+        console.error('[ZingTalk Admin Restart Error]:', err);
+        return res.status(500).json({ success: false, message: 'Failed to trigger deep RAM reset.' });
     }
 });
 
@@ -3966,6 +4005,25 @@ function renderServerStatus(req, res) {
       opacity: 0.6;
       cursor: not-allowed;
     }
+    .btn-deep-reset {
+      background: rgba(245, 158, 11, 0.14);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      color: #fbbf24;
+      padding: 6px 12px;
+      border-radius: 10px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-deep-reset:hover:not(:disabled) {
+      background: rgba(245, 158, 11, 0.28);
+      color: #ffffff;
+    }
+    .btn-deep-reset:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
     .capacity-cleanup-note {
       margin-top: 12px;
       padding: 10px 14px;
@@ -4213,6 +4271,7 @@ function renderServerStatus(req, res) {
         <div class="panel-title" style="margin-bottom: 0;">⚡ Live Server Load &amp; Remaining Capacity</div>
         <div class="capacity-header-actions">
           <button type="button" id="btn-cleanup-ram" class="btn-cleanup" aria-label="Clean RAM and Stale Cache">🧹 Clean RAM</button>
+          <button type="button" id="btn-deep-reset" class="btn-deep-reset" aria-label="Deep RAM Reset via PM2 Restart">⚡ Deep Reset</button>
           <div id="cap-status-pill" class="capacity-pill healthy">● Healthy • --% Free</div>
         </div>
       </div>
@@ -4665,6 +4724,7 @@ function renderServerStatus(req, res) {
       });
 
       const btnCleanupRam = document.getElementById('btn-cleanup-ram');
+      const btnDeepReset = document.getElementById('btn-deep-reset');
       const capCleanupStatus = document.getElementById('cap-cleanup-status');
       if (btnCleanupRam) {
         btnCleanupRam.addEventListener('click', async function() {
@@ -4683,7 +4743,8 @@ function renderServerStatus(req, res) {
               if (capCleanupStatus) {
                 const afterFree = data.after?.freeMb ?? '--';
                 const cleared = data.totalEntriesCleared ?? 0;
-                capCleanupStatus.textContent = 'Cleaned ' + cleared + ' stale cache/rate-limit entries • Available RAM: ' + afterFree + ' MB';
+                const gcText = data.gcInvoked ? ' • V8 GC Ran (Freed ' + (data.heapFreedMb || 0) + ' MB heap)' : '';
+                capCleanupStatus.textContent = 'Cleaned ' + cleared + ' stale entries' + gcText + ' • Available RAM: ' + afterFree + ' MB';
                 capCleanupStatus.classList.remove('hidden');
               }
             }
@@ -4695,6 +4756,40 @@ function renderServerStatus(req, res) {
           } finally {
             btnCleanupRam.disabled = false;
             btnCleanupRam.textContent = '🧹 Clean RAM';
+          }
+        });
+      }
+
+      if (btnDeepReset) {
+        btnDeepReset.addEventListener('click', async function() {
+          const token = sessionStorage.getItem('zingtalk_admin_session');
+          if (!token) return;
+          btnDeepReset.disabled = true;
+          btnDeepReset.textContent = 'Resetting...';
+          try {
+            const res = await fetch('/api/admin/restart-server', {
+              method: 'POST',
+              headers: { 'x-admin-token': token, 'Content-Type': 'application/json' }
+            });
+            const data = await res.json();
+            if (res.ok && data && data.success) {
+              if (data.summary) renderAnalyticsUI(data);
+              if (capCleanupStatus) {
+                capCleanupStatus.textContent = data.message || 'Deep RAM Reset complete!';
+                capCleanupStatus.classList.remove('hidden');
+              }
+              if (data.restarting) {
+                setTimeout(() => window.location.reload(), 3500);
+              }
+            }
+          } catch (err) {
+            if (capCleanupStatus) {
+              capCleanupStatus.textContent = 'Reset error: ' + err.message;
+              capCleanupStatus.classList.remove('hidden');
+            }
+          } finally {
+            btnDeepReset.disabled = false;
+            btnDeepReset.textContent = '⚡ Deep Reset';
           }
         });
       }
@@ -4731,6 +4826,7 @@ function renderServerStatus(req, res) {
   </script>
 </body>
 </html>`;
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     return res.status(200).type('html').send(html);
 }
 

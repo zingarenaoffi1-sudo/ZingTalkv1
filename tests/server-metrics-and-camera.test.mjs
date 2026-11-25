@@ -128,8 +128,17 @@ test('Mobile and TV clients await native camera permissions, support fallbacks, 
   assert.ok(loadWorkflow.includes('LOAD_TEST_TOKEN'), 'Load test workflow must wire secrets.LOAD_TEST_TOKEN');
 
   assert.ok(serverSrc.includes('/api/admin/cleanup-memory'), 'server.js must expose POST /api/admin/cleanup-memory');
+  assert.ok(serverSrc.includes('/api/admin/restart-server'), 'server.js must expose POST /api/admin/restart-server');
   assert.ok(serverSrc.includes('btn-cleanup-ram'), 'Admin panel must render Clean RAM button');
+  assert.ok(serverSrc.includes('btn-deep-reset'), 'Admin panel must render Deep Reset button');
   assert.ok(serverSrc.includes('isValidLoadTestRequest'), 'server.js must support X-Load-Test-Secret verification');
+
+  const deployWorkflow = fs.readFileSync(path.resolve('.github/workflows/deploy.yml'), 'utf8');
+  assert.equal(deployWorkflow.includes('package-lock.json'), false, 'deploy.yml must not reference nonexistent package-lock.json in git checkout');
+  assert.ok(deployWorkflow.includes('--expose-gc'), 'deploy.yml must enable --expose-gc on PM2');
+
+  const cleanRamWorkflow = fs.readFileSync(path.resolve('.github/workflows/clean-ec2-ram.yml'), 'utf8');
+  assert.ok(cleanRamWorkflow.includes('drop_caches'), 'clean-ec2-ram.yml must flush Linux page caches');
 });
 
 test('parseProcMemInfo & computeServerLoadReport distinguish reclaimable Linux cache from real RAM pressure', () => {
